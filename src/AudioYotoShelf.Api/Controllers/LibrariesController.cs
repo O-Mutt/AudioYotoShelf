@@ -10,8 +10,7 @@ namespace AudioYotoShelf.Api.Controllers;
 public class LibrariesController(
     IAudiobookshelfService absService,
     IAgeSuggestionService ageSuggestionService,
-    AudioYotoShelfDbContext db,
-    ILogger<LibrariesController> logger) : ControllerBase
+    AudioYotoShelfDbContext db) : ControllerBase
 {
     /// <summary>
     /// Get all accessible libraries for the current user.
