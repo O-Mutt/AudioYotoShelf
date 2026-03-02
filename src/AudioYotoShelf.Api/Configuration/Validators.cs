@@ -56,3 +56,56 @@ public class CreateSeriesTransferRequestValidator : AbstractValidator<CreateSeri
             .When(x => x.OverrideMaxAge.HasValue);
     }
 }
+
+/// <summary>
+/// Phase 2: Validates batch transfer requests.
+/// ISP: Separate validator for the batch-specific concerns (array bounds).
+/// </summary>
+public class BatchTransferRequestValidator : AbstractValidator<BatchTransferRequest>
+{
+    public BatchTransferRequestValidator()
+    {
+        RuleFor(x => x.AbsLibraryItemIds)
+            .NotEmpty().WithMessage("At least one item is required")
+            .Must(ids => ids.Length <= 50).WithMessage("Maximum 50 items per batch");
+
+        RuleForEach(x => x.AbsLibraryItemIds)
+            .NotEmpty().WithMessage("Item ID cannot be empty");
+
+        RuleFor(x => x.OverrideMinAge)
+            .InclusiveBetween(0, 18)
+            .When(x => x.OverrideMinAge.HasValue);
+
+        RuleFor(x => x.OverrideMaxAge)
+            .InclusiveBetween(0, 18)
+            .When(x => x.OverrideMaxAge.HasValue);
+
+        RuleFor(x => x)
+            .Must(x => !x.OverrideMinAge.HasValue || !x.OverrideMaxAge.HasValue ||
+                       x.OverrideMinAge < x.OverrideMaxAge)
+            .WithMessage("Min age must be less than max age");
+    }
+}
+
+/// <summary>
+/// Phase 3: Validates settings update requests.
+/// SRP: Only validates age range constraints, not business logic.
+/// </summary>
+public class UpdateSettingsRequestValidator : AbstractValidator<UpdateSettingsRequest>
+{
+    public UpdateSettingsRequestValidator()
+    {
+        RuleFor(x => x.DefaultMinAge)
+            .InclusiveBetween(0, 18)
+            .When(x => x.DefaultMinAge.HasValue);
+
+        RuleFor(x => x.DefaultMaxAge)
+            .InclusiveBetween(0, 18)
+            .When(x => x.DefaultMaxAge.HasValue);
+
+        RuleFor(x => x)
+            .Must(x => !x.DefaultMinAge.HasValue || !x.DefaultMaxAge.HasValue ||
+                       x.DefaultMinAge < x.DefaultMaxAge)
+            .WithMessage("Min age must be less than max age");
+    }
+}

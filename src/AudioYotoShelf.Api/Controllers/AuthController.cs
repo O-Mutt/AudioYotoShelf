@@ -24,7 +24,6 @@ public class AuthController(
         var loginResponse = await absService.LoginAsync(request.BaseUrl, request.Username, request.Password, ct);
         var absUser = loginResponse.User;
 
-        // Find or create user connection
         var userConnection = await db.UserConnections
             .FirstOrDefaultAsync(u => u.Username == absUser.Username, ct);
 
@@ -125,6 +124,33 @@ public class AuthController(
         return Ok(new { Status = "authorized", YotoConnected = true });
     }
 
+    // --- User Settings (Phase 3) ---
+
+    [HttpPatch("settings/{userConnectionId:guid}")]
+    public async Task<IActionResult> UpdateSettings(
+        Guid userConnectionId,
+        [FromBody] Core.DTOs.Transfer.UpdateSettingsRequest request,
+        CancellationToken ct)
+    {
+        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
+        if (user is null) return NotFound();
+
+        if (request.DefaultLibraryId is not null)
+            user.DefaultLibraryId = request.DefaultLibraryId;
+
+        if (request.DefaultMinAge.HasValue)
+            user.DefaultMinAge = request.DefaultMinAge.Value;
+
+        if (request.DefaultMaxAge.HasValue)
+            user.DefaultMaxAge = request.DefaultMaxAge.Value;
+
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation("Settings updated for user {Username}", user.Username);
+
+        return Ok(MapConnectionStatus(user));
+    }
+
     // --- Connection Status ---
 
     [HttpGet("status/{userConnectionId:guid}")]
@@ -133,17 +159,19 @@ public class AuthController(
         var user = await db.UserConnections.FindAsync([userConnectionId], ct);
         if (user is null) return NotFound();
 
-        return Ok(new
-        {
-            user.Id,
-            user.Username,
-            AbsConnected = user.HasValidAbsConnection,
-            user.AudiobookshelfUrl,
-            YotoConnected = user.HasValidYotoConnection,
-            YotoTokenExpiresAt = user.YotoTokenExpiresAt,
-            user.DefaultLibraryId,
-            user.DefaultMinAge,
-            user.DefaultMaxAge
-        });
+        return Ok(MapConnectionStatus(user));
     }
+
+    private static object MapConnectionStatus(UserConnection user) => new
+    {
+        user.Id,
+        user.Username,
+        AbsConnected = user.HasValidAbsConnection,
+        user.AudiobookshelfUrl,
+        YotoConnected = user.HasValidYotoConnection,
+        YotoTokenExpiresAt = user.YotoTokenExpiresAt,
+        user.DefaultLibraryId,
+        user.DefaultMinAge,
+        user.DefaultMaxAge
+    };
 }

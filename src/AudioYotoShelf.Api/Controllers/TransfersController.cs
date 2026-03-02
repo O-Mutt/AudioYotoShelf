@@ -86,6 +86,37 @@ public class TransfersController(
         return Accepted(new { JobId = jobId, Message = "Series transfer queued" });
     }
 
+    /// <summary>
+    /// Phase 2: Batch transfer — enqueues one Hangfire job per book, returns batch summary.
+    /// ISP: BatchTransferRequest is its own DTO, not overloading CreateTransferRequest.
+    /// </summary>
+    [HttpPost("{userConnectionId:guid}/batch")]
+    public IActionResult TransferBatch(
+        Guid userConnectionId,
+        [FromBody] BatchTransferRequest request)
+    {
+        var jobIds = new List<string>();
+        foreach (var itemId in request.AbsLibraryItemIds)
+        {
+            var bookRequest = new CreateTransferRequest(
+                AbsLibraryItemId: itemId,
+                Category: request.Category,
+                PlaybackType: request.PlaybackType,
+                OverrideMinAge: request.OverrideMinAge,
+                OverrideMaxAge: request.OverrideMaxAge
+            );
+            var jobId = backgroundJobs.Enqueue<ITransferJobService>(
+                svc => svc.ExecuteBookTransferAsync(userConnectionId, bookRequest, CancellationToken.None));
+            jobIds.Add(jobId);
+        }
+
+        logger.LogInformation("Batch transfer queued: {Count} books → {JobCount} jobs",
+            request.AbsLibraryItemIds.Length, jobIds.Count);
+
+        var batchId = Guid.NewGuid().ToString("N")[..12];
+        return Accepted(new BatchTransferResponse(batchId, request.AbsLibraryItemIds.Length, jobIds.Count, jobIds.ToArray()));
+    }
+
     [HttpPost("retry/{transferId:guid}")]
     public IActionResult RetryTransfer(Guid transferId)
     {

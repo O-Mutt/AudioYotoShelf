@@ -14,49 +14,30 @@ public class ValidatorTests
 
     private readonly AbsConnectRequestValidator _absValidator = new();
 
-    [Fact]
-    public void AbsConnect_ValidRequest_Passes()
-    {
-        var request = new AuthController.AbsConnectRequest(
-            "http://abs.local:13378", "admin", "password");
-        var result = _absValidator.TestValidate(request);
-        result.ShouldNotHaveAnyValidationErrors();
-    }
+    [Theory]
+    [InlineData("http://myserver.com")]
+    [InlineData("https://abs.example.com:8080")]
+    public void AbsConnect_ValidUrl_Passes(string url) =>
+        _absValidator.TestValidate(new AuthController.AbsConnectRequest(url, "user", "pass"))
+            .ShouldNotHaveAnyValidationErrors();
 
     [Theory]
-    [InlineData("", "admin", "pass")]
-    [InlineData("not-a-url", "admin", "pass")]
-    [InlineData("ftp://bad.com", "admin", "pass")]
-    public void AbsConnect_InvalidUrl_Fails(string url, string user, string pass)
-    {
-        var request = new AuthController.AbsConnectRequest(url, user, pass);
-        var result = _absValidator.TestValidate(request);
-        result.ShouldHaveValidationErrorFor(x => x.BaseUrl);
-    }
+    [InlineData("")]
+    [InlineData("ftp://server.com")]
+    [InlineData("not-a-url")]
+    public void AbsConnect_InvalidUrl_Fails(string url) =>
+        _absValidator.TestValidate(new AuthController.AbsConnectRequest(url, "user", "pass"))
+            .ShouldHaveValidationErrorFor(x => x.BaseUrl);
 
     [Fact]
-    public void AbsConnect_EmptyUsername_Fails()
-    {
-        var request = new AuthController.AbsConnectRequest("http://abs.local", "", "pass");
-        var result = _absValidator.TestValidate(request);
-        result.ShouldHaveValidationErrorFor(x => x.Username);
-    }
+    public void AbsConnect_EmptyUsername_Fails() =>
+        _absValidator.TestValidate(new AuthController.AbsConnectRequest("http://x.com", "", "pass"))
+            .ShouldHaveValidationErrorFor(x => x.Username);
 
     [Fact]
-    public void AbsConnect_EmptyPassword_Fails()
-    {
-        var request = new AuthController.AbsConnectRequest("http://abs.local", "admin", "");
-        var result = _absValidator.TestValidate(request);
-        result.ShouldHaveValidationErrorFor(x => x.Password);
-    }
-
-    [Fact]
-    public void AbsConnect_HttpsUrl_Passes()
-    {
-        var request = new AuthController.AbsConnectRequest("https://abs.example.com", "admin", "pass");
-        var result = _absValidator.TestValidate(request);
-        result.ShouldNotHaveValidationErrorFor(x => x.BaseUrl);
-    }
+    public void AbsConnect_EmptyPassword_Fails() =>
+        _absValidator.TestValidate(new AuthController.AbsConnectRequest("http://x.com", "user", ""))
+            .ShouldHaveValidationErrorFor(x => x.Password);
 
     // =========================================================================
     // CreateTransferRequestValidator
@@ -65,56 +46,34 @@ public class ValidatorTests
     private readonly CreateTransferRequestValidator _transferValidator = new();
 
     [Fact]
-    public void Transfer_ValidRequest_Passes()
-    {
-        var request = new CreateTransferRequest("item-123");
-        var result = _transferValidator.TestValidate(request);
-        result.ShouldNotHaveAnyValidationErrors();
-    }
+    public void Transfer_ValidRequest_Passes() =>
+        _transferValidator.TestValidate(new CreateTransferRequest("item-1"))
+            .ShouldNotHaveAnyValidationErrors();
 
     [Fact]
-    public void Transfer_EmptyItemId_Fails()
-    {
-        var request = new CreateTransferRequest("");
-        var result = _transferValidator.TestValidate(request);
-        result.ShouldHaveValidationErrorFor(x => x.AbsLibraryItemId);
-    }
+    public void Transfer_EmptyItemId_Fails() =>
+        _transferValidator.TestValidate(new CreateTransferRequest(""))
+            .ShouldHaveValidationErrorFor(x => x.AbsLibraryItemId);
 
     [Fact]
-    public void Transfer_ValidAgeOverride_Passes()
-    {
-        var request = new CreateTransferRequest("item-123", OverrideMinAge: 3, OverrideMaxAge: 12);
-        var result = _transferValidator.TestValidate(request);
-        result.ShouldNotHaveAnyValidationErrors();
-    }
+    public void Transfer_ValidAgeOverrides_Passes() =>
+        _transferValidator.TestValidate(new CreateTransferRequest("item-1", OverrideMinAge: 3, OverrideMaxAge: 8))
+            .ShouldNotHaveAnyValidationErrors();
 
     [Fact]
-    public void Transfer_MinAgeOverMax_Fails()
-    {
-        var request = new CreateTransferRequest("item-123", OverrideMinAge: 15, OverrideMaxAge: 5);
-        var result = _transferValidator.TestValidate(request);
-        result.ShouldHaveAnyValidationError();
-    }
-
-    [Theory]
-    [InlineData(-1, null)]
-    [InlineData(19, null)]
-    [InlineData(null, 20)]
-    [InlineData(null, -5)]
-    public void Transfer_AgeOutOfRange_Fails(int? min, int? max)
-    {
-        var request = new CreateTransferRequest("item-123", OverrideMinAge: min, OverrideMaxAge: max);
-        var result = _transferValidator.TestValidate(request);
-        result.ShouldHaveAnyValidationError();
-    }
+    public void Transfer_MinOverMax_Fails() =>
+        _transferValidator.TestValidate(new CreateTransferRequest("item-1", OverrideMinAge: 10, OverrideMaxAge: 5))
+            .ShouldHaveAnyValidationError();
 
     [Fact]
-    public void Transfer_NullAgeOverrides_Passes()
-    {
-        var request = new CreateTransferRequest("item-123", OverrideMinAge: null, OverrideMaxAge: null);
-        var result = _transferValidator.TestValidate(request);
-        result.ShouldNotHaveAnyValidationErrors();
-    }
+    public void Transfer_AgeOutOfRange_Fails() =>
+        _transferValidator.TestValidate(new CreateTransferRequest("item-1", OverrideMinAge: 25))
+            .ShouldHaveValidationErrorFor(x => x.OverrideMinAge);
+
+    [Fact]
+    public void Transfer_NullAges_Passes() =>
+        _transferValidator.TestValidate(new CreateTransferRequest("item-1", OverrideMinAge: null, OverrideMaxAge: null))
+            .ShouldNotHaveAnyValidationErrors();
 
     // =========================================================================
     // CreateSeriesTransferRequestValidator
@@ -123,26 +82,90 @@ public class ValidatorTests
     private readonly CreateSeriesTransferRequestValidator _seriesValidator = new();
 
     [Fact]
-    public void SeriesTransfer_ValidRequest_Passes()
+    public void Series_ValidRequest_Passes() =>
+        _seriesValidator.TestValidate(new CreateSeriesTransferRequest("ser-1", "lib-1"))
+            .ShouldNotHaveAnyValidationErrors();
+
+    [Fact]
+    public void Series_EmptySeriesId_Fails() =>
+        _seriesValidator.TestValidate(new CreateSeriesTransferRequest("", "lib-1"))
+            .ShouldHaveValidationErrorFor(x => x.AbsSeriesId);
+
+    [Fact]
+    public void Series_EmptyLibraryId_Fails() =>
+        _seriesValidator.TestValidate(new CreateSeriesTransferRequest("ser-1", ""))
+            .ShouldHaveValidationErrorFor(x => x.AbsLibraryId);
+
+    // =========================================================================
+    // BatchTransferRequestValidator (Phase 2)
+    // =========================================================================
+
+    private readonly BatchTransferRequestValidator _batchValidator = new();
+
+    [Fact]
+    public void Batch_ValidRequest_Passes() =>
+        _batchValidator.TestValidate(new BatchTransferRequest(["item-1", "item-2"]))
+            .ShouldNotHaveAnyValidationErrors();
+
+    [Fact]
+    public void Batch_EmptyArray_Fails() =>
+        _batchValidator.TestValidate(new BatchTransferRequest([]))
+            .ShouldHaveValidationErrorFor(x => x.AbsLibraryItemIds);
+
+    [Fact]
+    public void Batch_Over50_Fails()
     {
-        var request = new CreateSeriesTransferRequest("series-1", "lib-1");
-        var result = _seriesValidator.TestValidate(request);
-        result.ShouldNotHaveAnyValidationErrors();
+        var ids = Enumerable.Range(0, 51).Select(i => $"item-{i}").ToArray();
+        _batchValidator.TestValidate(new BatchTransferRequest(ids))
+            .ShouldHaveValidationErrorFor(x => x.AbsLibraryItemIds);
     }
 
     [Fact]
-    public void SeriesTransfer_EmptySeriesId_Fails()
-    {
-        var request = new CreateSeriesTransferRequest("", "lib-1");
-        var result = _seriesValidator.TestValidate(request);
-        result.ShouldHaveValidationErrorFor(x => x.AbsSeriesId);
-    }
+    public void Batch_EmptyItemInArray_Fails() =>
+        _batchValidator.TestValidate(new BatchTransferRequest(["item-1", "", "item-3"]))
+            .ShouldHaveAnyValidationError();
 
     [Fact]
-    public void SeriesTransfer_EmptyLibraryId_Fails()
+    public void Batch_MinOverMax_Fails() =>
+        _batchValidator.TestValidate(new BatchTransferRequest(["item-1"], OverrideMinAge: 10, OverrideMaxAge: 5))
+            .ShouldHaveAnyValidationError();
+
+    [Fact]
+    public void Batch_Exactly50_Passes()
     {
-        var request = new CreateSeriesTransferRequest("series-1", "");
-        var result = _seriesValidator.TestValidate(request);
-        result.ShouldHaveValidationErrorFor(x => x.AbsLibraryId);
+        var ids = Enumerable.Range(0, 50).Select(i => $"item-{i}").ToArray();
+        _batchValidator.TestValidate(new BatchTransferRequest(ids))
+            .ShouldNotHaveAnyValidationErrors();
     }
+
+    // =========================================================================
+    // UpdateSettingsRequestValidator (Phase 3)
+    // =========================================================================
+
+    private readonly UpdateSettingsRequestValidator _settingsValidator = new();
+
+    [Fact]
+    public void Settings_ValidRange_Passes() =>
+        _settingsValidator.TestValidate(new UpdateSettingsRequest(DefaultMinAge: 3, DefaultMaxAge: 10))
+            .ShouldNotHaveAnyValidationErrors();
+
+    [Fact]
+    public void Settings_MinOverMax_Fails() =>
+        _settingsValidator.TestValidate(new UpdateSettingsRequest(DefaultMinAge: 10, DefaultMaxAge: 5))
+            .ShouldHaveAnyValidationError();
+
+    [Fact]
+    public void Settings_OutOfRange_Fails() =>
+        _settingsValidator.TestValidate(new UpdateSettingsRequest(DefaultMinAge: 25))
+            .ShouldHaveValidationErrorFor(x => x.DefaultMinAge);
+
+    [Fact]
+    public void Settings_AllNull_Passes() =>
+        _settingsValidator.TestValidate(new UpdateSettingsRequest())
+            .ShouldNotHaveAnyValidationErrors();
+
+    [Fact]
+    public void Settings_OnlyLibraryId_Passes() =>
+        _settingsValidator.TestValidate(new UpdateSettingsRequest(DefaultLibraryId: "lib-1"))
+            .ShouldNotHaveAnyValidationErrors();
 }

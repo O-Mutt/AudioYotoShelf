@@ -21,6 +21,29 @@ public record CreateSeriesTransferRequest(
     int? OverrideMaxAge = null
 );
 
+public record BatchTransferRequest(
+    string[] AbsLibraryItemIds,
+    YotoCategory Category = YotoCategory.Stories,
+    PlaybackType PlaybackType = PlaybackType.Linear,
+    int? OverrideMinAge = null,
+    int? OverrideMaxAge = null
+);
+
+public record BatchTransferResponse(
+    string BatchId,
+    int TotalBooks,
+    int Queued,
+    string[] JobIds
+);
+
+// --- Settings ---
+
+public record UpdateSettingsRequest(
+    string? DefaultLibraryId = null,
+    int? DefaultMinAge = null,
+    int? DefaultMaxAge = null
+);
+
 // --- Transfer Responses ---
 
 public record TransferResponse(

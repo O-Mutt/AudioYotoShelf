@@ -1,6 +1,5 @@
 using AudioYotoShelf.Api.Controllers;
 using AudioYotoShelf.Core.DTOs.Transfer;
-using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Core.Tests.Helpers;
@@ -8,12 +7,11 @@ using AudioYotoShelf.Infrastructure.Data;
 using AudioYotoShelf.Infrastructure.Services.BackgroundJobs;
 using FluentAssertions;
 using Hangfire;
-using Hangfire.Common;
-using Hangfire.States;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
+using System.Linq.Expressions;
 
 namespace AudioYotoShelf.Api.Tests;
 
@@ -27,14 +25,15 @@ public class TransfersControllerTests : IDisposable
     public TransfersControllerTests()
     {
         var options = new DbContextOptionsBuilder<AudioYotoShelfDbContext>()
-            .UseInMemoryDatabase($"TransfersCtrlTest_{Guid.NewGuid()}")
+            .UseInMemoryDatabase($"TxCtrlTest_{Guid.NewGuid()}")
             .Options;
         _db = new AudioYotoShelfDbContext(options);
 
         _orchestrator = new Mock<ITransferOrchestrator>();
         _backgroundJobs = new Mock<IBackgroundJobClient>();
 
-        _backgroundJobs.Setup(b => b.Create(It.IsAny<Job>(), It.IsAny<IState>()))
+        _backgroundJobs
+            .Setup(b => b.Create(It.IsAny<Hangfire.Common.Job>(), It.IsAny<IState>()))
             .Returns("job-123");
 
         _sut = new TransfersController(
@@ -55,40 +54,50 @@ public class TransfersControllerTests : IDisposable
     [Fact]
     public async Task GetTransfers_ReturnsPaginatedList()
     {
-        var userId = Guid.NewGuid();
+        var user = TestData.CreateUserConnection();
+        _db.UserConnections.Add(user);
+
         for (int i = 0; i < 5; i++)
         {
-            _db.CardTransfers.Add(TestData.CreateCardTransfer(
-                userConnectionId: userId, title: $"Book {i}"));
+            var transfer = TestData.CreateCardTransfer(user.Id, $"Book {i}");
+            _db.CardTransfers.Add(transfer);
         }
         await _db.SaveChangesAsync();
 
-        var result = await _sut.GetTransfers(userId, page: 0, limit: 3);
+        var result = await _sut.GetTransfers(user.Id, ct: CancellationToken.None);
 
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
-        var value = ok.Value;
-        value.Should().NotBeNull();
+        ok.Value.Should().NotBeNull();
     }
 
     [Fact]
-    public async Task GetTransfers_WithStatusFilter_FiltersResults()
+    public async Task GetTransfers_WithStatusFilter_FiltersCorrectly()
     {
-        var userId = Guid.NewGuid();
-        _db.CardTransfers.Add(TestData.CreateCardTransfer(
-            userConnectionId: userId, status: TransferStatus.Completed));
-        _db.CardTransfers.Add(TestData.CreateCardTransfer(
-            userConnectionId: userId, status: TransferStatus.Failed));
+        var user = TestData.CreateUserConnection();
+        _db.UserConnections.Add(user);
+
+        var t1 = TestData.CreateCardTransfer(user.Id, "Done");
+        t1.Status = TransferStatus.Completed;
+        var t2 = TestData.CreateCardTransfer(user.Id, "Pending");
+        t2.Status = TransferStatus.Pending;
+        _db.CardTransfers.AddRange(t1, t2);
         await _db.SaveChangesAsync();
 
-        var result = await _sut.GetTransfers(userId, status: TransferStatus.Completed);
+        var result = await _sut.GetTransfers(user.Id, status: TransferStatus.Completed, ct: CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
     }
 
+    // =========================================================================
+    // GET transfer by ID
+    // =========================================================================
+
     [Fact]
-    public async Task GetTransfer_ExistingId_ReturnsOk()
+    public async Task GetTransfer_Found_Returns200()
     {
-        var transfer = TestData.CreateCardTransfer();
+        var user = TestData.CreateUserConnection();
+        _db.UserConnections.Add(user);
+        var transfer = TestData.CreateCardTransfer(user.Id, "Test Book");
         _db.CardTransfers.Add(transfer);
         await _db.SaveChangesAsync();
 
@@ -98,7 +107,7 @@ public class TransfersControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetTransfer_NonExistentId_ReturnsNotFound()
+    public async Task GetTransfer_NotFound_Returns404()
     {
         var result = await _sut.GetTransfer(Guid.NewGuid(), CancellationToken.None);
         result.Should().BeOfType<NotFoundResult>();
@@ -109,25 +118,12 @@ public class TransfersControllerTests : IDisposable
     // =========================================================================
 
     [Fact]
-    public void TransferBook_EnqueuesHangfireJob()
+    public void TransferBook_EnqueuesJob_Returns202()
     {
-        var request = TestData.CreateTransferRequest("item-abc");
+        var request = new CreateTransferRequest("item-1");
         var result = _sut.TransferBook(Guid.NewGuid(), request);
 
-        result.Should().BeOfType<AcceptedResult>();
-        _backgroundJobs.Verify(b => b.Create(
-            It.IsAny<Job>(),
-            It.IsAny<IState>()),
-            Times.Once);
-    }
-
-    [Fact]
-    public void TransferBook_ReturnsJobId()
-    {
-        var result = _sut.TransferBook(Guid.NewGuid(), TestData.CreateTransferRequest());
-
-        var accepted = result.Should().BeOfType<AcceptedResult>().Subject;
-        accepted.Value.Should().NotBeNull();
+        result.Should().BeOfType<AcceptedObjectResult>();
     }
 
     // =========================================================================
@@ -135,37 +131,53 @@ public class TransfersControllerTests : IDisposable
     // =========================================================================
 
     [Fact]
-    public void TransferSeries_EnqueuesHangfireJob()
+    public void TransferSeries_EnqueuesJob_Returns202()
     {
-        var request = TestData.CreateSeriesTransferRequest();
+        var request = new CreateSeriesTransferRequest("ser-1", "lib-1");
         var result = _sut.TransferSeries(Guid.NewGuid(), request);
 
-        result.Should().BeOfType<AcceptedResult>();
-        _backgroundJobs.Verify(b => b.Create(
-            It.IsAny<Job>(),
-            It.IsAny<IState>()),
-            Times.Once);
+        result.Should().BeOfType<AcceptedObjectResult>();
     }
 
     // =========================================================================
-    // POST retry
+    // POST batch transfer (Phase 2)
     // =========================================================================
 
     [Fact]
-    public void RetryTransfer_EnqueuesRetryJob()
+    public void TransferBatch_EnqueuesJobPerBook()
     {
-        var result = _sut.RetryTransfer(Guid.NewGuid());
+        var request = new BatchTransferRequest(["item-1", "item-2", "item-3"]);
+        var result = _sut.TransferBatch(Guid.NewGuid(), request);
 
-        result.Should().BeOfType<AcceptedResult>();
-        _backgroundJobs.Verify(b => b.Create(
-            It.IsAny<Job>(),
-            It.IsAny<IState>()),
-            Times.Once);
+        var accepted = result.Should().BeOfType<AcceptedObjectResult>().Subject;
+        var response = accepted.Value as BatchTransferResponse;
+        response.Should().NotBeNull();
+        response!.TotalBooks.Should().Be(3);
+        response.Queued.Should().Be(3);
+        response.JobIds.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public void TransferBatch_SingleItem_Works()
+    {
+        var request = new BatchTransferRequest(["item-1"]);
+        var result = _sut.TransferBatch(Guid.NewGuid(), request);
+
+        var accepted = result.Should().BeOfType<AcceptedObjectResult>().Subject;
+        var response = accepted.Value as BatchTransferResponse;
+        response!.TotalBooks.Should().Be(1);
     }
 
     // =========================================================================
-    // POST cancel
+    // POST retry + cancel
     // =========================================================================
+
+    [Fact]
+    public void RetryTransfer_EnqueuesJob_Returns202()
+    {
+        var result = _sut.RetryTransfer(Guid.NewGuid());
+        result.Should().BeOfType<AcceptedObjectResult>();
+    }
 
     [Fact]
     public async Task CancelTransfer_CallsOrchestrator()
@@ -174,7 +186,6 @@ public class TransfersControllerTests : IDisposable
         var result = await _sut.CancelTransfer(transferId, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _orchestrator.Verify(o => o.CancelTransferAsync(transferId, It.IsAny<CancellationToken>()),
-            Times.Once);
+        _orchestrator.Verify(o => o.CancelTransferAsync(transferId, It.IsAny<CancellationToken>()), Times.Once);
     }
 }

@@ -4,6 +4,7 @@ import type {
   AbsLibrary,
   AbsLibraryItemsResponse,
   AbsSeriesResponse,
+  BatchTransferResponse,
   BookDetailResponse,
   ConnectionStatus,
   TransferResponse,
@@ -36,6 +37,15 @@ export const authApi = {
 
   getConnectionStatus(userConnectionId: string) {
     return api.get<ConnectionStatus>(`/auth/status/${userConnectionId}`)
+  },
+
+  // Phase 3: Settings save
+  updateSettings(userConnectionId: string, settings: {
+    defaultLibraryId?: string
+    defaultMinAge?: number
+    defaultMaxAge?: number
+  }) {
+    return api.patch<ConnectionStatus>(`/auth/settings/${userConnectionId}`, settings)
   },
 }
 
@@ -114,6 +124,26 @@ export const transferApi = {
     overrideMaxAge?: number
   }) {
     return api.post(`/transfers/${userConnectionId}/series`, request)
+  },
+
+  // Phase 2: Batch transfer
+  transferBatch(userConnectionId: string, request: {
+    absLibraryItemIds: string[]
+    category?: string
+    playbackType?: string
+    overrideMinAge?: number
+    overrideMaxAge?: number
+  }) {
+    return api.post<BatchTransferResponse>(`/transfers/${userConnectionId}/batch`, request)
+  },
+
+  // Phase 6 (wired now): Retry + Cancel
+  retryTransfer(transferId: string) {
+    return api.post(`/transfers/retry/${transferId}`)
+  },
+
+  cancelTransfer(transferId: string) {
+    return api.post(`/transfers/cancel/${transferId}`)
   },
 }
 

@@ -177,6 +177,15 @@ export interface TransferProgressUpdate {
   errorMessage: string | null
 }
 
+// --- Batch Transfer (Phase 2) ---
+
+export interface BatchTransferResponse {
+  batchId: string
+  totalBooks: number
+  queued: number
+  jobIds: string[]
+}
+
 // --- Age Suggestion ---
 
 export interface AgeSuggestionResponse {
