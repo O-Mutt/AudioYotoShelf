@@ -1,0 +1,227 @@
+using AudioYotoShelf.Core.DTOs.Yoto;
+using AudioYotoShelf.Core.Interfaces;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace AudioYotoShelf.Infrastructure.Services.IconGeneration;
+
+public class GeminiIconGenerationService(
+    IHttpClientFactory httpClientFactory,
+    IDistributedCache cache,
+    IConfiguration configuration,
+    ILogger<GeminiIconGenerationService> logger) : IIconGenerationService
+{
+    private const string PublicIconsCacheKey = "yoto:public_icons";
+    private static readonly TimeSpan PublicIconsCacheTtl = TimeSpan.FromHours(24);
+
+    private string ApiKey => configuration["Gemini:ApiKey"]
+        ?? throw new InvalidOperationException("Gemini:ApiKey not configured");
+    private string Model => configuration.GetValue("Gemini:Model", "gemini-2.5-flash-preview-05-20")!;
+
+    public async Task<byte[]> GenerateIconAsync(string prompt, CancellationToken ct = default)
+    {
+        logger.LogInformation("Generating icon via Gemini: {Prompt}", prompt);
+
+        using var client = httpClientFactory.CreateClient("Gemini");
+        var url = $"https://generativelanguage.googleapis.com/v1beta/models/{Model}:generateContent?key={ApiKey}";
+
+        var request = new GeminiRequest
+        {
+            Contents =
+            [
+                new GeminiContent
+                {
+                    Parts = [new GeminiPart { Text = prompt }]
+                }
+            ],
+            GenerationConfig = new GeminiGenerationConfig
+            {
+                ResponseMimeType = "text/plain",
+                ResponseModalities = ["TEXT", "IMAGE"]
+            }
+        };
+
+        var response = await client.PostAsJsonAsync(url, request, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            logger.LogError("Gemini API error: {StatusCode} {Body}", response.StatusCode, errorBody);
+            throw new InvalidOperationException($"Gemini API error: {response.StatusCode}");
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<GeminiResponse>(ct);
+
+        // Extract image from response
+        var imagePart = result?.Candidates?.FirstOrDefault()?
+            .Content?.Parts?.FirstOrDefault(p => p.InlineData is not null);
+
+        if (imagePart?.InlineData is null)
+        {
+            logger.LogWarning("Gemini returned no image for prompt: {Prompt}", prompt);
+            throw new InvalidOperationException("Gemini did not return an image");
+        }
+
+        var rawImageBytes = Convert.FromBase64String(imagePart.InlineData.Data!);
+
+        // Resize to 16x16 using nearest-neighbor interpolation
+        return ResizeTo16X16(rawImageBytes);
+    }
+
+    public async Task<byte[]> GenerateChapterIconAsync(
+        string chapterTitle, string bookTitle, string? genre, CancellationToken ct = default)
+    {
+        var prompt = BuildChapterIconPrompt(chapterTitle, bookTitle, genre);
+        return await GenerateIconAsync(prompt, ct);
+    }
+
+    public async Task<byte[]> ConvertCoverToIconAsync(Stream coverImage, CancellationToken ct = default)
+    {
+        using var ms = new MemoryStream();
+        await coverImage.CopyToAsync(ms, ct);
+        return ResizeTo16X16(ms.ToArray());
+    }
+
+    public async Task<YotoPublicIcon[]> SearchPublicIconsAsync(
+        string query, int maxResults = 10, CancellationToken ct = default)
+    {
+        // Try cache first
+        var cached = await cache.GetStringAsync(PublicIconsCacheKey, ct);
+        YotoPublicIcon[]? allIcons;
+
+        if (cached is not null)
+        {
+            allIcons = JsonSerializer.Deserialize<YotoPublicIcon[]>(cached);
+        }
+        else
+        {
+            allIcons = null;
+            logger.LogInformation("Public icons not in cache; caller should populate via IYotoService");
+        }
+
+        if (allIcons is null || allIcons.Length == 0)
+            return [];
+
+        // Simple search: match title or tags
+        var queryLower = query.ToLowerInvariant();
+        var queryTerms = queryLower.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        return allIcons
+            .Where(icon =>
+                queryTerms.Any(term =>
+                    icon.Title.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    icon.PublicTags.Any(tag => tag.Contains(term, StringComparison.OrdinalIgnoreCase))))
+            .Take(maxResults)
+            .ToArray();
+    }
+
+    public string BuildChapterIconPrompt(string chapterTitle, string bookTitle, string? genre)
+    {
+        var genreHint = genre is not null ? $" The genre is {genre}." : "";
+        return $"Create a 16x16 pixel art icon representing \"{chapterTitle}\" " +
+               $"from the book \"{bookTitle}\".{genreHint} " +
+               "Use simple shapes, limited color palette (6-8 bright colors), bold outlines. " +
+               "Style: 8-bit retro game sprite. No text. No black background. " +
+               "Avoid using pure black (#000000) pixels as they appear as 'off' on LED displays.";
+    }
+
+    /// <summary>
+    /// Resize image to 16x16 using nearest-neighbor interpolation to preserve pixel art crispness.
+    /// Ensures no pure black pixels (replace with very dark gray).
+    /// </summary>
+    private static byte[] ResizeTo16X16(byte[] imageBytes)
+    {
+        using var image = Image.Load<Rgba32>(imageBytes);
+
+        image.Mutate(ctx => ctx.Resize(new ResizeOptions
+        {
+            Size = new Size(16, 16),
+            Sampler = KnownResamplers.NearestNeighbor,
+            Mode = ResizeMode.Stretch
+        }));
+
+        // Replace pure black pixels with very dark gray (Yoto LED consideration)
+        image.ProcessPixelRows(accessor =>
+        {
+            for (int y = 0; y < accessor.Height; y++)
+            {
+                var row = accessor.GetRowSpan(y);
+                for (int x = 0; x < row.Length; x++)
+                {
+                    ref var pixel = ref row[x];
+                    if (pixel.R == 0 && pixel.G == 0 && pixel.B == 0 && pixel.A > 0)
+                    {
+                        pixel = new Rgba32(8, 8, 8, pixel.A);
+                    }
+                }
+            }
+        });
+
+        using var output = new MemoryStream();
+        image.SaveAsPng(output);
+        return output.ToArray();
+    }
+}
+
+// --- Gemini API DTOs (internal) ---
+
+file record GeminiRequest
+{
+    [JsonPropertyName("contents")]
+    public GeminiContent[] Contents { get; init; } = [];
+
+    [JsonPropertyName("generationConfig")]
+    public GeminiGenerationConfig? GenerationConfig { get; init; }
+}
+
+file record GeminiContent
+{
+    [JsonPropertyName("parts")]
+    public GeminiPart[] Parts { get; init; } = [];
+}
+
+file record GeminiPart
+{
+    [JsonPropertyName("text")]
+    public string? Text { get; init; }
+
+    [JsonPropertyName("inlineData")]
+    public GeminiInlineData? InlineData { get; init; }
+}
+
+file record GeminiInlineData
+{
+    [JsonPropertyName("mimeType")]
+    public string? MimeType { get; init; }
+
+    [JsonPropertyName("data")]
+    public string? Data { get; init; }
+}
+
+file record GeminiGenerationConfig
+{
+    [JsonPropertyName("responseMimeType")]
+    public string? ResponseMimeType { get; init; }
+
+    [JsonPropertyName("responseModalities")]
+    public string[]? ResponseModalities { get; init; }
+}
+
+file record GeminiResponse
+{
+    [JsonPropertyName("candidates")]
+    public GeminiCandidate[]? Candidates { get; init; }
+}
+
+file record GeminiCandidate
+{
+    [JsonPropertyName("content")]
+    public GeminiContent? Content { get; init; }
+}

@@ -1,0 +1,35 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.csproj.user
+.vs/
+out/
+
+# Node / Vue
+node_modules/
+dist/
+src/AudioYotoShelf.Api/wwwroot/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+*.local
+
+# Temp
+temp/
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
