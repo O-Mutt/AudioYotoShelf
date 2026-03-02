@@ -147,4 +147,20 @@ export const transferApi = {
   },
 }
 
+// --- Cards (Phase 5) ---
+
+export const cardsApi = {
+  getCards(userConnectionId: string) {
+    return api.get<import('@/types').YotoCardSummary[]>(`/cards/${userConnectionId}`)
+  },
+
+  getCard(userConnectionId: string, cardId: string) {
+    return api.get<import('@/types').YotoCardDetail>(`/cards/${userConnectionId}/${cardId}`)
+  },
+
+  deleteCard(userConnectionId: string, cardId: string) {
+    return api.delete(`/cards/${userConnectionId}/${cardId}`)
+  },
+}
+
 export default api

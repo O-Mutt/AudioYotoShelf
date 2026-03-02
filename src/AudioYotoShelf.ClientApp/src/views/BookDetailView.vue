@@ -1,18 +1,25 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useConnectionStore } from '@/stores/connectionStore'
+import { useSignalR } from '@/composables/useSignalR'
+import { useToast } from '@/composables/useToast'
+import { useConfirm } from '@/composables/useConfirm'
 import { transferApi } from '@/services/api'
+import type { TransferProgressUpdate } from '@/types'
 
 const props = defineProps<{ itemId: string }>()
 
 const libraryStore = useLibraryStore()
 const connectionStore = useConnectionStore()
+const { connect, joinTransfer, progressUpdates } = useSignalR()
+const toast = useToast()
+const { confirm } = useConfirm()
 
 const overrideMinAge = ref<number | null>(null)
 const overrideMaxAge = ref<number | null>(null)
 const isTransferring = ref(false)
-const transferMessage = ref<string | null>(null)
+const activeTransferId = ref<string | null>(null)
 
 const book = computed(() => libraryStore.currentBookDetail)
 const metadata = computed(() => book.value?.item?.media?.metadata)
@@ -22,8 +29,20 @@ const effectiveMinAge = computed(() => overrideMinAge.value ?? ageSuggestion.val
 const effectiveMaxAge = computed(() => overrideMaxAge.value ?? ageSuggestion.value?.suggestedMaxAge ?? 10)
 const isOverridden = computed(() => overrideMinAge.value !== null || overrideMaxAge.value !== null)
 
+// Live progress from SignalR
+const liveProgress = computed<TransferProgressUpdate | null>(() => {
+  if (!activeTransferId.value) return null
+  return progressUpdates.value.get(activeTransferId.value) ?? null
+})
+
 onMounted(async () => {
   await libraryStore.loadBookDetail(props.itemId)
+  // If there's an active existing transfer, subscribe for updates
+  if (book.value?.existingTransfer && !['Completed', 'Failed', 'Cancelled'].includes(book.value.existingTransfer.status)) {
+    activeTransferId.value = book.value.existingTransfer.id
+    await connect()
+    await joinTransfer(book.value.existingTransfer.id)
+  }
 })
 
 function formatDuration(seconds: number): string {
@@ -37,20 +56,45 @@ function resetAgeOverride() {
   overrideMaxAge.value = null
 }
 
+function onCoverError(e: Event) {
+  const img = e.target as HTMLImageElement
+  img.src = 'data:image/svg+xml,' + encodeURIComponent(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300" fill="none">
+      <rect width="200" height="300" rx="8" fill="#E5E7EB"/>
+      <path d="M80 120h40v8H80v-8zm-8 24h56v6H72v-6zm0 16h56v6H72v-6zm0 16h40v6H72v-6z" fill="#9CA3AF"/>
+      <rect x="76" y="80" width="48" height="24" rx="4" fill="#9CA3AF" opacity="0.5"/>
+    </svg>
+  `)
+}
+
 async function startTransfer() {
   if (!connectionStore.userConnectionId) return
+
+  const ok = await confirm({
+    title: 'Transfer to Yoto?',
+    message: `This will create a Yoto MYO card for "${metadata.value?.title}". The audio will be downloaded, uploaded, and transcoded.`,
+    confirmText: 'Start Transfer',
+  })
+  if (!ok) return
+
   isTransferring.value = true
-  transferMessage.value = null
 
   try {
-    await transferApi.transferBook(connectionStore.userConnectionId, {
+    const { data } = await transferApi.transferBook(connectionStore.userConnectionId, {
       absLibraryItemId: props.itemId,
       overrideMinAge: overrideMinAge.value ?? undefined,
       overrideMaxAge: overrideMaxAge.value ?? undefined,
     })
-    transferMessage.value = 'Transfer queued successfully!'
+    toast.success('Transfer queued successfully!')
+
+    // Subscribe to SignalR for live progress
+    activeTransferId.value = data.jobId ?? null
+    if (activeTransferId.value) {
+      await connect()
+      await joinTransfer(activeTransferId.value)
+    }
   } catch (err: any) {
-    transferMessage.value = `Error: ${err.response?.data?.message ?? err.message}`
+    toast.error(`Transfer failed: ${err.response?.data?.message ?? err.message}`)
   } finally {
     isTransferring.value = false
   }
@@ -66,7 +110,8 @@ async function startTransfer() {
       <img
         :src="libraryStore.getCoverUrl(props.itemId)"
         :alt="metadata?.title ?? 'Cover'"
-        class="w-48 h-72 object-cover rounded-xl shadow-md"
+        class="w-48 h-72 object-cover rounded-xl shadow-md bg-gray-100"
+        @error="onCoverError"
       />
       <div class="flex-1 space-y-3">
         <h1 class="text-3xl font-bold text-gray-900">{{ metadata?.title }}</h1>
@@ -205,6 +250,23 @@ async function startTransfer() {
       </div>
     </div>
 
+    <!-- Live transfer progress (Phase 6: SignalR wired) -->
+    <div v-if="liveProgress" class="card">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-sm font-medium text-gray-700">Transfer Progress</h3>
+        <span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{{ liveProgress.status }}</span>
+      </div>
+      <div class="w-full bg-gray-100 rounded-full h-2.5">
+        <div
+          class="bg-yoto-blue h-2.5 rounded-full transition-all duration-300"
+          :style="{ width: `${liveProgress.progressPercent}%` }"
+        />
+      </div>
+      <p class="text-xs text-gray-500 mt-1">
+        {{ liveProgress.currentStep ?? `${liveProgress.progressPercent}% complete` }}
+      </p>
+    </div>
+
     <!-- Transfer button -->
     <div class="sticky bottom-4">
       <button
@@ -217,9 +279,6 @@ async function startTransfer() {
         <template v-else-if="book.existingTransfer?.status === 'Completed'">Re-transfer to Yoto</template>
         <template v-else>Transfer to Yoto Card</template>
       </button>
-      <p v-if="transferMessage" class="mt-2 text-center text-sm" :class="transferMessage.startsWith('Error') ? 'text-red-600' : 'text-green-600'">
-        {{ transferMessage }}
-      </p>
     </div>
   </div>
 </template>

@@ -43,6 +43,14 @@ const statusText = computed(() => {
             >
               Transfers
             </router-link>
+            <router-link
+              v-if="connectionStore.isYotoConnected"
+              to="/cards"
+              class="text-gray-600 hover:text-gray-900 font-medium"
+              active-class="text-yoto-blue"
+            >
+              My Cards
+            </router-link>
           </template>
         </div>
 

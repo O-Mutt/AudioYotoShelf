@@ -208,3 +208,54 @@ export interface BookDetailResponse {
     completedAt: string | null
   } | null
 }
+
+// --- Yoto Cards (Phase 5) ---
+
+export interface YotoCardSummary {
+  cardId: string
+  metadata: YotoCardMetadata | null
+  chapterCount: number
+  trackCount: number
+  fromAudioYotoShelf: boolean
+  sourceBookTitle: string | null
+  sourceBookAuthor: string | null
+}
+
+export interface YotoCardMetadata {
+  author: string | null
+  category: string | null
+  description: string | null
+  genre: string[] | null
+  languages: string[] | null
+  minAge: number | null
+  maxAge: number | null
+  readBy: string | null
+  cover: { imageL: string | null } | null
+}
+
+export interface YotoCardDetail {
+  cardId: string
+  content: YotoCardContent | null
+  metadata: YotoCardMetadata | null
+}
+
+export interface YotoCardContent {
+  chapters: YotoChapter[]
+  playbackType: string | null
+}
+
+export interface YotoChapter {
+  key: string
+  title: string
+  tracks: YotoTrack[]
+  display: { icon16x16: string | null } | null
+}
+
+export interface YotoTrack {
+  key: string
+  title: string
+  trackUrl: string
+  format: string | null
+  duration: number | null
+  fileSize: number | null
+}

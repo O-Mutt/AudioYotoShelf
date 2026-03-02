@@ -2,11 +2,15 @@
 import { onMounted, ref, computed, watch } from 'vue'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useSignalR } from '@/composables/useSignalR'
+import { useToast } from '@/composables/useToast'
+import { useConfirm } from '@/composables/useConfirm'
 import { transferApi } from '@/services/api'
 import type { TransferResponse, TransferStatus } from '@/types'
 
 const connectionStore = useConnectionStore()
 const { progressUpdates, joinTransfer } = useSignalR()
+const toast = useToast()
+const { confirm } = useConfirm()
 
 const transfers = ref<TransferResponse[]>([])
 const totalTransfers = ref(0)
@@ -22,13 +26,11 @@ const activeTransfers = computed(() =>
 
 onMounted(async () => {
   await loadTransfers()
-  // Subscribe to SignalR for active transfers
   for (const t of activeTransfers.value) {
     await joinTransfer(t.id)
   }
 })
 
-// Merge SignalR updates into transfer list
 watch(progressUpdates, (updates) => {
   for (const [id, update] of updates) {
     const transfer = transfers.value.find(t => t.id === id)
@@ -56,6 +58,34 @@ async function loadTransfers(page = 0) {
   }
 }
 
+async function handleRetry(transferId: string, title: string) {
+  try {
+    await transferApi.retryTransfer(transferId)
+    toast.success(`Retry queued for "${title}"`)
+    await loadTransfers(currentPage.value)
+  } catch {
+    toast.error('Failed to queue retry')
+  }
+}
+
+async function handleCancel(transferId: string, title: string) {
+  const ok = await confirm({
+    title: 'Cancel Transfer',
+    message: `Cancel the transfer for "${title}"? Any uploaded tracks will remain on Yoto.`,
+    confirmText: 'Cancel Transfer',
+    variant: 'danger',
+  })
+  if (!ok) return
+
+  try {
+    await transferApi.cancelTransfer(transferId)
+    toast.info(`Transfer cancelled: "${title}"`)
+    await loadTransfers(currentPage.value)
+  } catch {
+    toast.error('Failed to cancel transfer')
+  }
+}
+
 function statusColor(status: TransferStatus): string {
   const map: Record<TransferStatus, string> = {
     Pending: 'bg-gray-100 text-gray-600',
@@ -69,6 +99,10 @@ function statusColor(status: TransferStatus): string {
     Cancelled: 'bg-gray-100 text-gray-500',
   }
   return map[status] ?? 'bg-gray-100 text-gray-600'
+}
+
+function isActive(status: TransferStatus): boolean {
+  return !['Completed', 'Failed', 'Cancelled'].includes(status)
 }
 
 function formatDate(iso: string): string {
@@ -152,6 +186,24 @@ function formatDate(iso: string): string {
         <p v-if="transfer.errorMessage" class="mt-2 text-sm text-red-600 bg-red-50 rounded p-2">
           {{ transfer.errorMessage }}
         </p>
+
+        <!-- Action buttons (Phase 6) -->
+        <div class="mt-3 flex gap-2">
+          <button
+            v-if="transfer.status === 'Failed'"
+            @click="handleRetry(transfer.id, transfer.bookTitle)"
+            class="text-sm text-yoto-blue hover:text-blue-700 font-medium"
+          >
+            Retry
+          </button>
+          <button
+            v-if="isActive(transfer.status)"
+            @click="handleCancel(transfer.id, transfer.bookTitle)"
+            class="text-sm text-red-600 hover:text-red-700 font-medium"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
 
