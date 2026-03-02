@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, watch } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLibraryStore, SORT_OPTIONS } from '@/stores/libraryStore'
 import { useConnectionStore } from '@/stores/connectionStore'
@@ -19,7 +19,7 @@ const {
   enterSelectionMode, getSelectedArray,
 } = useSelection()
 
-const isBatchTransferring = $ref(false)
+const isBatchTransferring = ref(false)
 
 onMounted(async () => {
   await libraryStore.loadLibraries()
@@ -80,7 +80,7 @@ async function handleBatchTransfer() {
   })
   if (!ok) return
 
-  isBatchTransferring = true
+  isBatchTransferring.value = true
   try {
     const ucid = connectionStore.userConnectionId!
     const { data } = await transferApi.transferBatch(ucid, {
@@ -91,7 +91,7 @@ async function handleBatchTransfer() {
   } catch {
     toast.error('Failed to queue batch transfer')
   } finally {
-    isBatchTransferring = false
+    isBatchTransferring.value = false
   }
 }
 

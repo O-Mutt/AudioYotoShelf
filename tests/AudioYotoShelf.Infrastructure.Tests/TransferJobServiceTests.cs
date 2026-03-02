@@ -1,11 +1,9 @@
-using AudioYotoShelf.Api.Hubs;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Core.Tests.Helpers;
 using AudioYotoShelf.Infrastructure.Services.BackgroundJobs;
 using FluentAssertions;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -14,22 +12,16 @@ namespace AudioYotoShelf.Infrastructure.Tests;
 public class TransferJobServiceTests
 {
     private readonly Mock<ITransferOrchestrator> _orchestrator;
-    private readonly Mock<IHubContext<TransferHub>> _hubContext;
+    private readonly Mock<ITransferProgressNotifier> _notifier;
     private readonly TransferJobService _sut;
 
     public TransferJobServiceTests()
     {
         _orchestrator = new Mock<ITransferOrchestrator>();
-        _hubContext = new Mock<IHubContext<TransferHub>>();
-
-        // Setup hub to accept any SendAsync call
-        var mockClients = new Mock<IHubClients>();
-        var mockProxy = new Mock<IClientProxy>();
-        mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockProxy.Object);
-        _hubContext.Setup(h => h.Clients).Returns(mockClients.Object);
+        _notifier = new Mock<ITransferProgressNotifier>();
 
         _sut = new TransferJobService(
-            _orchestrator.Object, _hubContext.Object,
+            _orchestrator.Object, _notifier.Object,
             Mock.Of<ILogger<TransferJobService>>());
     }
 
@@ -58,7 +50,7 @@ public class TransferJobServiceTests
     }
 
     [Fact]
-    public async Task ExecuteBookTransferAsync_SendsSignalRProgressOnComplete()
+    public async Task ExecuteBookTransferAsync_SendsProgressOnComplete()
     {
         var userId = Guid.NewGuid();
         var transferId = Guid.NewGuid();
@@ -74,7 +66,9 @@ public class TransferJobServiceTests
 
         await _sut.ExecuteBookTransferAsync(userId, TestData.CreateTransferRequest(), CancellationToken.None);
 
-        _hubContext.Verify(h => h.Clients, Times.AtLeastOnce);
+        _notifier.Verify(n => n.SendProgressAsync(
+            It.Is<TransferProgressUpdate>(u => u.TransferId == transferId && u.Status == TransferStatus.Completed),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

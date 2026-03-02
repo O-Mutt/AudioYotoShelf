@@ -1,6 +1,12 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --color-yoto-blue: #4A90D9;
+  --color-yoto-green: #7BC67E;
+  --color-yoto-orange: #F5A623;
+  --color-yoto-red: #D0021B;
+  --color-yoto-purple: #9B59B6;
+}
 
 @layer base {
   body {

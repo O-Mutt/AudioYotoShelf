@@ -20,70 +20,70 @@ var builder = WebApplication.CreateBuilder(args);
 // --- Serilog ---
 builder.Host.UseSerilog((context, loggerConfig) =>
 {
-    loggerConfig
-        .ReadFrom.Configuration(context.Configuration)
-        .Enrich.FromLogContext()
-        .Enrich.WithEnvironmentName()
-        .Enrich.WithThreadId()
-        .WriteTo.Console(outputTemplate:
-            "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}");
+	loggerConfig
+			.ReadFrom.Configuration(context.Configuration)
+			.Enrich.FromLogContext()
+			.Enrich.WithEnvironmentName()
+			.Enrich.WithThreadId()
+			.WriteTo.Console(outputTemplate:
+					"[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}");
 
-    var seqUrl = context.Configuration["Serilog:SeqUrl"];
-    if (!string.IsNullOrEmpty(seqUrl))
-        loggerConfig.WriteTo.Seq(seqUrl);
+	var seqUrl = context.Configuration["Serilog:SeqUrl"];
+	if (!string.IsNullOrEmpty(seqUrl))
+		loggerConfig.WriteTo.Seq(seqUrl);
 });
 
 // --- Database ---
 builder.Services.AddDbContext<AudioYotoShelfDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres"), npgsql =>
-    {
-        npgsql.MigrationsAssembly(typeof(AudioYotoShelfDbContext).Assembly.FullName);
-        npgsql.EnableRetryOnFailure(3);
-    }));
+		options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres"), npgsql =>
+		{
+			npgsql.MigrationsAssembly(typeof(AudioYotoShelfDbContext).Assembly.FullName);
+			npgsql.EnableRetryOnFailure(3);
+		}));
 
 // --- Redis ---
 builder.Services.AddStackExchangeRedisCache(options =>
 {
-    options.Configuration = builder.Configuration.GetConnectionString("Redis");
-    options.InstanceName = "AudioYotoShelf:";
+	options.Configuration = builder.Configuration.GetConnectionString("Redis");
+	options.InstanceName = "AudioYotoShelf:";
 });
 
 // --- Hangfire ---
 builder.Services.AddHangfire(config => config
-    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-    .UseSimpleAssemblyNameTypeSerializer()
-    .UseRecommendedSerializerSettings()
-    .UsePostgreSqlStorage(options =>
-        options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("Postgres"))));
+		.SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+		.UseSimpleAssemblyNameTypeSerializer()
+		.UseRecommendedSerializerSettings()
+		.UsePostgreSqlStorage(options =>
+				options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("Postgres"))));
 builder.Services.AddHangfireServer(options =>
 {
-    options.WorkerCount = 2;
-    options.Queues = ["transfers", "icons", "default"];
+	options.WorkerCount = 2;
+	options.Queues = ["transfers", "icons", "default"];
 });
 
 // --- HttpClients ---
 builder.Services.AddHttpClient("Audiobookshelf", client =>
 {
-    client.DefaultRequestHeaders.Add("Accept", "application/json");
-    client.Timeout = TimeSpan.FromMinutes(10);
+	client.DefaultRequestHeaders.Add("Accept", "application/json");
+	client.Timeout = TimeSpan.FromMinutes(10);
 });
 builder.Services.AddHttpClient("Yoto", client =>
 {
-    client.DefaultRequestHeaders.Add("Accept", "application/json");
-    client.Timeout = TimeSpan.FromMinutes(5);
+	client.DefaultRequestHeaders.Add("Accept", "application/json");
+	client.Timeout = TimeSpan.FromMinutes(5);
 });
 builder.Services.AddHttpClient("YotoAuth", client =>
 {
-    client.DefaultRequestHeaders.Add("Accept", "application/json");
+	client.DefaultRequestHeaders.Add("Accept", "application/json");
 });
 builder.Services.AddHttpClient("YotoUpload", client =>
 {
-    client.Timeout = TimeSpan.FromMinutes(30);
+	client.Timeout = TimeSpan.FromMinutes(30);
 });
 builder.Services.AddHttpClient("Gemini", client =>
 {
-    client.DefaultRequestHeaders.Add("Accept", "application/json");
-    client.Timeout = TimeSpan.FromMinutes(2);
+	client.DefaultRequestHeaders.Add("Accept", "application/json");
+	client.Timeout = TimeSpan.FromMinutes(2);
 });
 
 // --- Services (DI) ---
@@ -96,6 +96,7 @@ builder.Services.AddScoped<IIconGenerationService, RateLimitedIconService>();
 builder.Services.AddScoped<ITransferOrchestrator, TransferOrchestrator>();
 builder.Services.AddSingleton<ICacheService, RedisCacheService>();
 builder.Services.AddTransferJobs();
+builder.Services.AddScoped<ITransferProgressNotifier, AudioYotoShelf.Api.Hubs.SignalRTransferProgressNotifier>();
 
 // --- FluentValidation ---
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
@@ -105,11 +106,11 @@ var signalRBuilder = builder.Services.AddSignalR();
 var redisConnectionString = builder.Configuration.GetConnectionString("Redis");
 if (!string.IsNullOrEmpty(redisConnectionString))
 {
-    signalRBuilder.AddStackExchangeRedis(redisConnectionString, options =>
-    {
-        options.Configuration.ChannelPrefix = new StackExchange.Redis.RedisChannel(
-            "AudioYotoShelf", StackExchange.Redis.RedisChannel.PatternMode.Literal);
-    });
+	signalRBuilder.AddStackExchangeRedis(redisConnectionString, options =>
+	{
+		options.Configuration.ChannelPrefix = new StackExchange.Redis.RedisChannel(
+					"AudioYotoShelf", StackExchange.Redis.RedisChannel.PatternMode.Literal);
+	});
 }
 
 // --- API ---
@@ -120,13 +121,13 @@ builder.Services.AddOpenApi();
 // --- CORS for Vue dev server ---
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("Development", policy =>
-    {
-        policy.WithOrigins("http://localhost:5173")
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
-    });
+	options.AddPolicy("Development", policy =>
+	{
+		policy.WithOrigins("http://localhost:5173")
+					.AllowAnyHeader()
+					.AllowAnyMethod()
+					.AllowCredentials();
+	});
 });
 
 var app = builder.Build();
@@ -136,8 +137,8 @@ app.UseGlobalExceptionHandling();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
-    app.UseCors("Development");
+	app.MapOpenApi();
+	app.UseCors("Development");
 }
 
 app.UseSerilogRequestLogging();
@@ -146,7 +147,7 @@ app.UseRouting();
 
 app.MapHangfireDashboard("/hangfire", new DashboardOptions
 {
-    DashboardTitle = "AudioYotoShelf Jobs"
+	DashboardTitle = "AudioYotoShelf Jobs"
 });
 
 app.MapControllers();
@@ -156,12 +157,12 @@ app.MapFallbackToFile("index.html");
 // --- Database migration on startup ---
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<AudioYotoShelfDbContext>();
-    await db.Database.MigrateAsync();
+	var db = scope.ServiceProvider.GetRequiredService<AudioYotoShelfDbContext>();
+	await db.Database.MigrateAsync();
 
-    var ffmpeg = scope.ServiceProvider.GetRequiredService<IChapterExtractor>();
-    var ffmpegAvailable = await ffmpeg.IsFfmpegAvailableAsync();
-    Log.Information("FFmpeg available: {Available}", ffmpegAvailable);
+	var ffmpeg = scope.ServiceProvider.GetRequiredService<IChapterExtractor>();
+	var ffmpegAvailable = await ffmpeg.IsFfmpegAvailableAsync();
+	Log.Information("FFmpeg available: {Available}", ffmpegAvailable);
 }
 
 Log.Information("AudioYotoShelf started. Environment: {Environment}", app.Environment.EnvironmentName);
