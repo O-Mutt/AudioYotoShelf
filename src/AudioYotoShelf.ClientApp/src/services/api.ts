@@ -8,7 +8,6 @@ import type {
   BookDetailResponse,
   ConnectionStatus,
   TransferResponse,
-  YotoDeviceCodeResponse,
 } from '@/types'
 
 const api = axios.create({
@@ -27,12 +26,8 @@ export const authApi = {
     return api.post<{ valid: boolean }>(`/auth/abs/validate/${userConnectionId}`)
   },
 
-  initiateYotoAuth(userConnectionId: string) {
-    return api.post<YotoDeviceCodeResponse>(`/auth/yoto/initiate/${userConnectionId}`)
-  },
-
-  pollYotoAuth(userConnectionId: string) {
-    return api.post<{ status: string; yotoConnected?: boolean }>(`/auth/yoto/poll/${userConnectionId}`)
+  getYotoAuthUrl(userConnectionId: string) {
+    return api.get<{ authUrl: string }>(`/auth/yoto/authorize/${userConnectionId}`)
   },
 
   getConnectionStatus(userConnectionId: string) {
@@ -64,10 +59,11 @@ export const libraryApi = {
     collapseSeries = false,
     search?: string,
     sort?: string,
+    sortDesc = false,
   ) {
     return api.get<AbsLibraryItemsResponse>(
       `/libraries/${userConnectionId}/library/${libraryId}/items`,
-      { params: { page, limit, collapseSeries, search: search || undefined, sort: sort || undefined } }
+      { params: { page, limit, collapseSeries, search: search || undefined, sort: sort || undefined, sortDesc: sortDesc || undefined } }
     )
   },
 

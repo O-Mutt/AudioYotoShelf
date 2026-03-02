@@ -480,7 +480,7 @@ public class TransferOrchestrator(
             Languages: metadata.Language is not null ? [metadata.Language] : null,
             MinAge: transfer.EffectiveMinAge,
             MaxAge: transfer.EffectiveMaxAge,
-            ReadBy: metadata.Narrators?.FirstOrDefault()?.Name,
+            ReadBy: metadata.Narrators?.FirstOrDefault(),
             Cover: coverUrl is not null ? new YotoCover(coverUrl) : null
         );
 

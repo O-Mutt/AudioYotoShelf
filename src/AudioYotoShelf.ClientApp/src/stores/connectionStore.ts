@@ -11,11 +11,6 @@ export const useConnectionStore = defineStore('connection', () => {
   const isLoading = ref(false)
   const error = ref<string | null>(null)
 
-  // Yoto device-code auth state
-  const yotoAuthPending = ref(false)
-  const yotoUserCode = ref<string | null>(null)
-  const yotoVerificationUri = ref<string | null>(null)
-
   const isAbsConnected = computed(() => status.value?.absConnected ?? false)
   const isYotoConnected = computed(() => status.value?.yotoConnected ?? false)
   const isFullyConnected = computed(() => isAbsConnected.value && isYotoConnected.value)
@@ -56,40 +51,18 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
-  /** Start Yoto device-code OAuth flow */
-  async function initiateYotoAuth() {
+  /** Start Yoto OAuth authorization code flow (full page redirect) */
+  async function startYotoAuth() {
     if (!userConnectionId.value) return
     isLoading.value = true
     error.value = null
     try {
-      const { data } = await authApi.initiateYotoAuth(userConnectionId.value)
-      yotoUserCode.value = data.userCode
-      yotoVerificationUri.value = data.verificationUri
-      yotoAuthPending.value = true
+      const { data } = await authApi.getYotoAuthUrl(userConnectionId.value)
+      window.location.href = data.authUrl
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to initiate Yoto authorization'
+      const msg = err instanceof Error ? err.message : 'Failed to start Yoto authorization'
       error.value = msg
-      yotoAuthPending.value = false
-    } finally {
       isLoading.value = false
-    }
-  }
-
-  /** Poll for Yoto auth completion. Returns true when authorized. */
-  async function pollYotoAuth(): Promise<boolean> {
-    if (!userConnectionId.value) return false
-    try {
-      const { data } = await authApi.pollYotoAuth(userConnectionId.value)
-      if (data.yotoConnected) {
-        yotoAuthPending.value = false
-        yotoUserCode.value = null
-        yotoVerificationUri.value = null
-        await loadStatus()
-        return true
-      }
-      return false
-    } catch {
-      return false
     }
   }
 
@@ -108,9 +81,6 @@ export const useConnectionStore = defineStore('connection', () => {
     userConnectionId.value = null
     status.value = null
     error.value = null
-    yotoAuthPending.value = false
-    yotoUserCode.value = null
-    yotoVerificationUri.value = null
     localStorage.removeItem(STORAGE_KEY)
   }
 
@@ -119,9 +89,6 @@ export const useConnectionStore = defineStore('connection', () => {
     status,
     isLoading,
     error,
-    yotoAuthPending,
-    yotoUserCode,
-    yotoVerificationUri,
     isAbsConnected,
     isYotoConnected,
     isFullyConnected,
@@ -130,8 +97,7 @@ export const useConnectionStore = defineStore('connection', () => {
     loadStatus,
     refreshStatus: loadStatus,
     connectToAbs,
-    initiateYotoAuth,
-    pollYotoAuth,
+    startYotoAuth,
     updateSettings,
     logout,
   }

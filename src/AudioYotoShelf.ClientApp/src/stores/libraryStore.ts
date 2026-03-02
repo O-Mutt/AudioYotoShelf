@@ -28,12 +28,14 @@ export const useLibraryStore = defineStore('library', () => {
   const isLoading = ref(false)
   const viewMode = ref<'books' | 'series'>('books')
 
-  // Search & sort state (Phase 1)
+  // Search, sort & pagination state
   const searchQuery = ref('')
   const sortField = ref<SortField>('media.metadata.title')
+  const sortDesc = ref(false)
+  const pageSize = ref(20)
 
   const ucid = computed(() => connectionStore.userConnectionId)
-  const pageCount = computed(() => Math.max(1, Math.ceil(totalItems.value / 20)))
+  const pageCount = computed(() => Math.max(1, Math.ceil(totalItems.value / pageSize.value)))
   const hasNoResults = computed(() => !isLoading.value && items.value.length === 0)
 
   // --- Debounce helper ---
@@ -52,8 +54,8 @@ export const useLibraryStore = defineStore('library', () => {
     debouncedSearch()
   })
 
-  // Watch sort changes → immediate reload
-  watch(sortField, () => {
+  // Watch sort/page-size changes → immediate reload
+  watch([sortField, sortDesc, pageSize], () => {
     currentPage.value = 0
     loadItems()
   })
@@ -78,7 +80,7 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  async function loadItems(page = 0, limit = 20) {
+  async function loadItems(page = 0, limit = pageSize.value) {
     if (!ucid.value || !selectedLibraryId.value) return
     isLoading.value = true
     try {
@@ -90,6 +92,7 @@ export const useLibraryStore = defineStore('library', () => {
         false,
         searchQuery.value.trim() || undefined,
         sortField.value,
+        sortDesc.value,
       )
       items.value = data.results
       totalItems.value = data.total
@@ -155,6 +158,8 @@ export const useLibraryStore = defineStore('library', () => {
     viewMode,
     searchQuery,
     sortField,
+    sortDesc,
+    pageSize,
     // Computed
     pageCount,
     hasNoResults,

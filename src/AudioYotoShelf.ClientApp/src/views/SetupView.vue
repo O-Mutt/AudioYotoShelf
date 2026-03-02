@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useConnectionStore } from '@/stores/connectionStore'
 
@@ -11,38 +11,17 @@ const absUrl = ref('http://localhost:13378')
 const absUsername = ref('')
 const absPassword = ref('')
 
-// Yoto polling
-let pollInterval: ReturnType<typeof setInterval> | null = null
-
 async function connectAbs() {
   await connectionStore.connectToAbs(absUrl.value, absUsername.value, absPassword.value)
 }
 
 async function startYotoAuth() {
-  await connectionStore.initiateYotoAuth()
-
-  // Open verification URL in new tab
-  if (connectionStore.yotoVerificationUri) {
-    window.open(connectionStore.yotoVerificationUri, '_blank')
-  }
-
-  // Start polling
-  pollInterval = setInterval(async () => {
-    const authorized = await connectionStore.pollYotoAuth()
-    if (authorized) {
-      clearInterval(pollInterval!)
-      pollInterval = null
-    }
-  }, 5000)
+  await connectionStore.startYotoAuth()
 }
 
 function goToLibrary() {
   router.push('/library')
 }
-
-onUnmounted(() => {
-  if (pollInterval) clearInterval(pollInterval)
-})
 </script>
 
 <template>
@@ -110,28 +89,6 @@ onUnmounted(() => {
 
       <div v-else-if="connectionStore.isYotoConnected" class="text-sm text-gray-600">
         Yoto account connected and authorized.
-      </div>
-
-      <div v-else-if="connectionStore.yotoAuthPending" class="space-y-4">
-        <p class="text-sm text-gray-600">
-          Enter this code on the Yoto authorization page:
-        </p>
-        <div class="text-center">
-          <code class="text-3xl font-mono font-bold tracking-widest text-yoto-blue">
-            {{ connectionStore.yotoUserCode }}
-          </code>
-        </div>
-        <p class="text-sm text-gray-500 text-center">
-          Waiting for authorization...
-          <span class="inline-block animate-spin ml-1">⏳</span>
-        </p>
-        <a
-          :href="connectionStore.yotoVerificationUri ?? '#'"
-          target="_blank"
-          class="btn-secondary w-full text-center block"
-        >
-          Open Yoto Authorization Page
-        </a>
       </div>
 
       <div v-else>

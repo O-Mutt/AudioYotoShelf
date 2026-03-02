@@ -12,7 +12,7 @@ public record AbsLibrary(
 );
 
 public record AbsLibrarySettings(
-    string CoverAspectRatio,
+    int CoverAspectRatio,
     bool DisableWatcher
 );
 
@@ -50,7 +50,7 @@ public record AbsBookMetadata(
     string? Title,
     string? Subtitle,
     AbsAuthor[]? Authors,
-    AbsNarrator[]? Narrators,
+    string[]? Narrators,
     AbsSeries[]? Series,
     string[]? Genres,
     string? PublishedYear,
@@ -63,7 +63,6 @@ public record AbsBookMetadata(
 );
 
 public record AbsAuthor(string Id, string Name);
-public record AbsNarrator(string Id, string Name);
 public record AbsSeries(string Id, string Name, string? Sequence);
 
 public record AbsAudioFile(

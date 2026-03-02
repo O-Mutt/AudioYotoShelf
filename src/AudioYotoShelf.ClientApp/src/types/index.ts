@@ -21,14 +21,6 @@ export interface AbsConnectResponse {
   libraries: string[] | null
 }
 
-export interface YotoDeviceCodeResponse {
-  userCode: string
-  verificationUri: string
-  verificationUriComplete: string
-  expiresIn: number
-  interval: number
-}
-
 // --- Libraries ---
 
 export interface AbsLibrary {
@@ -69,7 +61,7 @@ export interface AbsBookMetadata {
   title: string | null
   subtitle: string | null
   authors: { id: string; name: string }[]
-  narrators: { id: string; name: string }[]
+  narrators: string[]
   series: { id: string; name: string; sequence: string | null }[]
   genres: string[]
   publishedYear: string | null

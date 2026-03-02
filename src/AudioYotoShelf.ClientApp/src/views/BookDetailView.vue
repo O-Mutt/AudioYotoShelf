@@ -120,7 +120,7 @@ async function startTransfer() {
           by {{ metadata?.authors?.map(a => a.name).join(', ') ?? 'Unknown' }}
         </p>
         <p v-if="metadata?.narrators?.length" class="text-sm text-gray-500">
-          Narrated by {{ metadata.narrators.map(n => n.name).join(', ') }}
+          Narrated by {{ metadata.narrators.join(', ') }}
         </p>
         <div class="flex flex-wrap gap-2 mt-2">
           <span

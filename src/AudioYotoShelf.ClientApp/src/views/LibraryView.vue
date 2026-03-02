@@ -173,12 +173,24 @@ function onCoverError(e: Event) {
         </button>
       </div>
 
-      <!-- Sort dropdown -->
+      <!-- Sort dropdown + direction toggle -->
       <div class="flex items-center gap-2">
         <span class="text-sm text-gray-500 whitespace-nowrap">Sort by</span>
         <select v-model="libraryStore.sortField" class="input-field w-auto text-sm">
           <option v-for="opt in SORT_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
+        <button
+          @click="libraryStore.sortDesc = !libraryStore.sortDesc"
+          class="p-2 rounded-md hover:bg-gray-100 transition-colors text-gray-500"
+          :title="libraryStore.sortDesc ? 'Descending (click for ascending)' : 'Ascending (click for descending)'"
+        >
+          <svg v-if="!libraryStore.sortDesc" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M3.293 9.707a1 1 0 010-1.414l6-6a1 1 0 011.414 0l6 6a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L4.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+          </svg>
+          <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M16.707 10.293a1 1 0 010 1.414l-6 6a1 1 0 01-1.414 0l-6-6a1 1 0 111.414-1.414L9 14.586V3a1 1 0 012 0v11.586l4.293-4.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+          </svg>
+        </button>
       </div>
 
       <!-- Selection mode toggle -->
@@ -307,7 +319,7 @@ function onCoverError(e: Event) {
     </div>
 
     <!-- Pagination -->
-    <div v-if="!libraryStore.isLoading && libraryStore.viewMode === 'books' && libraryStore.totalItems > 20" class="flex justify-center items-center space-x-2 pt-4">
+    <div v-if="!libraryStore.isLoading && libraryStore.viewMode === 'books' && libraryStore.totalItems > libraryStore.pageSize" class="flex justify-center items-center space-x-2 pt-4">
       <button
         @click="libraryStore.loadItems(libraryStore.currentPage - 1)"
         :disabled="libraryStore.currentPage === 0"
@@ -318,9 +330,15 @@ function onCoverError(e: Event) {
       </span>
       <button
         @click="libraryStore.loadItems(libraryStore.currentPage + 1)"
-        :disabled="(libraryStore.currentPage + 1) * 20 >= libraryStore.totalItems"
+        :disabled="(libraryStore.currentPage + 1) * libraryStore.pageSize >= libraryStore.totalItems"
         class="btn-secondary text-sm"
       >Next</button>
+      <select v-model.number="libraryStore.pageSize" class="input-field w-auto text-sm ml-2">
+        <option :value="20">20 / page</option>
+        <option :value="40">40 / page</option>
+        <option :value="60">60 / page</option>
+        <option :value="100">100 / page</option>
+      </select>
     </div>
 
     <!-- Floating batch action bar (Phase 2) -->

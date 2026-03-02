@@ -2,7 +2,7 @@ namespace AudioYotoShelf.Core.Entities;
 
 /// <summary>
 /// Stores a user's connections to Audiobookshelf and Yoto.
-/// ABS token is obtained via login delegation; Yoto tokens via OAuth device flow.
+/// ABS token is obtained via login delegation; Yoto tokens via OAuth authorization code flow.
 /// </summary>
 public class UserConnection : BaseEntity
 {
@@ -17,6 +17,7 @@ public class UserConnection : BaseEntity
     public string? YotoAccessToken { get; set; }
     public string? YotoRefreshToken { get; set; }
     public DateTimeOffset? YotoTokenExpiresAt { get; set; }
+    /// <summary>Stores OAuth state nonce during authorization code flow.</summary>
     public string? YotoDeviceCode { get; set; }
 
     // Preferences

@@ -4,24 +4,8 @@ namespace AudioYotoShelf.Core.DTOs.Yoto;
 
 // --- OAuth ---
 
-public record YotoDeviceCodeRequest(
-    [property: JsonPropertyName("client_id")] string ClientId,
-    string Scope,
-    string Audience
-);
-
-public record YotoDeviceCodeResponse(
-    [property: JsonPropertyName("device_code")] string DeviceCode,
-    [property: JsonPropertyName("user_code")] string UserCode,
-    [property: JsonPropertyName("verification_uri")] string VerificationUri,
-    [property: JsonPropertyName("verification_uri_complete")] string VerificationUriComplete,
-    [property: JsonPropertyName("expires_in")] int ExpiresIn,
-    int Interval
-);
-
 public record YotoTokenRequest(
     [property: JsonPropertyName("grant_type")] string GrantType,
-    [property: JsonPropertyName("device_code")] string? DeviceCode,
     [property: JsonPropertyName("client_id")] string ClientId,
     [property: JsonPropertyName("client_secret")] string? ClientSecret,
     [property: JsonPropertyName("refresh_token")] string? RefreshToken

@@ -19,8 +19,7 @@ public class YotoService(
 
     private string ClientId => configuration["Yoto:ClientId"]
         ?? throw new InvalidOperationException("Yoto:ClientId not configured");
-    private string ClientSecret => configuration["Yoto:ClientSecret"]
-        ?? throw new InvalidOperationException("Yoto:ClientSecret not configured");
+    private string? ClientSecret => configuration["Yoto:ClientSecret"];
 
     private HttpClient CreateApiClient(string accessToken)
     {
@@ -30,49 +29,45 @@ public class YotoService(
         return client;
     }
 
-    // --- OAuth Device Flow ---
+    // --- OAuth Authorization Code Flow ---
 
-    public async Task<YotoDeviceCodeResponse> InitiateDeviceAuthAsync(CancellationToken ct = default)
+    public string GetAuthorizationUrl(string redirectUri, string state)
     {
-        using var client = httpClientFactory.CreateClient("YotoAuth");
-        client.BaseAddress = new Uri(YotoAuthBase);
-
-        var response = await client.PostAsJsonAsync("/oauth/device/code", new YotoDeviceCodeRequest(
-            ClientId,
-            "profile offline_access openid",
-            YotoApiBase
-        ), ct);
-        response.EnsureSuccessStatusCode();
-
-        return await response.Content.ReadFromJsonAsync<YotoDeviceCodeResponse>(ct)
-            ?? throw new InvalidOperationException("Failed to deserialize device code response");
+        var query = System.Web.HttpUtility.ParseQueryString(string.Empty);
+        query["response_type"] = "code";
+        query["client_id"] = ClientId;
+        query["redirect_uri"] = redirectUri;
+        query["scope"] = "profile offline_access openid";
+        query["audience"] = YotoApiBase;
+        query["state"] = state;
+        return $"{YotoAuthBase}/authorize?{query}";
     }
 
-    public async Task<YotoTokenResponse?> PollForTokenAsync(string deviceCode, CancellationToken ct = default)
+    public async Task<YotoTokenResponse> ExchangeAuthCodeAsync(string code, string redirectUri, CancellationToken ct = default)
     {
         using var client = httpClientFactory.CreateClient("YotoAuth");
         client.BaseAddress = new Uri(YotoAuthBase);
 
-        var response = await client.PostAsJsonAsync("/oauth/token", new YotoTokenRequest(
-            "urn:ietf:params:oauth:grant-type:device_code",
-            deviceCode,
-            ClientId,
-            ClientSecret,
-            null
-        ), ct);
+        var form = new Dictionary<string, string>
+        {
+            ["grant_type"] = "authorization_code",
+            ["code"] = code,
+            ["redirect_uri"] = redirectUri,
+            ["client_id"] = ClientId,
+        };
+        if (!string.IsNullOrEmpty(ClientSecret))
+            form["client_secret"] = ClientSecret;
 
+        var response = await client.PostAsync("/oauth/token", new FormUrlEncodedContent(form), ct);
         if (!response.IsSuccessStatusCode)
         {
-            // "authorization_pending" means user hasn't authorized yet — not an error
-            var errorBody = await response.Content.ReadAsStringAsync(ct);
-            if (errorBody.Contains("authorization_pending", StringComparison.OrdinalIgnoreCase))
-                return null;
-
-            logger.LogWarning("Yoto token poll failed: {StatusCode} {Body}", response.StatusCode, errorBody);
-            return null;
+            var body = await response.Content.ReadAsStringAsync(ct);
+            logger.LogError("Yoto auth code exchange failed: {StatusCode} {Body}", response.StatusCode, body);
+            response.EnsureSuccessStatusCode();
         }
 
-        return await response.Content.ReadFromJsonAsync<YotoTokenResponse>(ct);
+        return await response.Content.ReadFromJsonAsync<YotoTokenResponse>(ct)
+            ?? throw new InvalidOperationException("Failed to deserialize token response");
     }
 
     public async Task<YotoTokenResponse> RefreshTokenAsync(string refreshToken, CancellationToken ct = default)
@@ -80,13 +75,16 @@ public class YotoService(
         using var client = httpClientFactory.CreateClient("YotoAuth");
         client.BaseAddress = new Uri(YotoAuthBase);
 
-        var response = await client.PostAsJsonAsync("/oauth/token", new YotoTokenRequest(
-            "refresh_token",
-            null,
-            ClientId,
-            ClientSecret,
-            refreshToken
-        ), ct);
+        var form = new Dictionary<string, string>
+        {
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = refreshToken,
+            ["client_id"] = ClientId,
+        };
+        if (!string.IsNullOrEmpty(ClientSecret))
+            form["client_secret"] = ClientSecret;
+
+        var response = await client.PostAsync("/oauth/token", new FormUrlEncodedContent(form), ct);
         response.EnsureSuccessStatusCode();
 
         return await response.Content.ReadFromJsonAsync<YotoTokenResponse>(ct)

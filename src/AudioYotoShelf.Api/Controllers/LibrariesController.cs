@@ -47,13 +47,11 @@ public class LibrariesController(
         if (user is null || !user.HasValidAbsConnection)
             return Unauthorized("No valid Audiobookshelf connection");
 
-        // Build sort string: ABS uses "field" for asc, prepend "-" is not supported natively,
-        // but ABS API uses a separate desc param. We'll build the sort value.
         var sortParam = sort ?? "media.metadata.title";
 
         var items = await absService.GetLibraryItemsAsync(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, libraryId,
-            page, limit, sortParam, collapseSeries, search, filter, ct);
+            page, limit, sortParam, sortDesc, collapseSeries, search, filter, ct);
 
         return Ok(items);
     }

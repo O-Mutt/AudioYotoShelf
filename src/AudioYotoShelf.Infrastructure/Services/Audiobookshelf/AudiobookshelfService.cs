@@ -57,13 +57,14 @@ public class AudiobookshelfService(
 
     public async Task<AbsLibraryItemsResponse> GetLibraryItemsAsync(
         string baseUrl, string token, string libraryId,
-        int page = 0, int limit = 20, string? sort = null,
+        int page = 0, int limit = 20, string? sort = null, bool desc = false,
         bool collapseSeries = false, string? search = null, string? filter = null,
         CancellationToken ct = default)
     {
         using var client = CreateClient(baseUrl, token);
         var queryParams = $"?page={page}&limit={limit}&minified=1";
         if (sort is not null) queryParams += $"&sort={sort}";
+        if (desc) queryParams += "&desc=1";
         if (collapseSeries) queryParams += "&collapseseries=1";
         if (!string.IsNullOrWhiteSpace(search))
             queryParams += $"&search={Uri.EscapeDataString(search)}";

@@ -79,39 +79,43 @@ public class AuthController(
         return Ok(new { Valid = isValid });
     }
 
-    // --- Yoto OAuth Device Flow ---
+    // --- Yoto OAuth Authorization Code Flow ---
 
-    [HttpPost("yoto/initiate/{userConnectionId:guid}")]
-    public async Task<IActionResult> InitiateYotoAuth(Guid userConnectionId, CancellationToken ct)
+    [HttpGet("yoto/authorize/{userConnectionId:guid}")]
+    public async Task<IActionResult> AuthorizeYoto(Guid userConnectionId, CancellationToken ct)
     {
         var user = await db.UserConnections.FindAsync([userConnectionId], ct);
         if (user is null) return NotFound();
 
-        var deviceCodeResponse = await yotoService.InitiateDeviceAuthAsync(ct);
-
-        user.YotoDeviceCode = deviceCodeResponse.DeviceCode;
+        var nonce = Guid.NewGuid().ToString("N");
+        user.YotoDeviceCode = nonce; // reuse column for OAuth state nonce
         await db.SaveChangesAsync(ct);
 
-        return Ok(new
-        {
-            deviceCodeResponse.UserCode,
-            deviceCodeResponse.VerificationUri,
-            deviceCodeResponse.VerificationUriComplete,
-            deviceCodeResponse.ExpiresIn,
-            deviceCodeResponse.Interval
-        });
+        var state = $"{userConnectionId}:{nonce}";
+        var redirectUri = $"{Request.Scheme}://{Request.Host}/api/auth/yoto/callback";
+        var authUrl = yotoService.GetAuthorizationUrl(redirectUri, state);
+
+        return Ok(new { authUrl });
     }
 
-    [HttpPost("yoto/poll/{userConnectionId:guid}")]
-    public async Task<IActionResult> PollYotoAuth(Guid userConnectionId, CancellationToken ct)
+    [HttpGet("yoto/callback")]
+    public async Task<IActionResult> YotoCallback(
+        [FromQuery] string code, [FromQuery] string state, CancellationToken ct)
     {
+        // Parse state = "{userConnectionId}:{nonce}"
+        var parts = state.Split(':', 2);
+        if (parts.Length != 2 || !Guid.TryParse(parts[0], out var userConnectionId))
+            return BadRequest("Invalid state parameter");
+
+        var nonce = parts[1];
         var user = await db.UserConnections.FindAsync([userConnectionId], ct);
-        if (user?.YotoDeviceCode is null) return BadRequest("No pending device authorization");
+        if (user is null) return NotFound();
 
-        var tokenResponse = await yotoService.PollForTokenAsync(user.YotoDeviceCode, ct);
+        if (user.YotoDeviceCode != nonce)
+            return BadRequest("State mismatch — possible CSRF attack");
 
-        if (tokenResponse is null)
-            return Ok(new { Status = "pending" });
+        var redirectUri = $"{Request.Scheme}://{Request.Host}/api/auth/yoto/callback";
+        var tokenResponse = await yotoService.ExchangeAuthCodeAsync(code, redirectUri, ct);
 
         user.YotoAccessToken = tokenResponse.AccessToken;
         user.YotoRefreshToken = tokenResponse.RefreshToken;
@@ -119,9 +123,9 @@ public class AuthController(
         user.YotoDeviceCode = null;
         await db.SaveChangesAsync(ct);
 
-        logger.LogInformation("User {Username} connected to Yoto", user.Username);
+        logger.LogInformation("User {Username} connected to Yoto via auth code flow", user.Username);
 
-        return Ok(new { Status = "authorized", YotoConnected = true });
+        return Redirect("/setup");
     }
 
     // --- User Settings (Phase 3) ---
