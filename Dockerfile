@@ -2,7 +2,8 @@
 FROM node:22-alpine AS frontend-build
 WORKDIR /app/client
 COPY src/AudioYotoShelf.ClientApp/package*.json ./
-RUN npm ci
+RUN npm clean-install
+
 COPY src/AudioYotoShelf.ClientApp/ ./
 RUN npm run build
 
