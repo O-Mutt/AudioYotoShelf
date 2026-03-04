@@ -127,6 +127,7 @@ export type TransferStatus =
 
 export interface TransferResponse {
   id: string
+  absLibraryItemId: string
   bookTitle: string
   bookAuthor: string | null
   seriesName: string | null

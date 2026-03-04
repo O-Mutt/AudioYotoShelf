@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed, watch } from 'vue'
+import { onMounted, onUnmounted, ref, computed, watch } from 'vue'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useSignalR } from '@/composables/useSignalR'
 import { useToast } from '@/composables/useToast'
@@ -18,6 +18,11 @@ const currentPage = ref(0)
 const isLoading = ref(true)
 const filterStatus = ref<TransferStatus | ''>('')
 
+// Track last SignalR update time per transfer for the activity indicator
+const lastUpdateTime = ref<Record<string, number>>({})
+const now = ref(Date.now())
+let nowTimer: ReturnType<typeof setInterval>
+
 const activeTransfers = computed(() =>
   transfers.value.filter(t =>
     !['Completed', 'Failed', 'Cancelled'].includes(t.status)
@@ -29,6 +34,11 @@ onMounted(async () => {
   for (const t of activeTransfers.value) {
     await joinTransfer(t.id)
   }
+  nowTimer = setInterval(() => { now.value = Date.now() }, 10_000)
+})
+
+onUnmounted(() => {
+  clearInterval(nowTimer)
 })
 
 watch(progressUpdates, (updates) => {
@@ -38,6 +48,8 @@ watch(progressUpdates, (updates) => {
       transfer.status = update.status
       transfer.progressPercent = update.progressPercent
       transfer.errorMessage = update.errorMessage
+      lastUpdateTime.value[id] = Date.now()
+      now.value = Date.now()
     }
   }
 }, { deep: true })
@@ -86,6 +98,37 @@ async function handleCancel(transferId: string, title: string) {
   }
 }
 
+async function handleDelete(transferId: string, title: string) {
+  const ok = await confirm({
+    title: 'Delete Transfer',
+    message: `Remove the transfer record for "${title}"? This does not delete the Yoto card.`,
+    confirmText: 'Delete',
+    variant: 'danger',
+  })
+  if (!ok) return
+
+  try {
+    await transferApi.deleteTransfer(transferId)
+    transfers.value = transfers.value.filter(t => t.id !== transferId)
+    totalTransfers.value--
+    toast.success(`Transfer deleted`)
+  } catch {
+    toast.error('Failed to delete transfer')
+  }
+}
+
+function isActive(status: TransferStatus): boolean {
+  return !['Completed', 'Failed', 'Cancelled'].includes(status)
+}
+
+function canRetry(status: TransferStatus): boolean {
+  return status === 'Failed' || status === 'Cancelled'
+}
+
+function canDelete(status: TransferStatus): boolean {
+  return ['Completed', 'Failed', 'Cancelled'].includes(status)
+}
+
 function statusColor(status: TransferStatus): string {
   const map: Record<TransferStatus, string> = {
     Pending: 'bg-gray-100 text-gray-600',
@@ -101,8 +144,28 @@ function statusColor(status: TransferStatus): string {
   return map[status] ?? 'bg-gray-100 text-gray-600'
 }
 
-function isActive(status: TransferStatus): boolean {
-  return !['Completed', 'Failed', 'Cancelled'].includes(status)
+function statusLabel(status: TransferStatus): string {
+  const map: Record<TransferStatus, string> = {
+    Pending: 'Pending',
+    DownloadingAudio: 'Downloading',
+    UploadingToYoto: 'Uploading',
+    AwaitingTranscode: 'Transcoding',
+    GeneratingIcons: 'Generating Icons',
+    CreatingCard: 'Creating Card',
+    Completed: 'Completed',
+    Failed: 'Failed',
+    Cancelled: 'Cancelled',
+  }
+  return map[status] ?? status
+}
+
+function timeSinceUpdate(transferId: string): string | null {
+  const t = lastUpdateTime.value[transferId]
+  if (!t) return null
+  const secs = Math.round((now.value - t) / 1000)
+  if (secs < 15) return 'just now'
+  if (secs < 60) return `${secs}s ago`
+  return `${Math.round(secs / 60)}m ago`
 }
 
 function formatDate(iso: string): string {
@@ -124,6 +187,7 @@ function formatDate(iso: string): string {
         <option value="AwaitingTranscode">Transcoding</option>
         <option value="Completed">Completed</option>
         <option value="Failed">Failed</option>
+        <option value="Cancelled">Cancelled</option>
       </select>
     </div>
 
@@ -139,29 +203,48 @@ function formatDate(iso: string): string {
         :key="transfer.id"
         class="card p-4"
       >
-        <div class="flex items-start justify-between">
+        <div class="flex items-start justify-between gap-4">
           <div class="flex-1 min-w-0">
-            <div class="flex items-center space-x-3">
+            <!-- Title row -->
+            <div class="flex items-center gap-2 flex-wrap">
+              <!-- Pulsing dot for active transfers -->
+              <span
+                v-if="isActive(transfer.status)"
+                class="inline-block w-2 h-2 rounded-full bg-yoto-blue animate-pulse flex-shrink-0"
+              />
               <h3 class="font-medium text-gray-900 truncate">{{ transfer.bookTitle }}</h3>
               <span
                 class="px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0"
                 :class="statusColor(transfer.status)"
               >
-                {{ transfer.status }}
+                {{ statusLabel(transfer.status) }}
               </span>
             </div>
+
+            <!-- Author -->
             <p v-if="transfer.bookAuthor" class="text-sm text-gray-500 mt-1">{{ transfer.bookAuthor }}</p>
-            <div class="flex items-center space-x-4 text-xs text-gray-400 mt-2">
+
+            <!-- Meta row -->
+            <div class="flex items-center flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400 mt-2">
               <span>{{ formatDate(transfer.createdAt) }}</span>
               <span v-if="transfer.seriesName" class="text-yoto-blue">
-                {{ transfer.seriesName }} {{ transfer.seriesSequence ? `#${transfer.seriesSequence}` : '' }}
+                {{ transfer.seriesName }}{{ transfer.seriesSequence ? ` #${transfer.seriesSequence}` : '' }}
               </span>
-              <span>Age: {{ transfer.ageRange.effectiveMin }}–{{ transfer.ageRange.effectiveMax }}</span>
+              <span>Age {{ transfer.ageRange.effectiveMin }}–{{ transfer.ageRange.effectiveMax }}</span>
               <span>{{ transfer.tracks.length }} tracks</span>
+              <!-- Link back to source book -->
+              <router-link
+                :to="`/book/${transfer.absLibraryItemId}`"
+                class="text-yoto-blue hover:underline"
+                @click.stop
+              >
+                View in library →
+              </router-link>
             </div>
           </div>
 
-          <div class="text-right flex-shrink-0 ml-4">
+          <!-- Yoto card ID -->
+          <div class="text-right flex-shrink-0">
             <span v-if="transfer.yotoCardId" class="text-xs text-gray-400 font-mono">
               {{ transfer.yotoCardId.slice(0, 8) }}...
             </span>
@@ -169,17 +252,19 @@ function formatDate(iso: string): string {
         </div>
 
         <!-- Progress bar for active transfers -->
-        <div
-          v-if="!['Completed', 'Failed', 'Cancelled'].includes(transfer.status)"
-          class="mt-3"
-        >
+        <div v-if="isActive(transfer.status)" class="mt-3">
           <div class="w-full bg-gray-100 rounded-full h-2">
             <div
               class="bg-yoto-blue h-2 rounded-full transition-all duration-300"
               :style="{ width: `${transfer.progressPercent}%` }"
             />
           </div>
-          <p class="text-xs text-gray-400 mt-1">{{ transfer.progressPercent }}%</p>
+          <div class="flex items-center justify-between mt-1">
+            <p class="text-xs text-gray-400">{{ transfer.progressPercent }}%</p>
+            <p v-if="timeSinceUpdate(transfer.id)" class="text-xs text-gray-400">
+              Updated {{ timeSinceUpdate(transfer.id) }}
+            </p>
+          </div>
         </div>
 
         <!-- Error message -->
@@ -187,10 +272,10 @@ function formatDate(iso: string): string {
           {{ transfer.errorMessage }}
         </p>
 
-        <!-- Action buttons (Phase 6) -->
-        <div class="mt-3 flex gap-2">
+        <!-- Action buttons -->
+        <div class="mt-3 flex gap-3">
           <button
-            v-if="transfer.status === 'Failed'"
+            v-if="canRetry(transfer.status)"
             @click="handleRetry(transfer.id, transfer.bookTitle)"
             class="text-sm text-yoto-blue hover:text-blue-700 font-medium"
           >
@@ -202,6 +287,13 @@ function formatDate(iso: string): string {
             class="text-sm text-red-600 hover:text-red-700 font-medium"
           >
             Cancel
+          </button>
+          <button
+            v-if="canDelete(transfer.status)"
+            @click="handleDelete(transfer.id, transfer.bookTitle)"
+            class="text-sm text-gray-400 hover:text-gray-600 font-medium"
+          >
+            Delete
           </button>
         </div>
       </div>

@@ -88,7 +88,7 @@ async function startTransfer() {
     toast.success('Transfer queued successfully!')
 
     // Subscribe to SignalR for live progress
-    activeTransferId.value = data.jobId ?? null
+    activeTransferId.value = data.transferId ?? null
     if (activeTransferId.value) {
       await connect()
       await joinTransfer(activeTransferId.value)
@@ -271,10 +271,11 @@ async function startTransfer() {
     <div class="sticky bottom-4">
       <button
         @click="startTransfer"
-        :disabled="isTransferring || !connectionStore.isYotoConnected"
+        :disabled="isTransferring || !!activeTransferId || !connectionStore.isYotoConnected"
         class="btn-primary w-full text-lg py-3 shadow-lg"
       >
         <template v-if="isTransferring">Queueing Transfer...</template>
+        <template v-else-if="activeTransferId">Transfer In Progress...</template>
         <template v-else-if="!connectionStore.isYotoConnected">Connect Yoto to Transfer</template>
         <template v-else-if="book.existingTransfer?.status === 'Completed'">Re-transfer to Yoto</template>
         <template v-else>Transfer to Yoto Card</template>

@@ -12,7 +12,7 @@ public interface ITransferOrchestrator
     /// <summary>
     /// Transfer a single audiobook to a Yoto MYO card.
     /// </summary>
-    Task<TransferResponse> TransferBookAsync(Guid userConnectionId, CreateTransferRequest request, CancellationToken ct = default);
+    Task<TransferResponse> TransferBookAsync(Guid userConnectionId, CreateTransferRequest request, Guid? transferId = null, CancellationToken ct = default);
 
     /// <summary>
     /// Transfer all books in a series, each to their own card or combined into one playlist.

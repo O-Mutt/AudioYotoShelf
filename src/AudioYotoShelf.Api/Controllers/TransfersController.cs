@@ -59,17 +59,33 @@ public class TransfersController(
     }
 
     [HttpPost("{userConnectionId:guid}/book")]
-    public IActionResult TransferBook(
+    public async Task<IActionResult> TransferBook(
         Guid userConnectionId,
-        [FromBody] CreateTransferRequest request)
+        [FromBody] CreateTransferRequest request,
+        CancellationToken ct)
     {
+        // Guard against duplicate transfers for the same item
+        var hasActive = await db.CardTransfers.AnyAsync(
+            t => t.UserConnectionId == userConnectionId
+                 && t.AbsLibraryItemId == request.AbsLibraryItemId
+                 && (t.Status == Core.Enums.TransferStatus.Pending
+                     || t.Status == Core.Enums.TransferStatus.DownloadingAudio
+                     || t.Status == Core.Enums.TransferStatus.UploadingToYoto
+                     || t.Status == Core.Enums.TransferStatus.AwaitingTranscode
+                     || t.Status == Core.Enums.TransferStatus.GeneratingIcons
+                     || t.Status == Core.Enums.TransferStatus.CreatingCard), ct);
+
+        if (hasActive)
+            return Conflict(new { Message = "A transfer is already in progress for this book" });
+
+        var transferId = Guid.NewGuid();
         var jobId = backgroundJobs.Enqueue<ITransferJobService>(
-            svc => svc.ExecuteBookTransferAsync(userConnectionId, request, CancellationToken.None));
+            svc => svc.ExecuteBookTransferAsync(userConnectionId, request, transferId, CancellationToken.None));
 
-        logger.LogInformation("Book transfer queued: {ItemId} → Job {JobId}",
-            request.AbsLibraryItemId, jobId);
+        logger.LogInformation("Book transfer queued: {ItemId} → Transfer {TransferId}, Job {JobId}",
+            request.AbsLibraryItemId, transferId, jobId);
 
-        return Accepted(new { JobId = jobId, Message = "Transfer queued" });
+        return Accepted(new { TransferId = transferId, JobId = jobId, Message = "Transfer queued" });
     }
 
     [HttpPost("{userConnectionId:guid}/series")]
@@ -105,8 +121,9 @@ public class TransfersController(
                 OverrideMinAge: request.OverrideMinAge,
                 OverrideMaxAge: request.OverrideMaxAge
             );
+            var transferId = Guid.NewGuid();
             var jobId = backgroundJobs.Enqueue<ITransferJobService>(
-                svc => svc.ExecuteBookTransferAsync(userConnectionId, bookRequest, CancellationToken.None));
+                svc => svc.ExecuteBookTransferAsync(userConnectionId, bookRequest, transferId, CancellationToken.None));
             jobIds.Add(jobId);
         }
 
@@ -133,8 +150,31 @@ public class TransfersController(
         return Ok(new { Message = "Transfer cancelled" });
     }
 
+    [HttpDelete("{transferId:guid}")]
+    public async Task<IActionResult> DeleteTransfer(Guid transferId, CancellationToken ct)
+    {
+        var transfer = await db.CardTransfers
+            .Include(t => t.TrackMappings)
+            .FirstOrDefaultAsync(t => t.Id == transferId, ct);
+
+        if (transfer is null) return NotFound();
+
+        if (transfer.Status is not (Core.Enums.TransferStatus.Completed
+            or Core.Enums.TransferStatus.Failed
+            or Core.Enums.TransferStatus.Cancelled))
+            return Conflict(new { Message = "Can only delete completed, failed, or cancelled transfers" });
+
+        db.TrackMappings.RemoveRange(transfer.TrackMappings);
+        db.CardTransfers.Remove(transfer);
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation("Deleted transfer {TransferId} ({BookTitle})", transferId, transfer.BookTitle);
+        return Ok(new { Message = "Transfer deleted" });
+    }
+
     private static TransferResponse MapToResponse(Core.Entities.CardTransfer t) => new(
         t.Id,
+        t.AbsLibraryItemId,
         t.BookTitle,
         t.BookAuthor,
         t.SeriesName,

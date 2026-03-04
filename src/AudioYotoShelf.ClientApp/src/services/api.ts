@@ -141,6 +141,10 @@ export const transferApi = {
   cancelTransfer(transferId: string) {
     return api.post(`/transfers/cancel/${transferId}`)
   },
+
+  deleteTransfer(transferId: string) {
+    return api.delete(`/transfers/${transferId}`)
+  },
 }
 
 // --- Cards (Phase 5) ---

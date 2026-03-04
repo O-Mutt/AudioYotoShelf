@@ -24,7 +24,7 @@ public class TransferOrchestrator(
     private string TempDir => configuration.GetValue("Transfer:TempDirectory", "/app/temp")!;
 
     public async Task<TransferResponse> TransferBookAsync(
-        Guid userConnectionId, CreateTransferRequest request, CancellationToken ct = default)
+        Guid userConnectionId, CreateTransferRequest request, Guid? transferId = null, CancellationToken ct = default)
     {
         var user = await db.UserConnections.FindAsync([userConnectionId], ct)
             ?? throw new InvalidOperationException("User connection not found");
@@ -42,36 +42,63 @@ public class TransferOrchestrator(
 
         var ageSuggestion = ageService.SuggestAgeRange(metadata, media.Duration, media.NumChapters);
 
-        var transfer = new CardTransfer
-        {
-            UserConnectionId = userConnectionId,
-            AbsLibraryItemId = request.AbsLibraryItemId,
-            BookTitle = metadata.Title ?? "Unknown",
-            BookAuthor = metadata.Authors?.FirstOrDefault()?.Name,
-            SeriesName = metadata.Series?.FirstOrDefault()?.Name,
-            SeriesSequence = ParseSequence(metadata.Series?.FirstOrDefault()?.Sequence),
-            Category = request.Category,
-            PlaybackType = request.PlaybackType,
-            SuggestedMinAge = ageSuggestion.SuggestedMinAge,
-            SuggestedMaxAge = ageSuggestion.SuggestedMaxAge,
-            AgeSuggestionReason = ageSuggestion.Reason,
-            AgeSuggestionSource = ageSuggestion.Source,
-            OverrideMinAge = request.OverrideMinAge,
-            OverrideMaxAge = request.OverrideMaxAge,
-            Status = TransferStatus.Pending
-        };
+        // On Hangfire retry, a transfer with this ID may already exist from the failed attempt
+        CardTransfer? transfer = transferId.HasValue
+            ? await db.CardTransfers.FirstOrDefaultAsync(t => t.Id == transferId.Value, ct)
+            : null;
 
-        db.CardTransfers.Add(transfer);
+        if (transfer is not null)
+        {
+            // If cancelled (e.g. user cancelled during a previous Hangfire attempt), don't re-run
+            if (transfer.Status == TransferStatus.Cancelled)
+                return MapToResponse(transfer);
+
+            // Reset the existing transfer for retry
+            transfer.Status = TransferStatus.Pending;
+            transfer.ErrorMessage = null;
+            transfer.ProgressPercent = 0;
+            transfer.CompletedAt = null;
+
+            // Clean up any track mappings from the previous attempt
+            var oldMappings = await db.TrackMappings
+                .Where(tm => tm.CardTransferId == transfer.Id)
+                .ToListAsync(ct);
+            db.TrackMappings.RemoveRange(oldMappings);
+        }
+        else
+        {
+            transfer = new CardTransfer
+            {
+                Id = transferId ?? Guid.NewGuid(),
+                UserConnectionId = userConnectionId,
+                AbsLibraryItemId = request.AbsLibraryItemId,
+                BookTitle = metadata.Title ?? "Unknown",
+                BookAuthor = metadata.Authors?.FirstOrDefault()?.Name,
+                SeriesName = metadata.Series?.FirstOrDefault()?.Name,
+                SeriesSequence = ParseSequence(metadata.Series?.FirstOrDefault()?.Sequence),
+                Category = request.Category,
+                PlaybackType = request.PlaybackType,
+                SuggestedMinAge = ageSuggestion.SuggestedMinAge,
+                SuggestedMaxAge = ageSuggestion.SuggestedMaxAge,
+                AgeSuggestionReason = ageSuggestion.Reason,
+                AgeSuggestionSource = ageSuggestion.Source,
+                OverrideMinAge = request.OverrideMinAge,
+                OverrideMaxAge = request.OverrideMaxAge,
+                Status = TransferStatus.Pending
+            };
+            db.CardTransfers.Add(transfer);
+        }
+
         await db.SaveChangesAsync(ct);
 
         try
         {
             await UpdateStatus(transfer, TransferStatus.DownloadingAudio, 5, ct);
-            var trackMappings = await BuildTrackMappingsAsync(user, item, transfer, ct);
+            var (trackMappings, chapterPaths) = await BuildTrackMappingsAsync(user, item, transfer, ct);
 
             await UpdateStatus(transfer, TransferStatus.UploadingToYoto, 20, ct);
             var yotoAccessToken = await EnsureYotoTokenAsync(user, ct);
-            await UploadTracksAsync(yotoAccessToken, trackMappings, transfer, ct);
+            await UploadTracksAsync(yotoAccessToken, trackMappings, chapterPaths, transfer, ct);
 
             await UpdateStatus(transfer, TransferStatus.GeneratingIcons, 70, ct);
             var chapterIcons = await GenerateIconsAsync(yotoAccessToken, user, media, trackMappings, ct);
@@ -151,7 +178,7 @@ public class TransferOrchestrator(
                     OverrideMinAge: request.OverrideMinAge,
                     OverrideMaxAge: request.OverrideMaxAge
                 );
-                var result = await TransferBookAsync(userConnectionId, bookRequest, ct);
+                var result = await TransferBookAsync(userConnectionId, bookRequest, ct: ct);
                 results.Add(result);
             }
             catch (Exception ex)
@@ -171,13 +198,18 @@ public class TransferOrchestrator(
             .FirstOrDefaultAsync(t => t.Id == transferId, ct)
             ?? throw new InvalidOperationException("Transfer not found");
 
-        if (transfer.Status != TransferStatus.Failed)
-            throw new InvalidOperationException("Can only retry failed transfers");
+        if (transfer.Status is not (TransferStatus.Failed or TransferStatus.Cancelled))
+            throw new InvalidOperationException("Can only retry failed or cancelled transfers");
 
+        // Pre-reset so the Cancelled early-return in TransferBookAsync doesn't block us
         transfer.Status = TransferStatus.Pending;
         transfer.ErrorMessage = null;
         transfer.ProgressPercent = 0;
-        db.TrackMappings.RemoveRange(transfer.TrackMappings);
+        transfer.CompletedAt = null;
+        var oldMappings = await db.TrackMappings
+            .Where(tm => tm.CardTransferId == transfer.Id)
+            .ToListAsync(ct);
+        db.TrackMappings.RemoveRange(oldMappings);
         await db.SaveChangesAsync(ct);
 
         var request = new CreateTransferRequest(
@@ -188,7 +220,7 @@ public class TransferOrchestrator(
             OverrideMaxAge: transfer.OverrideMaxAge
         );
 
-        return await TransferBookAsync(transfer.UserConnectionId, request, ct);
+        return await TransferBookAsync(transfer.UserConnectionId, request, transfer.Id, ct);
     }
 
     public async Task CancelTransferAsync(Guid transferId, CancellationToken ct = default)
@@ -198,7 +230,8 @@ public class TransferOrchestrator(
 
         transfer.Status = TransferStatus.Cancelled;
         await db.SaveChangesAsync(ct);
-        CleanupTempFiles(transferId);
+        // Don't clean up temp files here — the running job's finally block handles cleanup.
+        // Deleting files while a background job is still writing causes FileNotFoundException.
     }
 
     public async Task<TransferResponse> GetTransferStatusAsync(Guid transferId, CancellationToken ct = default)
@@ -231,11 +264,12 @@ public class TransferOrchestrator(
     // Private pipeline methods
     // =========================================================================
 
-    internal async Task<List<TrackMapping>> BuildTrackMappingsAsync(
+    internal async Task<(List<TrackMapping> Mappings, Dictionary<int, string> ChapterPaths)> BuildTrackMappingsAsync(
         UserConnection user, AbsLibraryItem item, CardTransfer transfer, CancellationToken ct)
     {
         var media = item.Media!;
         var mappings = new List<TrackMapping>();
+        var chapterPaths = new Dictionary<int, string>();
 
         if (media.NumAudioFiles > 1)
         {
@@ -276,6 +310,8 @@ public class TransferOrchestrator(
                 var chapterPath = await chapterExtractor.ExtractChapterAsync(
                     tempInputPath, chapter.Start, chapter.End, "m4a", ct);
 
+                chapterPaths[i] = chapterPath;
+
                 var mapping = new TrackMapping
                 {
                     CardTransferId = transfer.Id,
@@ -310,11 +346,12 @@ public class TransferOrchestrator(
         }
 
         await db.SaveChangesAsync(ct);
-        return mappings;
+        return (mappings, chapterPaths);
     }
 
     internal async Task UploadTracksAsync(
-        string yotoAccessToken, List<TrackMapping> mappings, CardTransfer transfer, CancellationToken ct)
+        string yotoAccessToken, List<TrackMapping> mappings, Dictionary<int, string> chapterPaths,
+        CardTransfer transfer, CancellationToken ct)
     {
         var user = await db.UserConnections.FindAsync([transfer.UserConnectionId], ct)!;
 
@@ -338,16 +375,15 @@ public class TransferOrchestrator(
                 continue;
             }
 
-            // Determine source: extracted temp file or direct download
-            var tempChapterPath = FindExtractedChapterPath(transfer.Id, mapping.ChapterIndex);
+            // Determine source: extracted chapter file or direct download from ABS
             Stream audioStream;
             long contentLength;
             string contentType;
 
-            if (tempChapterPath is not null && File.Exists(tempChapterPath))
+            if (chapterPaths.TryGetValue(mapping.ChapterIndex, out var chapterPath) && File.Exists(chapterPath))
             {
-                audioStream = File.OpenRead(tempChapterPath);
-                contentLength = new FileInfo(tempChapterPath).Length;
+                audioStream = File.OpenRead(chapterPath);
+                contentLength = new FileInfo(chapterPath).Length;
                 contentType = "audio/mp4";
             }
             else
@@ -473,9 +509,7 @@ public class TransferOrchestrator(
         var cardMetadata = new YotoCardMetadata(
             Author: metadata.Authors?.FirstOrDefault()?.Name,
             Category: transfer.Category.ToString().ToLowerInvariant(),
-            Description: metadata.Description?.Length > 500
-                ? metadata.Description[..500]
-                : metadata.Description,
+            Description: metadata.Title,
             Genre: metadata.Genres,
             Languages: metadata.Language is not null ? [metadata.Language] : null,
             MinAge: transfer.EffectiveMinAge,
@@ -516,15 +550,17 @@ public class TransferOrchestrator(
 
     private async Task<string> EnsureYotoTokenAsync(UserConnection user, CancellationToken ct)
     {
-        if (user.YotoTokenExpiresAt.HasValue &&
+        if (!user.YotoTokenExpiresAt.HasValue ||
             user.YotoTokenExpiresAt.Value < DateTimeOffset.UtcNow.AddMinutes(5))
         {
-            logger.LogInformation("Refreshing Yoto token for user {Username}", user.Username);
+            logger.LogInformation("Refreshing Yoto token for user {Username} (expiry: {Expiry})",
+                user.Username, user.YotoTokenExpiresAt?.ToString() ?? "null");
             var newToken = await yotoService.RefreshTokenAsync(user.YotoRefreshToken!, ct);
             user.YotoAccessToken = newToken.AccessToken;
             user.YotoRefreshToken = newToken.RefreshToken ?? user.YotoRefreshToken;
             user.YotoTokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(newToken.ExpiresIn);
             await db.SaveChangesAsync(ct);
+            return newToken.AccessToken;
         }
 
         return user.YotoAccessToken!;
@@ -539,26 +575,21 @@ public class TransferOrchestrator(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, itemId, fileIno, ct);
         await using var fileStream = File.Create(outputPath);
         await sourceStream.CopyToAsync(fileStream, ct);
+        await fileStream.FlushAsync(ct);
 
+        var fileSize = fileStream.Length;
         logger.LogInformation("Downloaded {FileIno} to {Path} ({Size} bytes)",
-            fileIno, outputPath, new FileInfo(outputPath).Length);
-    }
-
-    private string? FindExtractedChapterPath(Guid transferId, int chapterIndex)
-    {
-        var pattern = $"chapter_{transferId}*ch{chapterIndex}*";
-        var tempFiles = Directory.Exists(TempDir)
-            ? Directory.GetFiles(TempDir, $"*{transferId}*")
-            : [];
-
-        // Convention from FFmpeg extractor: chapter_{guid}.m4a
-        var chapterFile = Path.Combine(TempDir, $"{transferId}_ch{chapterIndex}.m4a");
-        return File.Exists(chapterFile) ? chapterFile : null;
+            fileIno, outputPath, fileSize);
     }
 
     private async Task UpdateStatus(
         CardTransfer transfer, TransferStatus status, int progress, CancellationToken ct)
     {
+        // Re-read from DB to detect if transfer was cancelled while we were working
+        await db.Entry(transfer).ReloadAsync(ct);
+        if (transfer.Status == TransferStatus.Cancelled)
+            throw new OperationCanceledException("Transfer was cancelled");
+
         transfer.Status = status;
         transfer.ProgressPercent = progress;
         await db.SaveChangesAsync(ct);
@@ -592,6 +623,7 @@ public class TransferOrchestrator(
 
     private static TransferResponse MapToResponse(CardTransfer t) => new(
         t.Id,
+        t.AbsLibraryItemId,
         t.BookTitle,
         t.BookAuthor,
         t.SeriesName,

@@ -12,6 +12,7 @@ const { confirm } = useConfirm()
 
 const cards = ref<YotoCardSummary[]>([])
 const isLoading = ref(true)
+const yotoSessionExpired = ref(false)
 const expandedCardId = ref<string | null>(null)
 const expandedDetail = ref<YotoCardDetail | null>(null)
 const isLoadingDetail = ref(false)
@@ -23,11 +24,16 @@ onMounted(async () => {
 async function loadCards() {
   if (!connectionStore.userConnectionId) return
   isLoading.value = true
+  yotoSessionExpired.value = false
   try {
     const { data } = await cardsApi.getCards(connectionStore.userConnectionId)
     cards.value = data
-  } catch {
-    toast.error('Failed to load Yoto cards')
+  } catch (err: any) {
+    if (err?.response?.status === 401) {
+      yotoSessionExpired.value = true
+    } else {
+      toast.error('Failed to load Yoto cards')
+    }
   } finally {
     isLoading.value = false
   }
@@ -100,6 +106,16 @@ function formatDuration(seconds: number): string {
       <router-link to="/setup" class="mt-4 inline-block btn-primary text-sm">Connect Yoto</router-link>
     </div>
 
+    <!-- Session expired -->
+    <div v-else-if="yotoSessionExpired" class="text-center py-16">
+      <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-16 w-16 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke-width="1" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+      </svg>
+      <h3 class="mt-4 text-lg font-medium text-gray-700">Yoto session expired</h3>
+      <p class="mt-2 text-sm text-gray-400">Your Yoto connection needs to be refreshed.</p>
+      <router-link to="/settings" class="mt-4 inline-block btn-primary text-sm">Reconnect Yoto</router-link>
+    </div>
+
     <!-- Loading -->
     <div v-else-if="isLoading" class="text-center py-16">
       <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-yoto-blue border-r-transparent" />
@@ -145,7 +161,7 @@ function formatDuration(seconds: number): string {
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2">
               <h3 class="font-medium text-gray-900 truncate">
-                {{ card.metadata?.description || card.sourceBookTitle || `Card ${card.cardId.slice(0, 8)}` }}
+                {{ card.sourceBookTitle || card.metadata?.description || `Card ${card.cardId.slice(0, 8)}` }}
               </h3>
               <span
                 v-if="card.fromAudioYotoShelf"

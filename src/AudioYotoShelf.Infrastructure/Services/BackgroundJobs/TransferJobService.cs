@@ -15,7 +15,7 @@ public interface ITransferJobService
 {
 	[Queue("transfers")]
 	[AutomaticRetry(Attempts = 1, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
-	Task ExecuteBookTransferAsync(Guid userConnectionId, CreateTransferRequest request, CancellationToken ct);
+	Task ExecuteBookTransferAsync(Guid userConnectionId, CreateTransferRequest request, Guid? transferId, CancellationToken ct);
 
 	[Queue("transfers")]
 	[AutomaticRetry(Attempts = 1, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
@@ -32,14 +32,14 @@ public class TransferJobService(
 		ILogger<TransferJobService> logger) : ITransferJobService
 {
 	public async Task ExecuteBookTransferAsync(
-			Guid userConnectionId, CreateTransferRequest request, CancellationToken ct)
+			Guid userConnectionId, CreateTransferRequest request, Guid? transferId, CancellationToken ct)
 	{
 		logger.LogInformation("Hangfire: Starting book transfer job for item {ItemId}",
 				request.AbsLibraryItemId);
 
 		try
 		{
-			var result = await orchestrator.TransferBookAsync(userConnectionId, request, ct);
+			var result = await orchestrator.TransferBookAsync(userConnectionId, request, transferId, ct);
 
 			await notifier.SendProgressAsync(new TransferProgressUpdate(
 					result.Id,

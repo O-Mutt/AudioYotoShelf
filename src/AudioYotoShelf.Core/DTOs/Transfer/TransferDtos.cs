@@ -48,6 +48,7 @@ public record UpdateSettingsRequest(
 
 public record TransferResponse(
     Guid Id,
+    string AbsLibraryItemId,
     string BookTitle,
     string? BookAuthor,
     string? SeriesName,

@@ -14,8 +14,8 @@ public class YotoService(
 {
     private const string YotoApiBase = "https://api.yotoplay.com";
     private const string YotoAuthBase = "https://login.yotoplay.com";
-    private const int MaxTranscodePollAttempts = 60;
-    private const int TranscodePollDelayMs = 500;
+    private const int MaxTranscodePollAttempts = 360;
+    private const int TranscodePollDelayMs = 5000;
 
     private string ClientId => configuration["Yoto:ClientId"]
         ?? throw new InvalidOperationException("Yoto:ClientId not configured");
@@ -179,10 +179,15 @@ public class YotoService(
                 return result;
             }
 
+            if (attempt % 10 == 0)
+                logger.LogInformation("Transcode poll {Attempt}/{Max} for {UploadId}: status={Status}",
+                    attempt, MaxTranscodePollAttempts, uploadId, result?.Status ?? "null");
+
             await Task.Delay(TranscodePollDelayMs, ct);
         }
 
-        throw new TimeoutException($"Transcode polling timed out for upload {uploadId} after {MaxTranscodePollAttempts} attempts");
+        var elapsedMinutes = MaxTranscodePollAttempts * TranscodePollDelayMs / 60_000.0;
+        throw new TimeoutException($"Transcode polling timed out for upload {uploadId} after {MaxTranscodePollAttempts} attempts (~{elapsedMinutes:F0} min)");
     }
 
     public async Task<string> UploadAndTranscodeAsync(
