@@ -33,3 +33,10 @@ Thumbs.db
 # Logs
 logs/
 *.log
+nohup.out
+.claude-flow
+.claude
+.swarm
+NuGet.conf
+.mcp.json
+NuGet.config
