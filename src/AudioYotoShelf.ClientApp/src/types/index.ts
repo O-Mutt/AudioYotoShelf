@@ -206,6 +206,7 @@ export interface BookDetailResponse {
 
 export interface YotoCardSummary {
   cardId: string
+  title: string | null
   metadata: YotoCardMetadata | null
   chapterCount: number
   trackCount: number

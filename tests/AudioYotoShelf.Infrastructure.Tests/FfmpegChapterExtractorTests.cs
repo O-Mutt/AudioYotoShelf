@@ -20,7 +20,7 @@ public class FfmpegChapterExtractorTests
         // This test verifies the method doesn't throw and returns a definitive answer.
         // On CI without FFmpeg it returns false; locally with FFmpeg it returns true.
         var result = await _sut.IsFfmpegAvailableAsync();
-        result.Should().BeOneOf(true, false);
+        new[] { true, false }.Should().Contain(result);
     }
 
     [Fact]

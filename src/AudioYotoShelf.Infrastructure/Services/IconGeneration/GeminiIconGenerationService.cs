@@ -25,7 +25,7 @@ public class GeminiIconGenerationService(
         ?? throw new InvalidOperationException("Gemini:ApiKey not configured");
     private string Model => configuration.GetValue("Gemini:Model", "gemini-2.5-flash-preview-05-20")!;
 
-    public async Task<byte[]> GenerateIconAsync(string prompt, CancellationToken ct = default)
+    public virtual async Task<byte[]> GenerateIconAsync(string prompt, CancellationToken ct = default)
     {
         logger.LogInformation("Generating icon via Gemini: {Prompt}", prompt);
 
@@ -75,21 +75,21 @@ public class GeminiIconGenerationService(
         return ResizeTo16X16(rawImageBytes);
     }
 
-    public async Task<byte[]> GenerateChapterIconAsync(
+    public virtual async Task<byte[]> GenerateChapterIconAsync(
         string chapterTitle, string bookTitle, string? genre, CancellationToken ct = default)
     {
         var prompt = BuildChapterIconPrompt(chapterTitle, bookTitle, genre);
         return await GenerateIconAsync(prompt, ct);
     }
 
-    public async Task<byte[]> ConvertCoverToIconAsync(Stream coverImage, CancellationToken ct = default)
+    public virtual async Task<byte[]> ConvertCoverToIconAsync(Stream coverImage, CancellationToken ct = default)
     {
         using var ms = new MemoryStream();
         await coverImage.CopyToAsync(ms, ct);
         return ResizeTo16X16(ms.ToArray());
     }
 
-    public async Task<YotoPublicIcon[]> SearchPublicIconsAsync(
+    public virtual async Task<YotoPublicIcon[]> SearchPublicIconsAsync(
         string query, int maxResults = 10, CancellationToken ct = default)
     {
         // Try cache first
@@ -122,7 +122,7 @@ public class GeminiIconGenerationService(
             .ToArray();
     }
 
-    public string BuildChapterIconPrompt(string chapterTitle, string bookTitle, string? genre)
+    public virtual string BuildChapterIconPrompt(string chapterTitle, string bookTitle, string? genre)
     {
         var genreHint = genre is not null ? $" The genre is {genre}." : "";
         return $"Create a 16x16 pixel art icon representing \"{chapterTitle}\" " +

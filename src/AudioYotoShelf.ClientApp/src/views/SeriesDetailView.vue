@@ -6,7 +6,7 @@ import { useConnectionStore } from '@/stores/connectionStore'
 import { libraryApi, transferApi } from '@/services/api'
 import type { AbsSeriesItem } from '@/types'
 
-const props = defineProps<{ seriesId: string }>()
+const props = defineProps<{ seriesId: string; libraryId?: string }>()
 const router = useRouter()
 const libraryStore = useLibraryStore()
 const connectionStore = useConnectionStore()
@@ -19,7 +19,11 @@ const transferMessage = ref<string | null>(null)
 onMounted(async () => {
   if (!connectionStore.userConnectionId) return
   try {
-    const { data } = await libraryApi.getSeriesDetail(connectionStore.userConnectionId, props.seriesId)
+    const { data } = await libraryApi.getSeriesDetail(
+      connectionStore.userConnectionId,
+      props.seriesId,
+      props.libraryId ?? libraryStore.selectedLibraryId ?? undefined,
+    )
     seriesDetail.value = data as AbsSeriesItem
   } finally {
     isLoading.value = false
@@ -37,13 +41,14 @@ function openBook(bookId: string) {
 }
 
 async function transferSeries() {
-  if (!connectionStore.userConnectionId || !libraryStore.selectedLibraryId) return
+  const libraryId = props.libraryId ?? libraryStore.selectedLibraryId
+  if (!connectionStore.userConnectionId || !libraryId) return
   isTransferring.value = true
   transferMessage.value = null
   try {
     await transferApi.transferSeries(connectionStore.userConnectionId, {
       absSeriesId: props.seriesId,
-      absLibraryId: libraryStore.selectedLibraryId,
+      absLibraryId: libraryId,
     })
     transferMessage.value = 'Series transfer queued successfully!'
   } catch (err: any) {

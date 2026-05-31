@@ -8,7 +8,7 @@ import { transferApi } from '@/services/api'
 import type { TransferResponse, TransferStatus } from '@/types'
 
 const connectionStore = useConnectionStore()
-const { progressUpdates, joinTransfer } = useSignalR()
+const { progressUpdates, joinTransfer, connect, listChangedAt } = useSignalR()
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -23,19 +23,15 @@ const lastUpdateTime = ref<Record<string, number>>({})
 const now = ref(Date.now())
 let nowTimer: ReturnType<typeof setInterval>
 
-const activeTransfers = computed(() =>
-  transfers.value.filter(t =>
-    !['Completed', 'Failed', 'Cancelled'].includes(t.status)
-  )
-)
-
 onMounted(async () => {
+  // Connect up front so we receive list-changed broadcasts even with no active transfers.
+  await connect()
   await loadTransfers()
-  for (const t of activeTransfers.value) {
-    await joinTransfer(t.id)
-  }
   nowTimer = setInterval(() => { now.value = Date.now() }, 10_000)
 })
+
+// A transfer was queued (possibly from another page) — refresh the list.
+watch(listChangedAt, () => loadTransfers(currentPage.value))
 
 onUnmounted(() => {
   clearInterval(nowTimer)
@@ -65,6 +61,11 @@ async function loadTransfers(page = 0) {
     transfers.value = data.results
     totalTransfers.value = data.total
     currentPage.value = page
+    // Subscribe to live SignalR updates for any active transfers on this page
+    // (joinTransfer opens the connection if needed).
+    for (const t of transfers.value.filter(t => isActive(t.status))) {
+      await joinTransfer(t.id)
+    }
   } finally {
     isLoading.value = false
   }
@@ -74,7 +75,15 @@ async function handleRetry(transferId: string, title: string) {
   try {
     await transferApi.retryTransfer(transferId)
     toast.success(`Retry queued for "${title}"`)
-    await loadTransfers(currentPage.value)
+    // The retry only queues a job (status is still Failed/Cancelled in the DB right now), so
+    // optimistically reactivate the card and subscribe for the live updates the job will push.
+    const t = transfers.value.find(x => x.id === transferId)
+    if (t) {
+      t.status = 'Pending'
+      t.progressPercent = 0
+      t.errorMessage = null
+    }
+    await joinTransfer(transferId)
   } catch {
     toast.error('Failed to queue retry')
   }
@@ -117,6 +126,38 @@ async function handleDelete(transferId: string, title: string) {
   }
 }
 
+const hasCompleted = computed(() => transfers.value.some(t => t.status === 'Completed'))
+
+// Clears every completed transfer for the user (across all pages); Yoto cards are untouched.
+async function handleClearAllCompleted() {
+  const ok = await confirm({
+    title: 'Clear completed transfers',
+    message: 'Remove all completed transfers from your list? Your Yoto cards stay put.',
+    confirmText: 'Clear all',
+    variant: 'primary',
+  })
+  if (!ok) return
+  try {
+    const { data } = await transferApi.clearCompleted(connectionStore.userConnectionId!)
+    toast.success(`Cleared ${data.cleared} completed transfer${data.cleared !== 1 ? 's' : ''}`)
+    await loadTransfers(0)
+  } catch {
+    toast.error('Failed to clear completed transfers')
+  }
+}
+
+// A completed transfer is a success — "clear" it from the list rather than "delete" it.
+async function handleClear(transferId: string, title: string) {
+  try {
+    await transferApi.deleteTransfer(transferId)
+    transfers.value = transfers.value.filter(t => t.id !== transferId)
+    totalTransfers.value--
+    toast.success(`Cleared "${title}"`)
+  } catch {
+    toast.error('Failed to clear transfer')
+  }
+}
+
 function isActive(status: TransferStatus): boolean {
   return !['Completed', 'Failed', 'Cancelled'].includes(status)
 }
@@ -125,8 +166,12 @@ function canRetry(status: TransferStatus): boolean {
   return status === 'Failed' || status === 'Cancelled'
 }
 
+function canClear(status: TransferStatus): boolean {
+  return status === 'Completed'
+}
+
 function canDelete(status: TransferStatus): boolean {
-  return ['Completed', 'Failed', 'Cancelled'].includes(status)
+  return status === 'Failed' || status === 'Cancelled'
 }
 
 function statusColor(status: TransferStatus): string {
@@ -177,18 +222,30 @@ function formatDate(iso: string): string {
 
 <template>
   <div class="space-y-6">
-    <div class="flex items-center justify-between">
+    <div class="flex items-center justify-between gap-3 flex-wrap">
       <h1 class="text-2xl font-bold text-gray-900">Transfers</h1>
-      <select v-model="filterStatus" @change="loadTransfers(0)" class="input-field w-auto">
-        <option value="">All Statuses</option>
-        <option value="Pending">Pending</option>
-        <option value="DownloadingAudio">Downloading</option>
-        <option value="UploadingToYoto">Uploading</option>
-        <option value="AwaitingTranscode">Transcoding</option>
-        <option value="Completed">Completed</option>
-        <option value="Failed">Failed</option>
-        <option value="Cancelled">Cancelled</option>
-      </select>
+      <div class="flex items-center gap-3">
+        <button
+          v-if="hasCompleted"
+          @click="handleClearAllCompleted"
+          class="text-sm text-green-600 hover:text-green-700 font-medium inline-flex items-center gap-1"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+          </svg>
+          Clear completed
+        </button>
+        <select v-model="filterStatus" @change="loadTransfers(0)" class="input-field w-auto">
+          <option value="">All Statuses</option>
+          <option value="Pending">Pending</option>
+          <option value="DownloadingAudio">Downloading</option>
+          <option value="UploadingToYoto">Uploading</option>
+          <option value="AwaitingTranscode">Transcoding</option>
+          <option value="Completed">Completed</option>
+          <option value="Failed">Failed</option>
+          <option value="Cancelled">Cancelled</option>
+        </select>
+      </div>
     </div>
 
     <div v-if="isLoading" class="text-center py-12 text-gray-400">Loading transfers...</div>
@@ -287,6 +344,16 @@ function formatDate(iso: string): string {
             class="text-sm text-red-600 hover:text-red-700 font-medium"
           >
             Cancel
+          </button>
+          <button
+            v-if="canClear(transfer.status)"
+            @click="handleClear(transfer.id, transfer.bookTitle)"
+            class="text-sm text-green-600 hover:text-green-700 font-medium inline-flex items-center gap-1"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+            </svg>
+            Clear
           </button>
           <button
             v-if="canDelete(transfer.status)"

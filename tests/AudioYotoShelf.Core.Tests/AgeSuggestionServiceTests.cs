@@ -14,9 +14,9 @@ public class AgeSuggestionServiceTests
     // =========================================================================
 
     [Theory]
-    [InlineData(new[] { "Children's Fiction" }, 2, 8)]
-    [InlineData(new[] { "Fairy Tales" }, 2, 8)]
-    [InlineData(new[] { "Bedtime Stories" }, 2, 8)]
+    [InlineData(new string[] { "Children's Fiction" }, 2, 8)]
+    [InlineData(new string[] { "Fairy Tales" }, 2, 8)]
+    [InlineData(new string[] { "Bedtime Stories" }, 2, 8)]
     public void SuggestAgeRange_ChildrenGenres_ReturnsYoungRange(string[] genres, int expectedMinLow, int expectedMaxHigh)
     {
         var metadata = TestData.CreateAbsMetadata(genres: genres);
@@ -28,8 +28,8 @@ public class AgeSuggestionServiceTests
     }
 
     [Theory]
-    [InlineData(new[] { "Middle Grade" })]
-    [InlineData(new[] { "Chapter Book" })]
+    [InlineData((object)new string[] { "Middle Grade" })]
+    [InlineData((object)new string[] { "Chapter Book" })]
     public void SuggestAgeRange_MiddleGradeGenres_ReturnsMidRange(string[] genres)
     {
         var metadata = TestData.CreateAbsMetadata(genres: genres);
@@ -40,9 +40,9 @@ public class AgeSuggestionServiceTests
     }
 
     [Theory]
-    [InlineData(new[] { "Young Adult" })]
-    [InlineData(new[] { "YA Fiction" })]
-    [InlineData(new[] { "Coming of Age" })]
+    [InlineData((object)new string[] { "Young Adult" })]
+    [InlineData((object)new string[] { "YA Fiction" })]
+    [InlineData((object)new string[] { "Coming of Age" })]
     public void SuggestAgeRange_YoungAdultGenres_ReturnsTeenRange(string[] genres)
     {
         var metadata = TestData.CreateAbsMetadata(genres: genres);
@@ -53,9 +53,9 @@ public class AgeSuggestionServiceTests
     }
 
     [Theory]
-    [InlineData(new[] { "Thriller" })]
-    [InlineData(new[] { "Horror" })]
-    [InlineData(new[] { "Crime Fiction" })]
+    [InlineData((object)new string[] { "Thriller" })]
+    [InlineData((object)new string[] { "Horror" })]
+    [InlineData((object)new string[] { "Crime Fiction" })]
     public void SuggestAgeRange_AdultGenres_ReturnsOlderRange(string[] genres)
     {
         var metadata = TestData.CreateAbsMetadata(genres: genres);

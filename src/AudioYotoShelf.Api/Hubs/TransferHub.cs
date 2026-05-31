@@ -34,6 +34,9 @@ public class SignalRTransferProgressNotifier(
 				.Group(update.TransferId.ToString())
 				.SendAsync("TransferProgress", update, ct);
 	}
+
+	public Task NotifyListChangedAsync(CancellationToken ct = default)
+		=> hubContext.Clients.All.SendAsync("TransferListChanged", ct);
 }
 
 /// <summary>

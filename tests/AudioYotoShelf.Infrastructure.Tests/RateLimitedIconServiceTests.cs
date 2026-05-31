@@ -61,7 +61,7 @@ public class RateLimitedIconServiceTests
     {
         SetupCount(RateLimitedIconService.DailyLimit);
 
-        _innerMock.Setup(s => s.SearchPublicIconsAsync("forest", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _innerMock.Setup(s => s.SearchPublicIconsAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([
                 new YotoPublicIcon("icon-1", "Forest", ["nature", "trees"], "https://icons.yoto.com/forest.png")
             ]);

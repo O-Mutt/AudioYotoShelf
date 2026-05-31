@@ -27,6 +27,7 @@ public class TransferOrchestratorTests : IDisposable
     private readonly Mock<IChapterExtractor> _chapterExtractor;
     private readonly IConfiguration _configuration;
     private readonly TransferOrchestrator _sut;
+    private readonly string _tempChapterFile;
 
     public TransferOrchestratorTests()
     {
@@ -49,13 +50,20 @@ public class TransferOrchestratorTests : IDisposable
         _sut = new TransferOrchestrator(
             _db, _absService.Object, _yotoService.Object,
             _iconService.Object, _ageService.Object,
-            _chapterExtractor.Object, _configuration,
+            _chapterExtractor.Object, Mock.Of<ITransferProgressNotifier>(), _configuration,
             Mock.Of<ILogger<TransferOrchestrator>>());
+
+        _tempChapterFile = Path.Combine(Path.GetTempPath(), $"test_chapter_{Guid.NewGuid():N}.m4a");
+        File.WriteAllBytes(_tempChapterFile, new byte[100]);
 
         SetupDefaultMocks();
     }
 
-    public void Dispose() => _dbFixture.Dispose();
+    public void Dispose()
+    {
+        if (File.Exists(_tempChapterFile)) File.Delete(_tempChapterFile);
+        _dbFixture.Dispose();
+    }
 
     private void SetupDefaultMocks()
     {
@@ -77,23 +85,29 @@ public class TransferOrchestratorTests : IDisposable
 
         _yotoService.Setup(s => s.CreateOrUpdateCardAsync(
                 It.IsAny<string>(), It.IsAny<YotoCardContent>(), It.IsAny<YotoCardMetadata>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("card-id-123");
 
         _iconService.Setup(s => s.GenerateChapterIconAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new byte[] { 0x89, 0x50, 0x4E, 0x47 }); // PNG header
 
+        // Vary by chapter title so distinct chapters hash distinctly (matches production prompt).
         _iconService.Setup(s => s.BuildChapterIconPrompt(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>()))
-            .Returns("test prompt");
+            .Returns((string chapterTitle, string bookTitle, string? genre) => $"prompt: {chapterTitle}");
 
+        // Return a fresh stream per call — the orchestrator disposes each stream it reads.
         _absService.Setup(s => s.GetCoverImageAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MemoryStream(new byte[] { 0xFF, 0xD8 }));
+            .ReturnsAsync(() => new MemoryStream(new byte[] { 0xFF, 0xD8 }));
 
         _absService.Setup(s => s.DownloadAudioFileAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MemoryStream(new byte[100]));
+            .ReturnsAsync(() => new MemoryStream(new byte[100]));
+
+        _chapterExtractor.Setup(s => s.ExtractChapterAsync(
+                It.IsAny<string>(), It.IsAny<double>(), It.IsAny<double>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(_tempChapterFile);
     }
 
     private async Task<UserConnection> SeedUserAsync()
@@ -125,6 +139,34 @@ public class TransferOrchestratorTests : IDisposable
         result.BookTitle.Should().Be("Test Book");
         result.YotoCardId.Should().Be("card-id-123");
         result.ProgressPercent.Should().Be(100);
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_RetryAfterFailure_ClearsStaleErrorMessage()
+    {
+        var user = await SeedUserAsync();
+        var transferId = Guid.NewGuid();
+        _db.CardTransfers.Add(new CardTransfer
+        {
+            Id = transferId,
+            UserConnectionId = user.Id,
+            AbsLibraryItemId = "item-123",
+            BookTitle = "Previously failed",
+            AgeSuggestionReason = "n/a",
+            Status = TransferStatus.Failed,
+            ProgressPercent = 85,
+            ErrorMessage = "Response status code does not indicate success: 400 (Bad Request)."
+        });
+        await _db.SaveChangesAsync();
+
+        _absService.Setup(s => s.GetLibraryItemAsync(
+                It.IsAny<string>(), It.IsAny<string>(), "item-123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestData.CreateAbsLibraryItem());
+
+        var result = await _sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest(), transferId);
+
+        result.Status.Should().Be(TransferStatus.Completed);
+        result.ErrorMessage.Should().BeNull();
     }
 
     [Fact]
@@ -289,6 +331,7 @@ public class TransferOrchestratorTests : IDisposable
             It.IsAny<string>(),
             It.Is<YotoCardContent>(c => c.Chapters.Length > 0 && c.PlaybackType == "linear"),
             It.Is<YotoCardMetadata>(m => m.Author == "Test Author" && m.MinAge == 5),
+            "Test Book",
             null,
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -304,7 +347,7 @@ public class TransferOrchestratorTests : IDisposable
         var series = TestData.CreateAbsSeriesItem("My Series", 3);
 
         _absService.Setup(s => s.GetSeriesDetailAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(series);
 
         _absService.Setup(s => s.GetLibraryItemAsync(
@@ -325,7 +368,7 @@ public class TransferOrchestratorTests : IDisposable
         var series = TestData.CreateAbsSeriesItem("My Series", 3);
 
         _absService.Setup(s => s.GetSeriesDetailAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(series);
 
         var callCount = 0;

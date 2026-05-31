@@ -35,17 +35,17 @@ public class TransferJobServiceTests
         var userId = Guid.NewGuid();
         var request = TestData.CreateTransferRequest();
         var response = new TransferResponse(
-            Guid.NewGuid(), "Test Book", "Author", null, null,
+            Guid.NewGuid(), "item-1", "Test Book", "Author", null, null,
             TransferStatus.Completed, 100, null,
             new AgeRangeResponse(5, 10, "Test", AgeRangeSource.Default, null, null, 5, 10),
             "card-1", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, []);
 
-        _orchestrator.Setup(o => o.TransferBookAsync(userId, request, It.IsAny<CancellationToken>()))
+        _orchestrator.Setup(o => o.TransferBookAsync(userId, request, It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(response);
 
-        await _sut.ExecuteBookTransferAsync(userId, request, CancellationToken.None);
+        await _sut.ExecuteBookTransferAsync(userId, request, null, CancellationToken.None);
 
-        _orchestrator.Verify(o => o.TransferBookAsync(userId, request, It.IsAny<CancellationToken>()),
+        _orchestrator.Verify(o => o.TransferBookAsync(userId, request, It.IsAny<Guid?>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -55,16 +55,16 @@ public class TransferJobServiceTests
         var userId = Guid.NewGuid();
         var transferId = Guid.NewGuid();
         var response = new TransferResponse(
-            transferId, "Test Book", "Author", null, null,
+            transferId, "item-1", "Test Book", "Author", null, null,
             TransferStatus.Completed, 100, null,
             new AgeRangeResponse(5, 10, "Test", AgeRangeSource.Default, null, null, 5, 10),
             "card-1", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, []);
 
         _orchestrator.Setup(o => o.TransferBookAsync(
-                It.IsAny<Guid>(), It.IsAny<CreateTransferRequest>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Guid>(), It.IsAny<CreateTransferRequest>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(response);
 
-        await _sut.ExecuteBookTransferAsync(userId, TestData.CreateTransferRequest(), CancellationToken.None);
+        await _sut.ExecuteBookTransferAsync(userId, TestData.CreateTransferRequest(), null, CancellationToken.None);
 
         _notifier.Verify(n => n.SendProgressAsync(
             It.Is<TransferProgressUpdate>(u => u.TransferId == transferId && u.Status == TransferStatus.Completed),
@@ -75,11 +75,11 @@ public class TransferJobServiceTests
     public async Task ExecuteBookTransferAsync_OrchestratorThrows_PropagatesException()
     {
         _orchestrator.Setup(o => o.TransferBookAsync(
-                It.IsAny<Guid>(), It.IsAny<CreateTransferRequest>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Guid>(), It.IsAny<CreateTransferRequest>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("External failure"));
 
         var act = () => _sut.ExecuteBookTransferAsync(
-            Guid.NewGuid(), TestData.CreateTransferRequest(), CancellationToken.None);
+            Guid.NewGuid(), TestData.CreateTransferRequest(), null, CancellationToken.None);
 
         await act.Should().ThrowAsync<HttpRequestException>();
     }
@@ -113,7 +113,7 @@ public class TransferJobServiceTests
     {
         var transferId = Guid.NewGuid();
         var response = new TransferResponse(
-            transferId, "Test Book", "Author", null, null,
+            transferId, "item-1", "Test Book", "Author", null, null,
             TransferStatus.Completed, 100, null,
             new AgeRangeResponse(5, 10, "Test", AgeRangeSource.Default, null, null, 5, 10),
             "card-1", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, []);

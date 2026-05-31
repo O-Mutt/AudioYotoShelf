@@ -24,7 +24,79 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger) : IC
 
         var args = $"-i \"{inputFilePath}\" -ss {startSeconds:F3} -to {endSeconds:F3} -c copy -y \"{outputPath}\"";
 
-        logger.LogInformation("Extracting chapter: ffmpeg {Args}", args);
+        await RunFfmpegAsync(args, "chapter extraction", ct);
+
+        logger.LogInformation("Chapter extracted to {OutputPath} ({Size} bytes)",
+            outputPath, new FileInfo(outputPath).Length);
+
+        return outputPath;
+    }
+
+    public async Task<string> ConcatenateAsync(
+        IReadOnlyList<string> inputFilePaths, string outputFormat = "m4a", CancellationToken ct = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(inputFilePaths.Count, nameof(inputFilePaths));
+        foreach (var path in inputFilePaths)
+        {
+            if (!File.Exists(path))
+                throw new FileNotFoundException("Input audio file not found", path);
+        }
+
+        if (inputFilePaths.Count == 1)
+            return inputFilePaths[0];
+
+        var outputPath = TempPath(outputFormat);
+
+        // ffmpeg concat demuxer needs a list file of the inputs.
+        var listPath = Path.Combine(Path.GetTempPath(), $"concat_{Guid.NewGuid():N}.txt");
+        var listContent = string.Join('\n', inputFilePaths.Select(p => $"file '{p.Replace("'", "'\\''")}'"));
+        await File.WriteAllTextAsync(listPath, listContent, ct);
+
+        try
+        {
+            var args = $"-f concat -safe 0 -i \"{listPath}\" -c copy -y \"{outputPath}\"";
+            await RunFfmpegAsync(args, "concatenation", ct);
+            return outputPath;
+        }
+        finally
+        {
+            if (File.Exists(listPath)) File.Delete(listPath);
+        }
+    }
+
+    public async Task<IReadOnlyList<string>> SplitAsync(
+        string inputFilePath, double segmentSeconds, string outputFormat = "m4a", CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(inputFilePath, nameof(inputFilePath));
+        if (!File.Exists(inputFilePath))
+            throw new FileNotFoundException("Input audio file not found", inputFilePath);
+        if (segmentSeconds <= 0)
+            throw new ArgumentException("Segment length must be positive", nameof(segmentSeconds));
+
+        var token = Guid.NewGuid().ToString("N");
+        var pattern = Path.Combine(Path.GetTempPath(), $"segment_{token}_%03d.{outputFormat}");
+
+        var args = $"-i \"{inputFilePath}\" -f segment -segment_time {segmentSeconds:F3} " +
+                   $"-c copy -reset_timestamps 1 -y \"{pattern}\"";
+        await RunFfmpegAsync(args, "split", ct);
+
+        var segments = Directory
+            .GetFiles(Path.GetTempPath(), $"segment_{token}_*.{outputFormat}")
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .ToList();
+
+        if (segments.Count == 0)
+            throw new InvalidOperationException("FFmpeg split produced no segments");
+
+        return segments;
+    }
+
+    private static string TempPath(string outputFormat) =>
+        Path.Combine(Path.GetTempPath(), $"audio_{Guid.NewGuid():N}.{outputFormat}");
+
+    private async Task RunFfmpegAsync(string args, string operation, CancellationToken ct)
+    {
+        logger.LogInformation("ffmpeg {Operation}: {Args}", operation, args);
 
         var process = new Process
         {
@@ -46,14 +118,10 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger) : IC
 
         if (process.ExitCode != 0)
         {
-            logger.LogError("FFmpeg failed with exit code {ExitCode}: {Stderr}", process.ExitCode, stderr);
-            throw new InvalidOperationException($"FFmpeg chapter extraction failed: {stderr}");
+            logger.LogError("FFmpeg {Operation} failed with exit code {ExitCode}: {Stderr}",
+                operation, process.ExitCode, stderr);
+            throw new InvalidOperationException($"FFmpeg {operation} failed: {stderr}");
         }
-
-        logger.LogInformation("Chapter extracted to {OutputPath} ({Size} bytes)",
-            outputPath, new FileInfo(outputPath).Length);
-
-        return outputPath;
     }
 
     public async Task<bool> IsFfmpegAvailableAsync(CancellationToken ct = default)

@@ -98,7 +98,7 @@ public static class TestData
             Title: title,
             Subtitle: null,
             Authors: [new AbsAuthor("a1", "Test Author")],
-            Narrators: [new AbsNarrator("n1", "Test Narrator")],
+            Narrators: ["Test Narrator"],
             Series: seriesName is not null
                 ? [new AbsSeries("s1", seriesName, seriesSequence)]
                 : null,

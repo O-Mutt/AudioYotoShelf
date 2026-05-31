@@ -32,7 +32,10 @@ const router = createRouter({
       name: 'series-detail',
       component: () => import('@/views/SeriesDetailView.vue'),
       meta: { requiresAuth: true },
-      props: true,
+      props: route => ({
+        seriesId: route.params.seriesId as string,
+        libraryId: typeof route.query.libraryId === 'string' ? route.query.libraryId : undefined,
+      }),
     },
     {
       path: '/transfers',

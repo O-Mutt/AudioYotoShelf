@@ -161,7 +161,7 @@ function formatDuration(seconds: number): string {
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2">
               <h3 class="font-medium text-gray-900 truncate">
-                {{ card.sourceBookTitle || card.metadata?.description || `Card ${card.cardId.slice(0, 8)}` }}
+                {{ card.title || card.sourceBookTitle || card.metadata?.description || `Card ${card.cardId.slice(0, 8)}` }}
               </h3>
               <span
                 v-if="card.fromAudioYotoShelf"
@@ -172,8 +172,8 @@ function formatDuration(seconds: number): string {
             </div>
             <div class="flex items-center gap-3 text-xs text-gray-500 mt-1">
               <span v-if="card.metadata?.author">{{ card.metadata.author }}</span>
-              <span>{{ card.chapterCount }} ch.</span>
-              <span>{{ card.trackCount }} tracks</span>
+              <span v-if="card.chapterCount > 0">{{ card.chapterCount }} ch.</span>
+              <span v-if="card.trackCount > 0">{{ card.trackCount }} tracks</span>
               <span v-if="card.metadata?.minAge != null">
                 Ages {{ card.metadata.minAge }}–{{ card.metadata.maxAge ?? '18' }}
               </span>

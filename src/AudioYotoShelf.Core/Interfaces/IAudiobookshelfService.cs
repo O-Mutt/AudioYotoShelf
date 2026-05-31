@@ -16,13 +16,19 @@ public interface IAudiobookshelfService
     Task<AbsLibrary[]> GetLibrariesAsync(string baseUrl, string token, CancellationToken ct = default);
     Task<AbsLibraryItemsResponse> GetLibraryItemsAsync(string baseUrl, string token, string libraryId, int page = 0, int limit = 20, string? sort = null, bool desc = false, bool collapseSeries = false, string? search = null, string? filter = null, CancellationToken ct = default);
 
+    /// <summary>
+    /// Full-text search within a library via the dedicated ABS search endpoint
+    /// (the items endpoint does not support free-text search). Returns matched book items.
+    /// </summary>
+    Task<AbsLibraryItem[]> SearchLibraryItemsAsync(string baseUrl, string token, string libraryId, string query, int limit = 20, CancellationToken ct = default);
+
     // Books
     Task<AbsLibraryItem> GetLibraryItemAsync(string baseUrl, string token, string itemId, CancellationToken ct = default);
     Task<Stream> GetCoverImageAsync(string baseUrl, string token, string itemId, CancellationToken ct = default);
 
     // Series
     Task<AbsSeriesResponse> GetSeriesAsync(string baseUrl, string token, string libraryId, int page = 0, int limit = 20, CancellationToken ct = default);
-    Task<AbsSeriesItem> GetSeriesDetailAsync(string baseUrl, string token, string seriesId, CancellationToken ct = default);
+    Task<AbsSeriesItem> GetSeriesDetailAsync(string baseUrl, string token, string libraryId, string seriesId, CancellationToken ct = default);
 
     // File download (streams to avoid memory buffering)
     Task<Stream> DownloadAudioFileAsync(string baseUrl, string token, string itemId, string fileIno, CancellationToken ct = default);

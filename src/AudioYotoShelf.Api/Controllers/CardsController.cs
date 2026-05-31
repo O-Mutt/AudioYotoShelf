@@ -70,6 +70,7 @@ public class CardsController(
             var enriched = allCards.Select(card => new
             {
                 card.CardId,
+                card.Title,
                 card.Metadata,
                 ChapterCount = card.Content?.Chapters?.Length ?? 0,
                 TrackCount = card.Content?.Chapters?.Sum(ch => ch.Tracks?.Length ?? 0) ?? 0,
@@ -91,6 +92,7 @@ public class CardsController(
                 fallback.Add(new
                 {
                     card.CardId,
+                    card.Title,
                     card.Metadata,
                     ChapterCount = card.Content?.Chapters?.Length ?? 0,
                     TrackCount = card.Content?.Chapters?.Sum(ch => ch.Tracks?.Length ?? 0) ?? 0,
@@ -167,13 +169,7 @@ public class CardsController(
         return user.YotoAccessToken!;
     }
 
-    private async Task<string> ForceRefreshYotoTokenAsync(UserConnection user, CancellationToken ct)
-    {
-        var newToken = await yotoService.RefreshTokenAsync(user.YotoRefreshToken!, ct);
-        user.YotoAccessToken = newToken.AccessToken;
-        user.YotoRefreshToken = newToken.RefreshToken ?? user.YotoRefreshToken;
-        user.YotoTokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(newToken.ExpiresIn);
-        await db.SaveChangesAsync(ct);
-        return newToken.AccessToken;
-    }
+    private Task<string> ForceRefreshYotoTokenAsync(UserConnection user, CancellationToken ct) =>
+        AudioYotoShelf.Infrastructure.Services.YotoTokens.EnsureValidAsync(
+            db, yotoService, user, logger, ct);
 }

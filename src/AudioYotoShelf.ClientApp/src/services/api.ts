@@ -3,6 +3,7 @@ import type {
   AbsConnectResponse,
   AbsLibrary,
   AbsLibraryItemsResponse,
+  AbsSeriesItem,
   AbsSeriesResponse,
   BatchTransferResponse,
   BookDetailResponse,
@@ -78,8 +79,11 @@ export const libraryApi = {
     )
   },
 
-  getSeriesDetail(userConnectionId: string, seriesId: string) {
-    return api.get(`/libraries/${userConnectionId}/series/${seriesId}`)
+  getSeriesDetail(userConnectionId: string, seriesId: string, libraryId?: string) {
+    return api.get<AbsSeriesItem>(
+      `/libraries/${userConnectionId}/series/${seriesId}`,
+      { params: { libraryId: libraryId || undefined } }
+    )
   },
 
   getCoverUrl(userConnectionId: string, itemId: string) {
@@ -144,6 +148,10 @@ export const transferApi = {
 
   deleteTransfer(transferId: string) {
     return api.delete(`/transfers/${transferId}`)
+  },
+
+  clearCompleted(userConnectionId: string) {
+    return api.delete<{ cleared: number }>(`/transfers/${userConnectionId}/completed`)
   },
 }
 

@@ -10,6 +10,8 @@ public class AudioYotoShelfDbContext(DbContextOptions<AudioYotoShelfDbContext> o
     public DbSet<CardTransfer> CardTransfers => Set<CardTransfer>();
     public DbSet<TrackMapping> TrackMappings => Set<TrackMapping>();
     public DbSet<GeneratedIcon> GeneratedIcons => Set<GeneratedIcon>();
+    public DbSet<Playlist> Playlists => Set<Playlist>();
+    public DbSet<PlaylistItem> PlaylistItems => Set<PlaylistItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

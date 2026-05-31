@@ -24,7 +24,8 @@ const isBatchTransferring = ref(false)
 onMounted(async () => {
   await libraryStore.loadLibraries()
   if (libraryStore.selectedLibraryId) {
-    await libraryStore.loadItems()
+    if (libraryStore.viewMode === 'series') await libraryStore.loadSeries()
+    else await libraryStore.loadItems()
   }
 })
 
@@ -96,7 +97,11 @@ async function handleBatchTransfer() {
 }
 
 function openSeries(seriesId: string) {
-  router.push({ name: 'series-detail', params: { seriesId } })
+  router.push({
+    name: 'series-detail',
+    params: { seriesId },
+    query: { libraryId: libraryStore.selectedLibraryId ?? undefined },
+  })
 }
 
 function onCoverError(e: Event) {
@@ -289,32 +294,34 @@ function onCoverError(e: Event) {
       <p class="mt-2 text-sm text-gray-400">Series are detected from your audiobook metadata in Audiobookshelf.</p>
     </div>
 
-    <!-- Series List -->
-    <div v-else-if="libraryStore.viewMode === 'series'" class="space-y-3">
+    <!-- Series Grid -->
+    <div v-else-if="libraryStore.viewMode === 'series'" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
       <div
         v-for="s in libraryStore.series"
         :key="s.id"
         @click="openSeries(s.id)"
-        class="card cursor-pointer hover:shadow-md transition-shadow flex items-center space-x-4"
+        class="card cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all p-0 overflow-hidden"
       >
-        <div class="flex -space-x-3 shrink-0">
-          <img
-            v-for="(book, i) in s.books.slice(0, 3)"
-            :key="book.id"
-            :src="libraryStore.getCoverUrl(book.id)"
-            class="w-12 h-16 object-cover rounded border-2 border-white"
-            :style="{ zIndex: 3 - i }"
-            loading="lazy"
-            @error="onCoverError"
-          />
+        <!-- Fanned covers -->
+        <div class="aspect-[3/2] bg-gray-100 flex items-center justify-center px-4">
+          <div class="flex -space-x-6">
+            <img
+              v-for="(book, i) in s.books.slice(0, 3)"
+              :key="book.id"
+              :src="libraryStore.getCoverUrl(book.id)"
+              class="w-16 h-24 object-cover rounded-md border-2 border-white shadow-sm"
+              :style="{ zIndex: 3 - i }"
+              loading="lazy"
+              @error="onCoverError"
+            />
+          </div>
         </div>
-        <div class="flex-1 min-w-0">
-          <h3 class="font-semibold text-gray-900">{{ s.name }}</h3>
-          <p class="text-sm text-gray-500">{{ s.books.length }} book{{ s.books.length !== 1 ? 's' : '' }} · {{ formatDuration(s.totalDuration) }}</p>
+        <div class="p-3">
+          <h3 class="font-semibold text-sm text-gray-900 line-clamp-2">{{ s.name }}</h3>
+          <p class="text-xs text-gray-500 mt-1">
+            {{ s.books.length }} book{{ s.books.length !== 1 ? 's' : '' }} · {{ formatDuration(s.totalDuration) }}
+          </p>
         </div>
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-          <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
-        </svg>
       </div>
     </div>
 
@@ -334,10 +341,33 @@ function onCoverError(e: Event) {
         class="btn-secondary text-sm"
       >Next</button>
       <select v-model.number="libraryStore.pageSize" class="input-field w-auto text-sm ml-2">
-        <option :value="20">20 / page</option>
-        <option :value="40">40 / page</option>
-        <option :value="60">60 / page</option>
+        <option :value="25">25 / page</option>
+        <option :value="50">50 / page</option>
         <option :value="100">100 / page</option>
+        <option :value="200">200 / page</option>
+      </select>
+    </div>
+
+    <!-- Series Pagination -->
+    <div v-if="!libraryStore.isLoading && libraryStore.viewMode === 'series' && libraryStore.totalSeries > libraryStore.seriesPageSize" class="flex justify-center items-center space-x-2 pt-4">
+      <button
+        @click="libraryStore.loadSeries(libraryStore.seriesPage - 1)"
+        :disabled="libraryStore.seriesPage === 0"
+        class="btn-secondary text-sm"
+      >Previous</button>
+      <span class="px-4 py-2 text-sm text-gray-500">
+        Page {{ libraryStore.seriesPage + 1 }} of {{ libraryStore.pageCountSeries }}
+      </span>
+      <button
+        @click="libraryStore.loadSeries(libraryStore.seriesPage + 1)"
+        :disabled="(libraryStore.seriesPage + 1) * libraryStore.seriesPageSize >= libraryStore.totalSeries"
+        class="btn-secondary text-sm"
+      >Next</button>
+      <select v-model.number="libraryStore.seriesPageSize" class="input-field w-auto text-sm ml-2">
+        <option :value="25">25 / page</option>
+        <option :value="50">50 / page</option>
+        <option :value="100">100 / page</option>
+        <option :value="200">200 / page</option>
       </select>
     </div>
 

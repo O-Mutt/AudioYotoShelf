@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
+using AudioYotoShelf.Core.Tests.Helpers;
 using AudioYotoShelf.Infrastructure.Services.Audiobookshelf;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
@@ -192,6 +193,86 @@ public class AudiobookshelfServiceTests
     }
 
     // =========================================================================
+    // GetSeriesDetailAsync — books resolved via the items-by-series filter
+    // =========================================================================
+
+    [Fact]
+    public async Task GetSeriesDetailAsync_ResolvesBooksFromItemsEndpoint()
+    {
+        _handler.SetupJsonResponseFor("/api/series/",
+            new { id = "s1", name = "Harry Potter", description = (string?)null });
+        var media = TestData.CreateAbsMedia(
+            metadata: TestData.CreateAbsMetadata("Philosopher's Stone", seriesName: "Harry Potter", seriesSequence: "1"));
+        _handler.SetupJsonResponseFor("/items",
+            new AbsLibraryItemsResponse([TestData.CreateAbsLibraryItem("book-1", media)], 1, 500, 0));
+
+        var result = await _sut.GetSeriesDetailAsync("http://abs.local", "token", "lib-1", "s1");
+
+        result.Name.Should().Be("Harry Potter");
+        result.Books.Should().NotBeNull();
+        result.Books.Should().HaveCount(1);
+        result.Books[0].Id.Should().Be("book-1");
+        result.Books[0].Sequence.Should().Be("1");
+    }
+
+    [Fact]
+    public async Task GetSeriesDetailAsync_FiltersBySeriesSortedBySequence()
+    {
+        _handler.SetupJsonResponseFor("/api/series/",
+            new { id = "s1", name = "Series", description = (string?)null });
+        _handler.SetupJsonResponseFor("/items", new AbsLibraryItemsResponse([], 0, 500, 0));
+
+        await _sut.GetSeriesDetailAsync("http://abs.local", "token", "lib-1", "s1");
+
+        var uri = _handler.LastRequestUri!; // items request runs last
+        uri.Should().Contain("sort=sequence");
+        uri.Should().Contain("filter=series.czE"); // base64("s1") == "czE="
+    }
+
+    [Fact]
+    public async Task GetSeriesDetailAsync_NoBooks_ReturnsEmptyArrayNotNull()
+    {
+        _handler.SetupJsonResponseFor("/api/series/",
+            new { id = "s1", name = "Empty Series", description = (string?)null });
+        _handler.SetupJsonResponseFor("/items", new AbsLibraryItemsResponse([], 0, 500, 0));
+
+        var result = await _sut.GetSeriesDetailAsync("http://abs.local", "token", "lib-1", "s1");
+
+        result.Books.Should().NotBeNull();
+        result.Books.Should().BeEmpty();
+    }
+
+    // =========================================================================
+    // SearchLibraryItemsAsync — uses the dedicated search endpoint
+    // =========================================================================
+
+    [Fact]
+    public async Task SearchLibraryItemsAsync_HitsSearchEndpointAndMapsBookItems()
+    {
+        _handler.SetupJsonResponseFor("/search", new
+        {
+            book = new[] { new { libraryItem = TestData.CreateAbsLibraryItem("book-1") } }
+        });
+
+        var result = await _sut.SearchLibraryItemsAsync("http://abs.local", "token", "lib-1", "narnia");
+
+        result.Should().HaveCount(1);
+        result[0].Id.Should().Be("book-1");
+        _handler.LastRequestUri!.Should().Contain("/api/libraries/lib-1/search");
+        _handler.LastRequestUri!.Should().Contain("q=narnia");
+    }
+
+    [Fact]
+    public async Task SearchLibraryItemsAsync_NoMatches_ReturnsEmpty()
+    {
+        _handler.SetupJsonResponseFor("/search", new { book = Array.Empty<object>() });
+
+        var result = await _sut.SearchLibraryItemsAsync("http://abs.local", "token", "lib-1", "zzz");
+
+        result.Should().BeEmpty();
+    }
+
+    // =========================================================================
     // Helper: fake HTTP handler
     // =========================================================================
 
@@ -210,13 +291,21 @@ public class AudiobookshelfServiceTests
 
         private HttpStatusCode _statusCode = HttpStatusCode.OK;
         private string _content = "{}";
+        private readonly List<(string PathContains, string Json)> _routes = [];
+
+        private static string Json<T>(T body) =>
+            System.Text.Json.JsonSerializer.Serialize(body,
+                new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
 
         public void SetupJsonResponse<T>(T body)
         {
             _statusCode = HttpStatusCode.OK;
-            _content = System.Text.Json.JsonSerializer.Serialize(body,
-                new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
+            _content = Json(body);
         }
+
+        /// <summary>Route a canned JSON body to requests whose path contains <paramref name="pathContains"/>.</summary>
+        public void SetupJsonResponseFor<T>(string pathContains, T body) =>
+            _routes.Add((pathContains, Json(body)));
 
         public void SetupResponse(HttpStatusCode statusCode, string content)
         {
@@ -227,11 +316,15 @@ public class AudiobookshelfServiceTests
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            LastRequestUri = request.RequestUri?.PathAndQuery;
+            var path = request.RequestUri?.PathAndQuery ?? "";
+            LastRequestUri = path;
+
+            var match = _routes.FirstOrDefault(r => path.Contains(r.PathContains));
+            var content = match.Json ?? _content;
 
             return Task.FromResult(new HttpResponseMessage(_statusCode)
             {
-                Content = new StringContent(_content, System.Text.Encoding.UTF8, "application/json")
+                Content = new StringContent(content, System.Text.Encoding.UTF8, "application/json")
             });
         }
     }

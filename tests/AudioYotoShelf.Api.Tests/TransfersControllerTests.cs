@@ -7,6 +7,7 @@ using AudioYotoShelf.Infrastructure.Data;
 using AudioYotoShelf.Infrastructure.Services.BackgroundJobs;
 using FluentAssertions;
 using Hangfire;
+using Hangfire.States;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -38,6 +39,7 @@ public class TransfersControllerTests : IDisposable
 
         _sut = new TransfersController(
             _db, _orchestrator.Object, _backgroundJobs.Object,
+            Mock.Of<ITransferProgressNotifier>(),
             Mock.Of<ILogger<TransfersController>>());
     }
 
@@ -118,12 +120,12 @@ public class TransfersControllerTests : IDisposable
     // =========================================================================
 
     [Fact]
-    public void TransferBook_EnqueuesJob_Returns202()
+    public async Task TransferBook_EnqueuesJob_Returns202()
     {
         var request = new CreateTransferRequest("item-1");
-        var result = _sut.TransferBook(Guid.NewGuid(), request);
+        var result = await _sut.TransferBook(Guid.NewGuid(), request, CancellationToken.None);
 
-        result.Should().BeOfType<AcceptedObjectResult>();
+        result.Should().BeOfType<AcceptedResult>();
     }
 
     // =========================================================================
@@ -131,12 +133,12 @@ public class TransfersControllerTests : IDisposable
     // =========================================================================
 
     [Fact]
-    public void TransferSeries_EnqueuesJob_Returns202()
+    public async Task TransferSeries_EnqueuesJob_Returns202()
     {
         var request = new CreateSeriesTransferRequest("ser-1", "lib-1");
-        var result = _sut.TransferSeries(Guid.NewGuid(), request);
+        var result = await _sut.TransferSeries(Guid.NewGuid(), request, CancellationToken.None);
 
-        result.Should().BeOfType<AcceptedObjectResult>();
+        result.Should().BeOfType<AcceptedResult>();
     }
 
     // =========================================================================
@@ -144,12 +146,12 @@ public class TransfersControllerTests : IDisposable
     // =========================================================================
 
     [Fact]
-    public void TransferBatch_EnqueuesJobPerBook()
+    public async Task TransferBatch_EnqueuesJobPerBook()
     {
         var request = new BatchTransferRequest(["item-1", "item-2", "item-3"]);
-        var result = _sut.TransferBatch(Guid.NewGuid(), request);
+        var result = await _sut.TransferBatch(Guid.NewGuid(), request, CancellationToken.None);
 
-        var accepted = result.Should().BeOfType<AcceptedObjectResult>().Subject;
+        var accepted = result.Should().BeOfType<AcceptedResult>().Subject;
         var response = accepted.Value as BatchTransferResponse;
         response.Should().NotBeNull();
         response!.TotalBooks.Should().Be(3);
@@ -158,12 +160,12 @@ public class TransfersControllerTests : IDisposable
     }
 
     [Fact]
-    public void TransferBatch_SingleItem_Works()
+    public async Task TransferBatch_SingleItem_Works()
     {
         var request = new BatchTransferRequest(["item-1"]);
-        var result = _sut.TransferBatch(Guid.NewGuid(), request);
+        var result = await _sut.TransferBatch(Guid.NewGuid(), request, CancellationToken.None);
 
-        var accepted = result.Should().BeOfType<AcceptedObjectResult>().Subject;
+        var accepted = result.Should().BeOfType<AcceptedResult>().Subject;
         var response = accepted.Value as BatchTransferResponse;
         response!.TotalBooks.Should().Be(1);
     }
@@ -176,7 +178,7 @@ public class TransfersControllerTests : IDisposable
     public void RetryTransfer_EnqueuesJob_Returns202()
     {
         var result = _sut.RetryTransfer(Guid.NewGuid());
-        result.Should().BeOfType<AcceptedObjectResult>();
+        result.Should().BeOfType<AcceptedResult>();
     }
 
     [Fact]

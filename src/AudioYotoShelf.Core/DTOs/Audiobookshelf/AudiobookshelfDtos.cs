@@ -51,7 +51,7 @@ public record AbsBookMetadata(
     string? Subtitle,
     AbsAuthor[]? Authors,
     string[]? Narrators,
-    AbsSeries[]? Series,
+    [property: JsonConverter(typeof(AbsSeriesArrayConverter))] AbsSeries[]? Series,
     string[]? Genres,
     string? PublishedYear,
     string? Publisher,

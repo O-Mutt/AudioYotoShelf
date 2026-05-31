@@ -164,6 +164,12 @@ async function startTransfer() {
       </div>
     </div>
 
+    <!-- Description -->
+    <div v-if="metadata?.description" class="card">
+      <h2 class="text-lg font-semibold mb-2">Description</h2>
+      <p class="text-sm text-gray-600 whitespace-pre-line leading-relaxed">{{ metadata.description }}</p>
+    </div>
+
     <!-- Age Range Section -->
     <div class="card">
       <h2 class="text-lg font-semibold mb-4">Age Range</h2>
