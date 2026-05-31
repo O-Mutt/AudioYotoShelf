@@ -111,6 +111,35 @@ public class TransferJobService(
 }
 
 /// <summary>
+/// Hangfire job for transferring an entire playlist to a single Yoto card.
+/// </summary>
+public interface IPlaylistJobService
+{
+	[Queue("transfers")]
+	[AutomaticRetry(Attempts = 1, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
+	Task ExecutePlaylistTransferAsync(Guid playlistId, CancellationToken ct);
+}
+
+public class PlaylistJobService(
+		IPlaylistTransferOrchestrator orchestrator,
+		ILogger<PlaylistJobService> logger) : IPlaylistJobService
+{
+	public async Task ExecutePlaylistTransferAsync(Guid playlistId, CancellationToken ct)
+	{
+		logger.LogInformation("Hangfire: Starting playlist transfer {PlaylistId}", playlistId);
+		try
+		{
+			await orchestrator.TransferPlaylistAsync(playlistId, ct);
+		}
+		catch (Exception ex)
+		{
+			logger.LogError(ex, "Hangfire: Playlist transfer failed {PlaylistId}", playlistId);
+			throw;
+		}
+	}
+}
+
+/// <summary>
 /// Extension methods for registering Hangfire jobs in Program.cs.
 /// </summary>
 public static class HangfireJobRegistration
@@ -118,6 +147,7 @@ public static class HangfireJobRegistration
 	public static IServiceCollection AddTransferJobs(this IServiceCollection services)
 	{
 		services.AddScoped<ITransferJobService, TransferJobService>();
+		services.AddScoped<IPlaylistJobService, PlaylistJobService>();
 		return services;
 	}
 }

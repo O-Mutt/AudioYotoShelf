@@ -1,4 +1,5 @@
 using AudioYotoShelf.Api.Controllers;
+using AudioYotoShelf.Core.DTOs.Playlist;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using FluentValidation;
 
@@ -84,6 +85,42 @@ public class BatchTransferRequestValidator : AbstractValidator<BatchTransferRequ
             .Must(x => !x.OverrideMinAge.HasValue || !x.OverrideMaxAge.HasValue ||
                        x.OverrideMinAge < x.OverrideMaxAge)
             .WithMessage("Min age must be less than max age");
+    }
+}
+
+public class CreatePlaylistRequestValidator : AbstractValidator<CreatePlaylistRequest>
+{
+    public CreatePlaylistRequestValidator()
+    {
+        RuleFor(x => x.Name).NotEmpty().MaximumLength(256);
+        RuleFor(x => x.DefaultGrouping).IsInEnum();
+    }
+}
+
+public class AddPlaylistItemsRequestValidator : AbstractValidator<AddPlaylistItemsRequest>
+{
+    public AddPlaylistItemsRequestValidator()
+    {
+        RuleFor(x => x.AbsLibraryItemIds)
+            .NotEmpty().WithMessage("At least one item is required")
+            .Must(ids => ids.Length <= 100).WithMessage("Maximum 100 items per request");
+        RuleForEach(x => x.AbsLibraryItemIds).NotEmpty().MaximumLength(256);
+    }
+}
+
+public class AddPlaylistSeriesRequestValidator : AbstractValidator<AddPlaylistSeriesRequest>
+{
+    public AddPlaylistSeriesRequestValidator()
+    {
+        RuleFor(x => x.AbsSeriesId).NotEmpty().MaximumLength(256);
+    }
+}
+
+public class ReorderPlaylistRequestValidator : AbstractValidator<ReorderPlaylistRequest>
+{
+    public ReorderPlaylistRequestValidator()
+    {
+        RuleFor(x => x.OrderedItemIds).NotEmpty().WithMessage("Item order is required");
     }
 }
 

@@ -29,8 +29,7 @@ public class LibrariesControllerTests : IDisposable
         _ageService = new Mock<IAgeSuggestionService>();
 
         _sut = new LibrariesController(
-            _absService.Object, _ageService.Object, _db,
-            Mock.Of<ILogger<LibrariesController>>());
+            _absService.Object, _ageService.Object, _db);
     }
 
     public void Dispose()
@@ -44,29 +43,6 @@ public class LibrariesControllerTests : IDisposable
     // =========================================================================
 
     [Fact]
-    public async Task GetItems_WithSearch_PassesSearchToService()
-    {
-        var user = TestData.CreateUserConnection();
-        _db.UserConnections.Add(user);
-        await _db.SaveChangesAsync();
-
-        _absService.Setup(s => s.GetLibraryItemsAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string?>(),
-                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new AbsLibraryItemsResponse([], 0, 20, 0));
-
-        await _sut.GetLibraryItems(user.Id, "lib-1", search: "narnia");
-
-        _absService.Verify(s => s.GetLibraryItemsAsync(
-            user.AudiobookshelfUrl, user.AudiobookshelfToken!, "lib-1",
-            0, 20, "media.metadata.title", false,
-            "narnia", null,
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
     public async Task GetItems_WithSort_PassesSortToService()
     {
         var user = TestData.CreateUserConnection();
@@ -76,7 +52,7 @@ public class LibrariesControllerTests : IDisposable
         _absService.Setup(s => s.GetLibraryItemsAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string?>(),
-                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AbsLibraryItemsResponse([], 0, 20, 0));
 
@@ -84,7 +60,7 @@ public class LibrariesControllerTests : IDisposable
 
         _absService.Verify(s => s.GetLibraryItemsAsync(
             It.IsAny<string>(), It.IsAny<string>(), "lib-1",
-            0, 20, "media.duration", false,
+            0, 20, "media.duration", false, false,
             null, null,
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -99,7 +75,7 @@ public class LibrariesControllerTests : IDisposable
         _absService.Setup(s => s.GetLibraryItemsAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string?>(),
-                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AbsLibraryItemsResponse([], 0, 20, 0));
 
@@ -107,7 +83,7 @@ public class LibrariesControllerTests : IDisposable
 
         _absService.Verify(s => s.GetLibraryItemsAsync(
             It.IsAny<string>(), It.IsAny<string>(), "lib-1",
-            0, 20, "media.metadata.title", false,
+            0, 20, "media.metadata.title", false, false,
             null, null,
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -122,7 +98,7 @@ public class LibrariesControllerTests : IDisposable
         _absService.Setup(s => s.GetLibraryItemsAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string?>(),
-                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AbsLibraryItemsResponse([], 100, 10, 3));
 
@@ -131,7 +107,7 @@ public class LibrariesControllerTests : IDisposable
         result.Should().BeOfType<OkObjectResult>();
         _absService.Verify(s => s.GetLibraryItemsAsync(
             It.IsAny<string>(), It.IsAny<string>(), "lib-1",
-            3, 10, It.IsAny<string?>(), false,
+            3, 10, It.IsAny<string?>(), false, false,
             null, null,
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -209,5 +185,78 @@ public class LibrariesControllerTests : IDisposable
         var result = await _sut.GetItem(user.Id, "item-1", CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
+    }
+
+    // =========================================================================
+    // Search routes to the dedicated ABS search endpoint
+    // =========================================================================
+
+    [Fact]
+    public async Task GetItems_WithSearch_UsesSearchEndpointNotItems()
+    {
+        var user = TestData.CreateUserConnection();
+        _db.UserConnections.Add(user);
+        await _db.SaveChangesAsync();
+
+        _absService.Setup(s => s.SearchLibraryItemsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), "lib-1", "narnia", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([TestData.CreateAbsLibraryItem("book-1")]);
+
+        var result = await _sut.GetLibraryItems(user.Id, "lib-1", search: "narnia");
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        (ok.Value as AbsLibraryItemsResponse)!.Total.Should().Be(1);
+
+        _absService.Verify(s => s.SearchLibraryItemsAsync(
+            It.IsAny<string>(), It.IsAny<string>(), "lib-1", "narnia", It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
+        _absService.Verify(s => s.GetLibraryItemsAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<int>(),
+            It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // =========================================================================
+    // Multi-library series resolution
+    // =========================================================================
+
+    [Fact]
+    public async Task GetSeriesDetail_WithLibraryId_UsesItDirectly()
+    {
+        var user = TestData.CreateUserConnection();
+        _db.UserConnections.Add(user);
+        await _db.SaveChangesAsync();
+
+        _absService.Setup(s => s.GetSeriesDetailAsync(
+                It.IsAny<string>(), It.IsAny<string>(), "lib-2", "s1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestData.CreateAbsSeriesItem("Harry Potter", 3));
+
+        var result = await _sut.GetSeriesDetail(user.Id, "s1", "lib-2", CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        _absService.Verify(s => s.GetLibrariesAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetSeriesDetail_NoLibraryId_SearchesBookLibrariesUntilBooksFound()
+    {
+        var user = TestData.CreateUserConnection();
+        _db.UserConnections.Add(user);
+        await _db.SaveChangesAsync();
+
+        _absService.Setup(s => s.GetLibrariesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new AbsLibrary("lib-a", "A", "book", null), new AbsLibrary("lib-b", "B", "book", null)]);
+
+        _absService.Setup(s => s.GetSeriesDetailAsync(
+                It.IsAny<string>(), It.IsAny<string>(), "lib-a", "s1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AbsSeriesItem("s1", "Harry Potter", null, [], 0)); // not here
+        _absService.Setup(s => s.GetSeriesDetailAsync(
+                It.IsAny<string>(), It.IsAny<string>(), "lib-b", "s1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestData.CreateAbsSeriesItem("Harry Potter", 3));      // lives here
+
+        var result = await _sut.GetSeriesDetail(user.Id, "s1", null, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        (ok.Value as AbsSeriesItem)!.Books.Should().HaveCount(3);
     }
 }

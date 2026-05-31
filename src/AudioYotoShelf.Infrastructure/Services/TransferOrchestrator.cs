@@ -18,6 +18,7 @@ public class TransferOrchestrator(
     IIconGenerationService iconService,
     IAgeSuggestionService ageService,
     IChapterExtractor chapterExtractor,
+    ITransferProgressNotifier notifier,
     IConfiguration configuration,
     ILogger<TransferOrchestrator> logger) : ITransferOrchestrator
 {
@@ -34,15 +35,8 @@ public class TransferOrchestrator(
         logger.LogInformation("Starting transfer for item {ItemId}, user {UserId}",
             request.AbsLibraryItemId, userConnectionId);
 
-        var item = await absService.GetLibraryItemAsync(
-            user.AudiobookshelfUrl, user.AudiobookshelfToken!, request.AbsLibraryItemId, ct);
-
-        var media = item.Media ?? throw new InvalidOperationException("Item has no media");
-        var metadata = media.Metadata;
-
-        var ageSuggestion = ageService.SuggestAgeRange(metadata, media.Duration, media.NumChapters);
-
-        // On Hangfire retry, a transfer with this ID may already exist from the failed attempt
+        // Create (or load, on Hangfire retry) the transfer record up front so that a failure
+        // while fetching the item is still recorded as Failed and visible in the user's history.
         CardTransfer? transfer = transferId.HasValue
             ? await db.CardTransfers.FirstOrDefaultAsync(t => t.Id == transferId.Value, ct)
             : null;
@@ -67,21 +61,16 @@ public class TransferOrchestrator(
         }
         else
         {
+            // Title/age are placeholders until the item metadata is fetched below.
             transfer = new CardTransfer
             {
                 Id = transferId ?? Guid.NewGuid(),
                 UserConnectionId = userConnectionId,
                 AbsLibraryItemId = request.AbsLibraryItemId,
-                BookTitle = metadata.Title ?? "Unknown",
-                BookAuthor = metadata.Authors?.FirstOrDefault()?.Name,
-                SeriesName = metadata.Series?.FirstOrDefault()?.Name,
-                SeriesSequence = ParseSequence(metadata.Series?.FirstOrDefault()?.Sequence),
+                BookTitle = "(pending)",
                 Category = request.Category,
                 PlaybackType = request.PlaybackType,
-                SuggestedMinAge = ageSuggestion.SuggestedMinAge,
-                SuggestedMaxAge = ageSuggestion.SuggestedMaxAge,
-                AgeSuggestionReason = ageSuggestion.Reason,
-                AgeSuggestionSource = ageSuggestion.Source,
+                AgeSuggestionReason = "(pending)",
                 OverrideMinAge = request.OverrideMinAge,
                 OverrideMaxAge = request.OverrideMaxAge,
                 Status = TransferStatus.Pending
@@ -93,6 +82,25 @@ public class TransferOrchestrator(
 
         try
         {
+            var item = await absService.GetLibraryItemAsync(
+                user.AudiobookshelfUrl, user.AudiobookshelfToken!, request.AbsLibraryItemId, ct);
+
+            var media = item.Media ?? throw new InvalidOperationException("Item has no media");
+            var metadata = media.Metadata;
+
+            var ageSuggestion = ageService.SuggestAgeRange(metadata, media.Duration, media.NumChapters);
+
+            // Enrich the record now that metadata is available
+            transfer.BookTitle = metadata.Title ?? "Unknown";
+            transfer.BookAuthor = metadata.Authors?.FirstOrDefault()?.Name;
+            transfer.SeriesName = metadata.Series?.FirstOrDefault()?.Name;
+            transfer.SeriesSequence = ParseSequence(metadata.Series?.FirstOrDefault()?.Sequence);
+            transfer.SuggestedMinAge = ageSuggestion.SuggestedMinAge;
+            transfer.SuggestedMaxAge = ageSuggestion.SuggestedMaxAge;
+            transfer.AgeSuggestionReason = ageSuggestion.Reason;
+            transfer.AgeSuggestionSource = ageSuggestion.Source;
+            await db.SaveChangesAsync(ct);
+
             await UpdateStatus(transfer, TransferStatus.DownloadingAudio, 5, ct);
             var (trackMappings, chapterPaths) = await BuildTrackMappingsAsync(user, item, transfer, ct);
 
@@ -123,16 +131,19 @@ public class TransferOrchestrator(
             transfer.YotoCardId = cardId;
             transfer.Status = TransferStatus.Completed;
             transfer.ProgressPercent = 100;
+            transfer.ErrorMessage = null; // clear any error from a prior failed attempt
             transfer.CompletedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(ct);
 
             logger.LogInformation("Transfer completed: {TransferId} → Card {CardId}", transfer.Id, cardId);
+            await NotifyAsync(transfer, StepLabel(TransferStatus.Completed), CancellationToken.None);
             return MapToResponse(transfer);
         }
         catch (OperationCanceledException)
         {
             transfer.Status = TransferStatus.Cancelled;
             await db.SaveChangesAsync(CancellationToken.None);
+            await NotifyAsync(transfer, StepLabel(TransferStatus.Cancelled), CancellationToken.None);
             throw;
         }
         catch (Exception ex)
@@ -141,6 +152,7 @@ public class TransferOrchestrator(
             transfer.Status = TransferStatus.Failed;
             transfer.ErrorMessage = ex.Message.Length > 4000 ? ex.Message[..4000] : ex.Message;
             await db.SaveChangesAsync(CancellationToken.None);
+            await NotifyAsync(transfer, StepLabel(TransferStatus.Failed), CancellationToken.None);
             throw;
         }
         finally
@@ -158,7 +170,7 @@ public class TransferOrchestrator(
         EnsureValidConnections(user);
 
         var seriesDetail = await absService.GetSeriesDetailAsync(
-            user.AudiobookshelfUrl, user.AudiobookshelfToken!, request.AbsSeriesId, ct);
+            user.AudiobookshelfUrl, user.AudiobookshelfToken!, request.AbsLibraryId, request.AbsSeriesId, ct);
 
         var results = new List<TransferResponse>();
         var orderedBooks = seriesDetail.Books
@@ -271,6 +283,9 @@ public class TransferOrchestrator(
         var mappings = new List<TrackMapping>();
         var chapterPaths = new Dictionary<int, string>();
 
+        if (media.AudioFiles.Length == 0)
+            throw new InvalidOperationException("Item has no audio files to transfer");
+
         if (media.NumAudioFiles > 1)
         {
             // Multi-file book: each audio file = one track
@@ -359,11 +374,14 @@ public class TransferOrchestrator(
         {
             var mapping = mappings[i];
 
-            // Check for existing SHA256 deduplication
+            // Check for existing SHA256 deduplication.
+            // Scoped to the same user connection: Yoto media (yoto:#sha) is account-scoped and
+            // AbsFileIno (inode) can collide across different Audiobookshelf servers.
             var existingSha = await db.TrackMappings
                 .Where(tm => tm.AbsFileIno == mapping.AbsFileIno &&
                              tm.YotoTranscodedSha256 != null &&
-                             tm.Id != mapping.Id)
+                             tm.Id != mapping.Id &&
+                             tm.CardTransfer.UserConnectionId == transfer.UserConnectionId)
                 .Select(tm => tm.YotoTranscodedSha256)
                 .FirstOrDefaultAsync(ct);
 
@@ -404,6 +422,11 @@ public class TransferOrchestrator(
                     {
                         var overallProgress = 20 + (int)((i + p / 100.0) / mappings.Count * 50);
                         transfer.ProgressPercent = Math.Min(overallProgress, 70);
+                        var step = p >= 60
+                            ? $"Transcoding track {i + 1}/{mappings.Count} on Yoto…"
+                            : $"Uploading track {i + 1}/{mappings.Count}…";
+                        // Best-effort live update; no DB write from the progress callback.
+                        _ = NotifyAsync(transfer, step, CancellationToken.None);
                     }),
                     ct);
 
@@ -426,12 +449,41 @@ public class TransferOrchestrator(
         var primaryGenre = media.Metadata.Genres?.FirstOrDefault();
         var bookTitle = media.Metadata.Title ?? "Unknown";
 
+        // Reuse identical icons generated earlier in this same run — a DB query can't see
+        // entities added but not yet saved, so we also track them in memory here.
+        var iconsByHash = new Dictionary<string, GeneratedIcon>();
+
         for (int i = 0; i < mappings.Count; i++)
         {
             var mapping = mappings[i];
+            var prompt = iconService.BuildChapterIconPrompt(mapping.ChapterTitle, bookTitle, primaryGenre);
+            var contentHash = ComputeContentHash(prompt);
 
             try
             {
+                // Reuse an icon already produced this run for an identical prompt
+                if (iconsByHash.TryGetValue(contentHash, out var runIcon))
+                {
+                    runIcon.TimesUsed++;
+                    mapping.GeneratedIconId = runIcon.Id;
+                    if (runIcon.YotoMediaId is not null) chapterIcons[i] = $"yoto:#{runIcon.YotoMediaId}";
+                    continue;
+                }
+
+                // Reuse a previously persisted icon for this user — avoids burning Gemini quota
+                var existing = await db.GeneratedIcons
+                    .FirstOrDefaultAsync(g => g.UserConnectionId == user.Id &&
+                                              g.ContentHash == contentHash &&
+                                              g.YotoMediaId != null, ct);
+                if (existing is not null)
+                {
+                    existing.TimesUsed++;
+                    mapping.GeneratedIconId = existing.Id;
+                    chapterIcons[i] = $"yoto:#{existing.YotoMediaId}";
+                    iconsByHash[contentHash] = existing;
+                    continue;
+                }
+
                 var iconBytes = await iconService.GenerateChapterIconAsync(
                     mapping.ChapterTitle, bookTitle, primaryGenre, ct);
 
@@ -441,24 +493,26 @@ public class TransferOrchestrator(
                 var icon = new GeneratedIcon
                 {
                     UserConnectionId = user.Id,
-                    Prompt = iconService.BuildChapterIconPrompt(mapping.ChapterTitle, bookTitle, primaryGenre),
+                    Prompt = prompt,
                     ContextTitle = $"{bookTitle} - {mapping.ChapterTitle}",
                     Source = IconSource.GeminiGenerated,
                     YotoMediaId = iconUpload.MediaId,
                     YotoIconUrl = iconUpload.Url,
+                    ContentHash = contentHash,
                     TimesUsed = 1
                 };
 
                 db.GeneratedIcons.Add(icon);
                 mapping.GeneratedIconId = icon.Id;
-                chapterIcons[i] = iconUpload.Url;
+                chapterIcons[i] = $"yoto:#{iconUpload.MediaId}";
+                iconsByHash[contentHash] = icon;
             }
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "Icon generation failed for chapter {Index}: {Title}",
                     i, mapping.ChapterTitle);
-                // Fallback: use a generic icon URL — the card can still be created
-                chapterIcons[i] = "https://yotoicons.com/api/icon/book";
+                // Leave the chapter without a custom icon — Yoto rejects any icon16x16 that isn't
+                // a valid yoto:#{mediaId} reference, so a placeholder URL would fail the whole card.
             }
         }
 
@@ -476,7 +530,9 @@ public class TransferOrchestrator(
         for (int i = 0; i < mappings.Count; i++)
         {
             var mapping = mappings[i];
-            var iconUrl = chapterIcons.GetValueOrDefault(i, "https://yotoicons.com/api/icon/book");
+            // Only set a display icon when we have a valid yoto:#{mediaId} reference.
+            var iconRef = chapterIcons.GetValueOrDefault(i);
+            var display = iconRef is not null ? new YotoDisplay(iconRef) : null;
 
             chapters.Add(new YotoChapter(
                 Key: (i + 1).ToString("D2"),
@@ -492,10 +548,10 @@ public class TransferOrchestrator(
                         Duration: mapping.TranscodedDuration ?? (mapping.EndTime - mapping.StartTime),
                         FileSize: mapping.TranscodedFileSize ?? mapping.FileSizeBytes,
                         Channels: "stereo",
-                        Display: new YotoDisplay(iconUrl)
+                        Display: display
                     )
                 ],
-                Display: new YotoDisplay(iconUrl)
+                Display: display
             ));
         }
 
@@ -503,15 +559,16 @@ public class TransferOrchestrator(
             Chapters: chapters.ToArray(),
             Config: new YotoCardConfig(AllowSkip: true, AllowFastForward: true, AllowRewind: true),
             PlaybackType: transfer.PlaybackType == PlaybackType.Linear ? "linear" : "interactive",
-            Version: 1
+            Version: "1"
         );
 
+        var language = MapYotoLanguage(metadata.Language);
         var cardMetadata = new YotoCardMetadata(
             Author: metadata.Authors?.FirstOrDefault()?.Name,
             Category: transfer.Category.ToString().ToLowerInvariant(),
             Description: metadata.Title,
             Genre: metadata.Genres,
-            Languages: metadata.Language is not null ? [metadata.Language] : null,
+            Languages: language is not null ? [language] : null,
             MinAge: transfer.EffectiveMinAge,
             MaxAge: transfer.EffectiveMaxAge,
             ReadBy: metadata.Narrators?.FirstOrDefault(),
@@ -548,23 +605,8 @@ public class TransferOrchestrator(
             throw new InvalidOperationException("No valid Yoto connection");
     }
 
-    private async Task<string> EnsureYotoTokenAsync(UserConnection user, CancellationToken ct)
-    {
-        if (!user.YotoTokenExpiresAt.HasValue ||
-            user.YotoTokenExpiresAt.Value < DateTimeOffset.UtcNow.AddMinutes(5))
-        {
-            logger.LogInformation("Refreshing Yoto token for user {Username} (expiry: {Expiry})",
-                user.Username, user.YotoTokenExpiresAt?.ToString() ?? "null");
-            var newToken = await yotoService.RefreshTokenAsync(user.YotoRefreshToken!, ct);
-            user.YotoAccessToken = newToken.AccessToken;
-            user.YotoRefreshToken = newToken.RefreshToken ?? user.YotoRefreshToken;
-            user.YotoTokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(newToken.ExpiresIn);
-            await db.SaveChangesAsync(ct);
-            return newToken.AccessToken;
-        }
-
-        return user.YotoAccessToken!;
-    }
+    private Task<string> EnsureYotoTokenAsync(UserConnection user, CancellationToken ct) =>
+        YotoTokens.EnsureValidAsync(db, yotoService, user, logger, ct);
 
     private async Task DownloadToFileAsync(
         UserConnection user, string itemId, string fileIno, string outputPath, CancellationToken ct)
@@ -593,7 +635,36 @@ public class TransferOrchestrator(
         transfer.Status = status;
         transfer.ProgressPercent = progress;
         await db.SaveChangesAsync(ct);
+
+        await NotifyAsync(transfer, StepLabel(status), ct);
     }
+
+    private async Task NotifyAsync(CardTransfer transfer, string step, CancellationToken ct)
+    {
+        try
+        {
+            await notifier.SendProgressAsync(
+                new TransferProgressUpdate(transfer.Id, transfer.Status, transfer.ProgressPercent, step, transfer.ErrorMessage),
+                ct);
+        }
+        catch (Exception ex)
+        {
+            // Progress is best-effort; never fail a transfer because a notification didn't send.
+            logger.LogDebug(ex, "Progress notification failed for transfer {TransferId}", transfer.Id);
+        }
+    }
+
+    private static string StepLabel(TransferStatus status) => status switch
+    {
+        TransferStatus.DownloadingAudio => "Downloading audio",
+        TransferStatus.UploadingToYoto => "Uploading & transcoding on Yoto",
+        TransferStatus.GeneratingIcons => "Generating chapter icons",
+        TransferStatus.CreatingCard => "Creating Yoto card",
+        TransferStatus.Completed => "Transfer complete",
+        TransferStatus.Failed => "Transfer failed",
+        TransferStatus.Cancelled => "Transfer cancelled",
+        _ => status.ToString()
+    };
 
     private void CleanupTempFiles(Guid transferId)
     {
@@ -612,6 +683,41 @@ public class TransferOrchestrator(
         {
             logger.LogWarning(ex, "Failed to clean up temp files for transfer {TransferId}", transferId);
         }
+    }
+
+    private static string ComputeContentHash(string input)
+    {
+        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexStringLower(bytes);
+    }
+
+    /// <summary>
+    /// Maps an Audiobookshelf language value to a Yoto-accepted code, or null to omit it.
+    /// Yoto only accepts: en, en-gb, en-us, fr, fr-fr, es, es-es, es-419, de, it, zh_Hans.
+    /// </summary>
+    private static string? MapYotoLanguage(string? language)
+    {
+        if (string.IsNullOrWhiteSpace(language)) return null;
+        var lower = language.Trim().ToLowerInvariant();
+
+        switch (lower)
+        {
+            case "en": case "en-gb": case "en-us":
+            case "fr": case "fr-fr":
+            case "es": case "es-es": case "es-419":
+            case "de": case "it":
+                return lower;
+            case "zh_hans": case "zh-hans": case "zh":
+                return "zh_Hans";
+        }
+
+        if (lower.StartsWith("en") || lower.Contains("english")) return "en";
+        if (lower.StartsWith("fr") || lower.Contains("french")) return "fr";
+        if (lower.StartsWith("es") || lower.StartsWith("spa") || lower.Contains("spanish")) return "es";
+        if (lower.StartsWith("de") || lower.StartsWith("ger") || lower.StartsWith("deu") || lower.Contains("german")) return "de";
+        if (lower.StartsWith("it") || lower.Contains("italian")) return "it";
+        if (lower.StartsWith("zh") || lower.Contains("chinese")) return "zh_Hans";
+        return null;
     }
 
     internal static float? ParseSequence(string? sequence)

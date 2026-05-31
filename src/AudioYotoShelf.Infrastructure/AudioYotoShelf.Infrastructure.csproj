@@ -5,8 +5,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="AudioYotoShelf.Infrastructure.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" />
+    <PackageReference Include="System.Security.Cryptography.Xml" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" />
     <PackageReference Include="Hangfire.Core" />

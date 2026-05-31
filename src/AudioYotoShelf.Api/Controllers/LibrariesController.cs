@@ -1,3 +1,4 @@
+using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
@@ -47,8 +48,15 @@ public class LibrariesController(
         if (user is null || !user.HasValidAbsConnection)
             return Unauthorized("No valid Audiobookshelf connection");
 
-        var sortParam = sort ?? "media.metadata.title";
+        // Free-text search uses the dedicated ABS search endpoint; the items endpoint ignores it.
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var matches = await absService.SearchLibraryItemsAsync(
+                user.AudiobookshelfUrl, user.AudiobookshelfToken!, libraryId, search, limit, ct);
+            return Ok(new AbsLibraryItemsResponse(matches, matches.Length, limit, 0));
+        }
 
+        var sortParam = sort ?? "media.metadata.title";
         var items = await absService.GetLibraryItemsAsync(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, libraryId,
             page, limit, sortParam, sortDesc, collapseSeries, search, filter, ct);
@@ -120,16 +128,40 @@ public class LibrariesController(
     /// Get series detail with all books.
     /// </summary>
     [HttpGet("{userConnectionId:guid}/series/{seriesId}")]
-    public async Task<IActionResult> GetSeriesDetail(Guid userConnectionId, string seriesId, CancellationToken ct)
+    public async Task<IActionResult> GetSeriesDetail(
+        Guid userConnectionId, string seriesId, [FromQuery] string? libraryId, CancellationToken ct)
     {
         var user = await db.UserConnections.FindAsync([userConnectionId], ct);
         if (user is null || !user.HasValidAbsConnection)
             return Unauthorized("No valid Audiobookshelf connection");
 
-        var seriesDetail = await absService.GetSeriesDetailAsync(
-            user.AudiobookshelfUrl, user.AudiobookshelfToken!, seriesId, ct);
+        // The series' books are fetched from the library items endpoint, which needs a library.
+        // When the caller specifies one, use it. Otherwise search every book library the user
+        // has — the series may live in any of them (multi-library homelabs, deep links).
+        if (!string.IsNullOrEmpty(libraryId))
+        {
+            var detail = await absService.GetSeriesDetailAsync(
+                user.AudiobookshelfUrl, user.AudiobookshelfToken!, libraryId, seriesId, ct);
+            return Ok(detail);
+        }
 
-        return Ok(seriesDetail);
+        var libraries = await absService.GetLibrariesAsync(user.AudiobookshelfUrl, user.AudiobookshelfToken!, ct);
+        var bookLibraries = libraries.Where(l => l.MediaType == "book").ToArray();
+
+        AbsSeriesItem? resolved = null;
+        foreach (var library in bookLibraries)
+        {
+            var detail = await absService.GetSeriesDetailAsync(
+                user.AudiobookshelfUrl, user.AudiobookshelfToken!, library.Id, seriesId, ct);
+            resolved ??= detail;                 // keep first result as a fallback (name/description)
+            if (detail.Books.Length > 0)         // the library that actually holds the series
+            {
+                resolved = detail;
+                break;
+            }
+        }
+
+        return resolved is null ? NotFound() : Ok(resolved);
     }
 
     /// <summary>

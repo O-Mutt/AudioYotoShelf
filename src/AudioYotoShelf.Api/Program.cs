@@ -10,6 +10,7 @@ using AudioYotoShelf.Infrastructure.Services.BackgroundJobs;
 using AudioYotoShelf.Infrastructure.Services.IconGeneration;
 using AudioYotoShelf.Infrastructure.Services.Yoto;
 using FluentValidation;
+using FluentValidation.AspNetCore;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.EntityFrameworkCore;
@@ -90,19 +91,33 @@ builder.Services.AddHttpClient("Gemini", client =>
 builder.Services.AddScoped<IAudiobookshelfService, AudiobookshelfService>();
 builder.Services.AddScoped<IYotoService, YotoService>();
 builder.Services.AddScoped<IAgeSuggestionService, AgeSuggestionService>();
+
+// Card capacity (config-driven limits; stateless calculators)
+var cardLimits = builder.Configuration.GetSection(AudioYotoShelf.Core.Configuration.YotoCardLimits.SectionName)
+    .Get<AudioYotoShelf.Core.Configuration.YotoCardLimits>() ?? new AudioYotoShelf.Core.Configuration.YotoCardLimits();
+builder.Services.AddSingleton(cardLimits);
+builder.Services.AddSingleton<ITrackPlanner, TrackPlanner>();
+builder.Services.AddSingleton<ICardCapacityCalculator, CardCapacityCalculator>();
 builder.Services.AddScoped<IChapterExtractor, FfmpegChapterExtractor>();
 builder.Services.AddScoped<GeminiIconGenerationService>();
 builder.Services.AddScoped<IIconGenerationService, RateLimitedIconService>();
 builder.Services.AddScoped<ITransferOrchestrator, TransferOrchestrator>();
+builder.Services.AddScoped<IPlaylistService, PlaylistService>();
+builder.Services.AddScoped<IPlaylistTransferOrchestrator, PlaylistTransferOrchestrator>();
 builder.Services.AddSingleton<ICacheService, RedisCacheService>();
 builder.Services.AddTransferJobs();
 builder.Services.AddScoped<ITransferProgressNotifier, AudioYotoShelf.Api.Hubs.SignalRTransferProgressNotifier>();
 
 // --- FluentValidation ---
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
+builder.Services.AddFluentValidationAutoValidation();
 
 // --- SignalR with Redis backplane ---
-var signalRBuilder = builder.Services.AddSignalR();
+// Serialize enums as names so the Vue client receives "UploadingToYoto" instead of an int.
+var signalRBuilder = builder.Services.AddSignalR()
+	.AddJsonProtocol(options =>
+		options.PayloadSerializerOptions.Converters.Add(
+			new System.Text.Json.Serialization.JsonStringEnumConverter()));
 var redisConnectionString = builder.Configuration.GetConnectionString("Redis");
 if (!string.IsNullOrEmpty(redisConnectionString))
 {
@@ -114,7 +129,10 @@ if (!string.IsNullOrEmpty(redisConnectionString))
 }
 
 // --- API ---
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+	.AddJsonOptions(options =>
+		options.JsonSerializerOptions.Converters.Add(
+			new System.Text.Json.Serialization.JsonStringEnumConverter()));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
 

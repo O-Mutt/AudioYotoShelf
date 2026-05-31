@@ -24,18 +24,27 @@ export const useLibraryStore = defineStore('library', () => {
   const currentPage = ref(0)
   const series = ref<AbsSeriesItem[]>([])
   const totalSeries = ref(0)
+  const seriesPage = ref(0)
+  const seriesPageSize = ref(100)
   const currentBookDetail = ref<BookDetailResponse | null>(null)
   const isLoading = ref(false)
-  const viewMode = ref<'books' | 'series'>('books')
+
+  // Persist the books/series toggle so it survives a refresh.
+  const VIEW_MODE_KEY = 'ays:library:viewMode'
+  const viewMode = ref<'books' | 'series'>(readViewMode())
+  watch(viewMode, (mode) => {
+    try { localStorage.setItem(VIEW_MODE_KEY, mode) } catch { /* storage unavailable */ }
+  })
 
   // Search, sort & pagination state
   const searchQuery = ref('')
   const sortField = ref<SortField>('media.metadata.title')
   const sortDesc = ref(false)
-  const pageSize = ref(20)
+  const pageSize = ref(100)
 
   const ucid = computed(() => connectionStore.userConnectionId)
   const pageCount = computed(() => Math.max(1, Math.ceil(totalItems.value / pageSize.value)))
+  const pageCountSeries = computed(() => Math.max(1, Math.ceil(totalSeries.value / seriesPageSize.value)))
   const hasNoResults = computed(() => !isLoading.value && items.value.length === 0)
 
   // --- Debounce helper ---
@@ -58,6 +67,11 @@ export const useLibraryStore = defineStore('library', () => {
   watch([sortField, sortDesc, pageSize], () => {
     currentPage.value = 0
     loadItems()
+  })
+
+  // Series page-size change → reload first series page
+  watch(seriesPageSize, () => {
+    if (viewMode.value === 'series') loadSeries(0)
   })
 
   // --- Actions ---
@@ -102,7 +116,7 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  async function loadSeries(page = 0, limit = 20) {
+  async function loadSeries(page = 0, limit = seriesPageSize.value) {
     if (!ucid.value || !selectedLibraryId.value) return
     isLoading.value = true
     try {
@@ -111,6 +125,7 @@ export const useLibraryStore = defineStore('library', () => {
       )
       series.value = data.results
       totalSeries.value = data.total
+      seriesPage.value = page
     } finally {
       isLoading.value = false
     }
@@ -137,11 +152,20 @@ export const useLibraryStore = defineStore('library', () => {
     items.value = []
     series.value = []
     currentPage.value = 0
+    seriesPage.value = 0
     searchQuery.value = ''
   }
 
   function clearSearch() {
     searchQuery.value = ''
+  }
+
+  function readViewMode(): 'books' | 'series' {
+    try {
+      return localStorage.getItem('ays:library:viewMode') === 'series' ? 'series' : 'books'
+    } catch {
+      return 'books'
+    }
   }
 
   return {
@@ -153,6 +177,8 @@ export const useLibraryStore = defineStore('library', () => {
     currentPage,
     series,
     totalSeries,
+    seriesPage,
+    seriesPageSize,
     currentBookDetail,
     isLoading,
     viewMode,
@@ -162,6 +188,7 @@ export const useLibraryStore = defineStore('library', () => {
     pageSize,
     // Computed
     pageCount,
+    pageCountSeries,
     hasNoResults,
     // Actions
     loadLibraries,

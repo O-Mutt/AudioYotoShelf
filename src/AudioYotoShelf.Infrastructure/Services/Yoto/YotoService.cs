@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Interfaces;
 using Microsoft.Extensions.Configuration;
@@ -16,6 +17,7 @@ public class YotoService(
     private const string YotoAuthBase = "https://login.yotoplay.com";
     private const int MaxTranscodePollAttempts = 360;
     private const int TranscodePollDelayMs = 5000;
+    private static readonly JsonSerializerOptions JsonWeb = new(JsonSerializerDefaults.Web);
 
     private string ClientId => configuration["Yoto:ClientId"]
         ?? throw new InvalidOperationException("Yoto:ClientId not configured");
@@ -99,7 +101,10 @@ public class YotoService(
         var response = await client.GetAsync("/card/family/library/mine?showDeleted=false", ct);
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<YotoCardListResponse>(ct);
+        var json = await response.Content.ReadAsStringAsync(ct);
+        logger.LogDebug("Yoto family library response: {Body}", json.Length > 700 ? json[..700] : json);
+
+        var result = JsonSerializer.Deserialize<YotoCardListResponse>(json, JsonWeb);
         return result?.Cards ?? [];
     }
 
@@ -109,8 +114,20 @@ public class YotoService(
         var response = await client.GetAsync($"/content/{cardId}", ct);
         response.EnsureSuccessStatusCode();
 
-        return await response.Content.ReadFromJsonAsync<YotoCard>(ct)
-            ?? throw new InvalidOperationException($"Failed to get card {cardId}");
+        var json = await response.Content.ReadAsStringAsync(ct);
+        logger.LogDebug("Yoto card content {CardId} response: {Body}", cardId, json.Length > 700 ? json[..700] : json);
+
+        // GET /content/{id} nests the card under a "card" object and omits the id from the body.
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var cardNode = root.TryGetProperty("card", out var c) && c.ValueKind == JsonValueKind.Object ? c : root;
+
+        var content = cardNode.TryGetProperty("content", out var ce) && ce.ValueKind == JsonValueKind.Object
+            ? ce.Deserialize<YotoCardContent>(JsonWeb) : null;
+        var metadata = cardNode.TryGetProperty("metadata", out var me) && me.ValueKind == JsonValueKind.Object
+            ? me.Deserialize<YotoCardMetadata>(JsonWeb) : null;
+
+        return new YotoCard(cardId, content, metadata);
     }
 
     public async Task<string> CreateOrUpdateCardAsync(
@@ -121,10 +138,20 @@ public class YotoService(
 
         var body = new { cardId = existingCardId, content, metadata };
         var response = await client.PostAsJsonAsync("/content", body, ct);
-        response.EnsureSuccessStatusCode();
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
 
-        var result = await response.Content.ReadFromJsonAsync<YotoCard>(ct);
-        return result?.CardId ?? throw new InvalidOperationException("No cardId returned from Yoto");
+        if (!response.IsSuccessStatusCode)
+        {
+            logger.LogError("Yoto card create/update failed: {StatusCode} {Body}", response.StatusCode, responseBody);
+            response.EnsureSuccessStatusCode();
+        }
+
+        var cardId = ExtractCardId(responseBody);
+        if (cardId is null)
+            logger.LogWarning("Yoto card create/update returned no recognizable cardId: {Body}",
+                responseBody.Length > 600 ? responseBody[..600] : responseBody);
+
+        return cardId ?? throw new InvalidOperationException("No cardId returned from Yoto");
     }
 
     public async Task DeleteCardAsync(string accessToken, string cardId, CancellationToken ct = default)
@@ -171,8 +198,15 @@ public class YotoService(
                 $"/media/upload/{uploadId}/transcoded?loudnorm=false", ct);
             response.EnsureSuccessStatusCode();
 
-            var result = await response.Content.ReadFromJsonAsync<YotoTranscodeResponse>(ct);
-            if (result?.TranscodedSha256 is not null)
+            var json = await response.Content.ReadAsStringAsync(ct);
+
+            // Raw body once per upload (Debug) for diagnosing response-shape changes.
+            if (attempt == 0)
+                logger.LogDebug("Transcode response for {UploadId}: {Body}",
+                    uploadId, json.Length > 600 ? json[..600] : json);
+
+            var result = ParseTranscodeResponse(json);
+            if (result.TranscodedSha256 is not null)
             {
                 logger.LogInformation("Transcode complete for upload {UploadId}: SHA256={Sha256}",
                     uploadId, result.TranscodedSha256);
@@ -181,13 +215,66 @@ public class YotoService(
 
             if (attempt % 10 == 0)
                 logger.LogInformation("Transcode poll {Attempt}/{Max} for {UploadId}: status={Status}",
-                    attempt, MaxTranscodePollAttempts, uploadId, result?.Status ?? "null");
+                    attempt, MaxTranscodePollAttempts, uploadId, result.Status ?? "null");
 
             await Task.Delay(TranscodePollDelayMs, ct);
         }
 
         var elapsedMinutes = MaxTranscodePollAttempts * TranscodePollDelayMs / 60_000.0;
         throw new TimeoutException($"Transcode polling timed out for upload {uploadId} after {MaxTranscodePollAttempts} attempts (~{elapsedMinutes:F0} min)");
+    }
+
+    /// <summary>
+    /// The POST /content response returns the card id, but the exact key/nesting varies
+    /// (cardId / id / contentId, sometimes under a "card" wrapper). Find it tolerantly.
+    /// </summary>
+    private static string? ExtractCardId(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        using var doc = JsonDocument.Parse(json);
+        return FindCardId(doc.RootElement, depth: 0);
+    }
+
+    private static string? FindCardId(JsonElement element, int depth)
+    {
+        if (element.ValueKind != JsonValueKind.Object || depth > 3) return null;
+
+        foreach (var name in (ReadOnlySpan<string>)["cardId", "id", "contentId"])
+            if (element.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String)
+                return v.GetString();
+
+        foreach (var prop in element.EnumerateObject())
+        {
+            if (prop.Value.ValueKind == JsonValueKind.Object)
+            {
+                var found = FindCardId(prop.Value, depth + 1);
+                if (found is not null) return found;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Yoto nests the transcode payload under a "transcode" object (like the upload endpoint nests
+    /// under "upload"); older/other shapes put it at the root. Read whichever is present.
+    /// </summary>
+    private static YotoTranscodeResponse ParseTranscodeResponse(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var node = root.ValueKind == JsonValueKind.Object
+                   && root.TryGetProperty("transcode", out var transcode)
+                   && transcode.ValueKind == JsonValueKind.Object
+            ? transcode
+            : root;
+
+        string? Str(string name) =>
+            node.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() : null;
+
+        return new YotoTranscodeResponse(
+            Str("transcodedSha256"),
+            TranscodedInfo: null,
+            Str("status") ?? Str("transcodeStatus"));
     }
 
     public async Task<string> UploadAndTranscodeAsync(

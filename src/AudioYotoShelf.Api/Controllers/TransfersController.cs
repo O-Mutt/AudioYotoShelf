@@ -15,6 +15,7 @@ public class TransfersController(
     AudioYotoShelfDbContext db,
     ITransferOrchestrator orchestrator,
     IBackgroundJobClient backgroundJobs,
+    ITransferProgressNotifier notifier,
     ILogger<TransfersController> logger) : ControllerBase
 {
     [HttpGet("{userConnectionId:guid}")]
@@ -85,13 +86,15 @@ public class TransfersController(
         logger.LogInformation("Book transfer queued: {ItemId} → Transfer {TransferId}, Job {JobId}",
             request.AbsLibraryItemId, transferId, jobId);
 
+        await notifier.NotifyListChangedAsync(ct);
         return Accepted(new { TransferId = transferId, JobId = jobId, Message = "Transfer queued" });
     }
 
     [HttpPost("{userConnectionId:guid}/series")]
-    public IActionResult TransferSeries(
+    public async Task<IActionResult> TransferSeries(
         Guid userConnectionId,
-        [FromBody] CreateSeriesTransferRequest request)
+        [FromBody] CreateSeriesTransferRequest request,
+        CancellationToken ct)
     {
         var jobId = backgroundJobs.Enqueue<ITransferJobService>(
             svc => svc.ExecuteSeriesTransferAsync(userConnectionId, request, CancellationToken.None));
@@ -99,6 +102,7 @@ public class TransfersController(
         logger.LogInformation("Series transfer queued: {SeriesId} → Job {JobId}",
             request.AbsSeriesId, jobId);
 
+        await notifier.NotifyListChangedAsync(ct);
         return Accepted(new { JobId = jobId, Message = "Series transfer queued" });
     }
 
@@ -107,9 +111,10 @@ public class TransfersController(
     /// ISP: BatchTransferRequest is its own DTO, not overloading CreateTransferRequest.
     /// </summary>
     [HttpPost("{userConnectionId:guid}/batch")]
-    public IActionResult TransferBatch(
+    public async Task<IActionResult> TransferBatch(
         Guid userConnectionId,
-        [FromBody] BatchTransferRequest request)
+        [FromBody] BatchTransferRequest request,
+        CancellationToken ct)
     {
         var jobIds = new List<string>();
         foreach (var itemId in request.AbsLibraryItemIds)
@@ -131,6 +136,7 @@ public class TransfersController(
             request.AbsLibraryItemIds.Length, jobIds.Count);
 
         var batchId = Guid.NewGuid().ToString("N")[..12];
+        await notifier.NotifyListChangedAsync(ct);
         return Accepted(new BatchTransferResponse(batchId, request.AbsLibraryItemIds.Length, jobIds.Count, jobIds.ToArray()));
     }
 
@@ -170,6 +176,24 @@ public class TransfersController(
 
         logger.LogInformation("Deleted transfer {TransferId} ({BookTitle})", transferId, transfer.BookTitle);
         return Ok(new { Message = "Transfer deleted" });
+    }
+
+    /// <summary>Clears (removes the records for) all completed transfers for a user. Yoto cards are untouched.</summary>
+    [HttpDelete("{userConnectionId:guid}/completed")]
+    public async Task<IActionResult> ClearCompleted(Guid userConnectionId, CancellationToken ct)
+    {
+        var completed = await db.CardTransfers
+            .Where(t => t.UserConnectionId == userConnectionId && t.Status == Core.Enums.TransferStatus.Completed)
+            .Include(t => t.TrackMappings)
+            .ToListAsync(ct);
+
+        foreach (var transfer in completed)
+            db.TrackMappings.RemoveRange(transfer.TrackMappings);
+        db.CardTransfers.RemoveRange(completed);
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation("Cleared {Count} completed transfers for user {UserId}", completed.Count, userConnectionId);
+        return Ok(new { Cleared = completed.Count });
     }
 
     private static TransferResponse MapToResponse(Core.Entities.CardTransfer t) => new(

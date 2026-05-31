@@ -46,3 +46,23 @@ public enum IconSource
     AudiobookshelfCover,
     UserUploaded
 }
+
+/// <summary>How a book's audio is grouped into Yoto tracks within a playlist card.</summary>
+public enum TrackGrouping
+{
+    /// <summary>One track per chapter/audio file; oversized tracks are split to fit.</summary>
+    Chapters,
+    /// <summary>Merge the whole book into one track; split only if it exceeds per-track limits.</summary>
+    SingleTrack,
+    /// <summary>Merge into one track when the whole book fits one track; otherwise keep chapters.</summary>
+    Auto
+}
+
+/// <summary>Lifecycle of a multi-book playlist.</summary>
+public enum PlaylistStatus
+{
+    Draft,
+    Transferring,
+    Transferred,
+    Failed
+}

@@ -81,7 +81,7 @@ public class CardsControllerTests : IDisposable
     [Fact]
     public async Task GetCards_NoYotoConnection_Returns401()
     {
-        var user = TestData.CreateUserConnection(yotoAccessToken: null, yotoRefreshToken: null)
+        var user = TestData.CreateUserConnection(yotoAccessToken: null, yotoRefreshToken: null);
         _db.UserConnections.Add(user);
         await _db.SaveChangesAsync();
 
@@ -109,7 +109,7 @@ public class CardsControllerTests : IDisposable
                 new YotoChapter("01", "Chapter 1", [
                     new YotoTrack("t1", "Track 1", "yoto:#abc", "mp3", "audio", 120, 1024, "stereo", null)
                 ], null)
-            ], null, "linear", 1),
+            ], null, "linear", "1"),
             null);
 
         _yotoService.Setup(s => s.GetCardContentAsync(It.IsAny<string>(), "card-1", It.IsAny<CancellationToken>()))

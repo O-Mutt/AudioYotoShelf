@@ -78,6 +78,21 @@ public class AudiobookshelfService(
             ?? throw new InvalidOperationException("Failed to deserialize library items");
     }
 
+    public async Task<AbsLibraryItem[]> SearchLibraryItemsAsync(
+        string baseUrl, string token, string libraryId, string query, int limit = 20, CancellationToken ct = default)
+    {
+        using var client = CreateClient(baseUrl, token);
+        var url = $"/api/libraries/{libraryId}/search?q={Uri.EscapeDataString(query)}&limit={limit}";
+
+        var result = await client.GetFromJsonAsync<AbsSearchResponse>(url, ct);
+
+        return (result?.Book ?? [])
+            .Select(match => match.LibraryItem)
+            .Where(item => item is not null)
+            .Select(item => item!)
+            .ToArray();
+    }
+
     public async Task<AbsLibraryItem> GetLibraryItemAsync(string baseUrl, string token, string itemId, CancellationToken ct = default)
     {
         using var client = CreateClient(baseUrl, token);
@@ -108,14 +123,42 @@ public class AudiobookshelfService(
             ?? throw new InvalidOperationException("Failed to deserialize series response");
     }
 
-    public async Task<AbsSeriesItem> GetSeriesDetailAsync(string baseUrl, string token, string seriesId, CancellationToken ct = default)
+    public async Task<AbsSeriesItem> GetSeriesDetailAsync(
+        string baseUrl, string token, string libraryId, string seriesId, CancellationToken ct = default)
     {
         using var client = CreateClient(baseUrl, token);
-        var response = await client.GetAsync($"/api/series/{seriesId}", ct);
-        response.EnsureSuccessStatusCode();
 
-        return await response.Content.ReadFromJsonAsync<AbsSeriesItem>(ct)
-            ?? throw new InvalidOperationException($"Failed to deserialize series {seriesId}");
+        // /api/series/{id} returns the series name/description but NOT its books. The books are
+        // fetched via the library items endpoint filtered by series, sorted by sequence. We reuse
+        // GetLibraryItemsAsync (minified=1) on purpose: the full/expanded item shape can contain
+        // fields that don't match our DTOs (e.g. a numeric publishedYear) and break deserialization.
+        var meta = await client.GetFromJsonAsync<AbsSeriesMeta>($"/api/series/{seriesId}", ct);
+
+        var filter = Uri.EscapeDataString(
+            "series." + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(seriesId)));
+        var itemsResponse = await GetLibraryItemsAsync(
+            baseUrl, token, libraryId, page: 0, limit: 500, sort: "sequence",
+            desc: false, collapseSeries: false, search: null, filter: filter, ct: ct);
+
+        var results = itemsResponse.Results ?? [];
+        var books = results
+            .Select(item => new AbsSeriesBook(
+                item.Id,
+                item.Media,
+                item.Media?.Metadata?.Series?.FirstOrDefault(s => s.Id == seriesId)?.Sequence))
+            .ToArray();
+
+        var totalDuration = (int)results.Sum(i => i.Media?.Duration ?? 0);
+
+        logger.LogInformation("Series {SeriesId} '{Name}' resolved to {Count} books in library {LibraryId}",
+            seriesId, meta?.Name, books.Length, libraryId);
+
+        return new AbsSeriesItem(
+            seriesId,
+            meta?.Name ?? "Unknown Series",
+            meta?.Description,
+            books,
+            totalDuration);
     }
 
     public async Task<Stream> DownloadAudioFileAsync(
@@ -146,4 +189,11 @@ public class AudiobookshelfService(
 
     // Internal wrapper for the libraries endpoint response shape
     private record AbsLibrariesWrapper(AbsLibrary[] Libraries);
+
+    // /api/series/{id} returns only the series-level fields (no books)
+    private record AbsSeriesMeta(string Id, string Name, string? Description);
+
+    // /api/libraries/{id}/search response shape (only the book matches are needed here)
+    private record AbsSearchResponse(AbsSearchBookMatch[]? Book);
+    private record AbsSearchBookMatch(AbsLibraryItem? LibraryItem);
 }

@@ -34,7 +34,8 @@ public record YotoCardContent(
     YotoChapter[] Chapters,
     YotoCardConfig? Config,
     string? PlaybackType,
-    int? Version
+    // Yoto validates this as a string ("1"), not a number.
+    string? Version
 );
 
 public record YotoCardConfig(
