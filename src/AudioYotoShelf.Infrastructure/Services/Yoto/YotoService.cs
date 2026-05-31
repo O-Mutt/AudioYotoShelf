@@ -98,14 +98,21 @@ public class YotoService(
     public async Task<YotoCard[]> GetUserCardsAsync(string accessToken, CancellationToken ct = default)
     {
         using var client = CreateApiClient(accessToken);
-        var response = await client.GetAsync("/card/family/library/mine?showDeleted=false", ct);
-        response.EnsureSuccessStatusCode();
 
-        var json = await response.Content.ReadAsStringAsync(ct);
-        logger.LogDebug("Yoto family library response: {Body}", json.Length > 700 ? json[..700] : json);
+        // Probe candidate "list my cards" endpoints; the family-library one 403s for MYO content.
+        foreach (var path in new[] { "/content/mine", "/card/family/library/mine?showDeleted=false" })
+        {
+            var response = await client.GetAsync(path, ct);
+            var json = await response.Content.ReadAsStringAsync(ct);
+            logger.LogDebug("Cards-list {Path} -> {Status}", path, (int)response.StatusCode);
 
-        var result = JsonSerializer.Deserialize<YotoCardListResponse>(json, JsonWeb);
-        return result?.Cards ?? [];
+            if (!response.IsSuccessStatusCode) continue;
+
+            var result = JsonSerializer.Deserialize<YotoCardListResponse>(json, JsonWeb);
+            return result?.Cards ?? [];
+        }
+
+        throw new HttpRequestException("No Yoto card-list endpoint succeeded", null, System.Net.HttpStatusCode.Forbidden);
     }
 
     public async Task<YotoCard> GetCardContentAsync(string accessToken, string cardId, CancellationToken ct = default)
