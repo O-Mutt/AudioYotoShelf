@@ -21,7 +21,7 @@ public class GeminiIconGenerationServiceTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Gemini:ApiKey"] = "test-key",
-                ["Gemini:Model"] = "gemini-2.5-flash-preview-05-20"
+                ["Gemini:Model"] = "gemini-3.1-flash-image"
             })
             .Build();
 
