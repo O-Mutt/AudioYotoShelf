@@ -23,16 +23,46 @@ Transfer audiobooks from your self-hosted Audiobookshelf server to Yoto MYO card
 
 ## Architecture
 
+```mermaid
+graph LR
+    ABS[Audiobookshelf Server]
+
+    subgraph AYS["AudioYotoShelf"]
+        SPA["Vue 3 SPA"]
+        API[".NET 10 API + SignalR"]
+        HF["Hangfire jobs"]
+        PG[("PostgreSQL 17")]
+        REDIS[("Redis 7")]
+        SPA <--> API
+        API --> HF
+        API --- PG
+        API --- REDIS
+    end
+
+    ABS -->|"audio + metadata"| API
+    HF -->|"upload + create card"| YOTO["Yoto MYO API"]
+    HF -->|"chapter icons"| GEMINI["Gemini 3.1 Flash Image"]
 ```
-┌───────────────┐    ┌──────────────────────┐    ┌───────────────┐
-│ Audiobookshelf│◄───│   AudioYotoShelf     │───►│  Yoto MYO API │
-│   Server      │    │                      │    │               │
-└───────────────┘    │  .NET 10 API         │    └───────────────┘
-                     │  Vue 3 SPA           │
-                     │  PostgreSQL 17       │    ┌───────────────┐
-                     │  Redis 7             │───►│  Gemini 3.1   │
-                     │  Hangfire            │    │  (Icons)      │
-                     └──────────────────────┘    └───────────────┘
+
+### Transfer pipeline
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant SPA as Vue SPA
+    participant API as .NET API
+    participant HF as Hangfire
+    participant ABS as Audiobookshelf
+    participant G as Gemini
+    participant Y as Yoto
+
+    U->>SPA: Pick a book, start transfer
+    SPA->>API: POST /api/transfers/{id}/book
+    API->>HF: Enqueue transfer job
+    HF->>ABS: Download audio + chapters
+    HF->>G: Generate 16x16 chapter icons
+    HF->>Y: Upload audio, transcode, create MYO card
+    HF-->>SPA: Live progress via SignalR
 ```
 
 ## Tech Stack
@@ -48,24 +78,57 @@ Transfer audiobooks from your self-hosted Audiobookshelf server to Yoto MYO card
 | Icons | Gemini 3.1 Flash Image + SixLabors.ImageSharp |
 | Audio | FFmpeg (chapter extraction) |
 
+> Exact versions are pinned in source so they stay verifiable: .NET target and C# language in [`Directory.Build.props`](Directory.Build.props), backend packages in [`Directory.Packages.props`](Directory.Packages.props), the SDK band in [`global.json`](global.json), Node in [`.nvmrc`](.nvmrc), and frontend packages in [`src/AudioYotoShelf.ClientApp/package.json`](src/AudioYotoShelf.ClientApp/package.json).
+
 ## Quick Start
 
 ### Prerequisites
 
 - Docker and Docker Compose
-- [Yoto Developer API credentials](https://developers.yotoplay.com)
-- (Optional) [Gemini API key](https://aistudio.google.com/apikey) for icon generation
+- Yoto Developer API credentials (see below)
+- (Optional) a Gemini API key for AI icon generation (see below)
+
+Audiobookshelf needs no pre-provisioned token — you sign in with your normal ABS
+username and password inside the app, and it stores the resulting token per user.
+
+### Getting your credentials
+
+**Yoto (required)** — uses the OAuth Authorization Code flow:
+
+1. Go to the [Yoto Developer Dashboard](https://developers.yotoplay.com) and sign in.
+2. Create an application to get a **Client ID** and **Client Secret**.
+3. Register the redirect/callback URL so it exactly matches your deployment:
+   - Local Docker: `http://localhost:8080/api/auth/yoto/callback`
+   - Production: `https://<your-domain>/api/auth/yoto/callback`
+4. Put the Client ID/Secret in `.env` (`YOTO_CLIENT_ID`, `YOTO_CLIENT_SECRET`).
+
+**Gemini (optional, for generated icons):**
+
+1. Open [Google AI Studio → API keys](https://aistudio.google.com/apikey).
+2. Click **Create API key**, copy it, and set `GEMINI_API_KEY` in `.env`.
+3. Without a key, transfers still work — pick icons from Yoto's public library instead.
+
+### Environment variables
+
+Set in `.env` (copied from [`.env.example`](.env.example)). Used by [`docker-compose.yml`](docker-compose.yml):
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `YOTO_CLIENT_ID` | yes | — | Yoto OAuth app client ID |
+| `YOTO_CLIENT_SECRET` | yes | — | Yoto OAuth app client secret |
+| `GEMINI_API_KEY` | no | — | Google AI Studio key for icon generation |
+| `DB_PASSWORD` | recommended | `changeme` | PostgreSQL password |
+| `BRIDGE_PORT` | no | `8080` | Host port the app listens on |
 
 ### Setup
 
 ```bash
 # Clone the repo
-git clone https://github.com/youruser/AudioYotoShelf.git
+git clone https://github.com/O-Mutt/AudioYotoShelf.git
 cd AudioYotoShelf
 
-# Create environment file
+# Create environment file and fill in the values above
 cp .env.example .env
-# Edit .env with your credentials
 
 # Build and run
 docker compose up -d
@@ -77,17 +140,16 @@ open http://localhost:8080
 ### First Run
 
 1. Open `http://localhost:8080` and enter your Audiobookshelf server URL, username, and password
-2. Authorize with Yoto via the OAuth device flow
+2. Authorize with Yoto — you're redirected to Yoto's login (OAuth authorization code flow) and back to the app
 3. Browse your library and transfer books to MYO cards
 
 ## Development
 
 ### Prerequisites
 
-- .NET 10 SDK
-- Node.js 22 LTS
-- PostgreSQL 17 (or use Docker)
-- Redis 7 (or use Docker)
+- .NET SDK matching [`global.json`](global.json) / [`Directory.Build.props`](Directory.Build.props) (`net10.0`)
+- Node.js per [`.nvmrc`](.nvmrc) — run `nvm use`
+- PostgreSQL 17 and Redis 7 (or `docker compose up -d postgres redis`)
 
 ### Backend
 
@@ -100,17 +162,28 @@ dotnet run
 
 ```bash
 cd src/AudioYotoShelf.ClientApp
+nvm use
 npm install
 npm run dev
 ```
 
 The Vite dev server runs on port 5173 and proxies `/api` and `/hubs` to the .NET backend on port 5000.
 
-### Tests
+### Tests, lint & format
+
+These mirror the CI gates in [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
 
 ```bash
+# Backend
 dotnet test
+dotnet format AudioYotoShelf.sln --verify-no-changes   # check; drop the flag to auto-fix
+
+# Frontend
+cd src/AudioYotoShelf.ClientApp
+npm run lint && npm run format:check && npm run type-check
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branch/commit conventions and the full PR workflow.
 
 ## Proxmox LXC Deployment
 
@@ -145,6 +218,12 @@ AudioYotoShelf/
 └── AudioYotoShelf.sln
 ```
 
+## Contributing
+
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), and please
+follow the [Code of Conduct](CODE_OF_CONDUCT.md). Found a security issue? See
+[SECURITY.md](SECURITY.md) — report it privately, not as a public issue.
+
 ## License
 
-MIT
+[MIT](LICENSE) © Matt O'Keefe
