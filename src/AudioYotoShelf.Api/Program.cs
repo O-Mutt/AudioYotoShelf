@@ -80,6 +80,13 @@ builder.Services.AddHttpClient("YotoAuth", client =>
 builder.Services.AddHttpClient("YotoUpload", client =>
 {
 	client.Timeout = TimeSpan.FromMinutes(30);
+})
+.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+	// Presigned upload hosts drop idle keep-alive connections; retiring pooled
+	// connections quickly avoids reusing a stale socket (manifests as "broken pipe").
+	PooledConnectionLifetime = TimeSpan.FromSeconds(30),
+	PooledConnectionIdleTimeout = TimeSpan.FromSeconds(15),
 });
 builder.Services.AddHttpClient("Gemini", client =>
 {

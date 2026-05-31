@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Text.Json;
 using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Interfaces;
@@ -17,6 +18,7 @@ public class YotoService(
     private const string YotoAuthBase = "https://login.yotoplay.com";
     private const int MaxTranscodePollAttempts = 360;
     private const int TranscodePollDelayMs = 5000;
+    private const int MaxUploadAttempts = 4;
     private static readonly JsonSerializerOptions JsonWeb = new(JsonSerializerDefaults.Web);
 
     private string ClientId => configuration["Yoto:ClientId"]
@@ -193,15 +195,57 @@ public class YotoService(
     public async Task UploadAudioFileAsync(
         string uploadUrl, Stream audioStream, long contentLength, string contentType, CancellationToken ct = default)
     {
-        using var client = httpClientFactory.CreateClient("YotoUpload");
-        client.Timeout = TimeSpan.FromMinutes(30); // Large files may take a while
+        // The upload target is a presigned (S3-style) URL that closes idle keep-alive
+        // connections; a pooled-but-stale socket surfaces as "broken pipe" mid-write.
+        // Rewind and retry transient transport failures — the source is always a seekable file.
+        for (var attempt = 1; ; attempt++)
+        {
+            if (audioStream.CanSeek) audioStream.Position = 0;
 
-        using var content = new StreamContent(audioStream);
-        content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
-        if (contentLength > 0) content.Headers.ContentLength = contentLength;
+            using var client = httpClientFactory.CreateClient("YotoUpload");
+            // StreamContent disposes the wrapped stream on its own disposal; the caller owns
+            // audioStream (and disposes it), so this content is intentionally not in a 'using' —
+            // disposing it here would close the stream before a retry could rewind it.
+            var content = new StreamContent(audioStream);
+            content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+            if (contentLength > 0) content.Headers.ContentLength = contentLength;
 
-        var response = await client.PutAsync(uploadUrl, content, ct);
-        response.EnsureSuccessStatusCode();
+            try
+            {
+                using var response = await client.PutAsync(uploadUrl, content, ct);
+                response.EnsureSuccessStatusCode();
+                return;
+            }
+            catch (HttpRequestException ex) when (attempt < MaxUploadAttempts && audioStream.CanSeek && IsTransientUploadError(ex))
+            {
+                logger.LogWarning(ex,
+                    "Yoto upload PUT failed (attempt {Attempt}/{Max}); retrying after backoff",
+                    attempt, MaxUploadAttempts);
+                await DelayBetweenUploadAttemptsAsync(attempt, ct);
+            }
+        }
+    }
+
+    // Seam for tests: backoff is 2s, 4s, 8s in production; overridden to no-op in unit tests.
+    protected virtual Task DelayBetweenUploadAttemptsAsync(int attempt, CancellationToken ct) =>
+        Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), ct);
+
+    /// <summary>
+    /// A reset/closed connection during the request-body write throws HttpRequestException
+    /// wrapping IOException → SocketException (broken pipe / connection reset). These are safe
+    /// to retry; a non-success HTTP status (EnsureSuccessStatusCode) is not and falls through.
+    /// </summary>
+    private static bool IsTransientUploadError(HttpRequestException ex)
+    {
+        for (Exception? inner = ex; inner is not null; inner = inner.InnerException)
+        {
+            if (inner is SocketException socket &&
+                socket.SocketErrorCode is SocketError.ConnectionReset
+                    or SocketError.Shutdown or SocketError.ConnectionAborted)
+                return true;
+            if (inner is IOException) return true;
+        }
+        return false;
     }
 
     public async Task<YotoTranscodeResponse> PollTranscodeStatusAsync(
