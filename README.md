@@ -24,7 +24,7 @@ Transfer audiobooks from your self-hosted Audiobookshelf server to Yoto MYO card
 └───────────────┘    │  .NET 10 API         │    └───────────────┘
                      │  Vue 3 SPA           │
                      │  PostgreSQL 17       │    ┌───────────────┐
-                     │  Redis 7             │───►│  Gemini 2.5   │
+                     │  Redis 7             │───►│  Gemini 3.1   │
                      │  Hangfire            │    │  (Icons)      │
                      └──────────────────────┘    └───────────────┘
 ```
@@ -39,7 +39,7 @@ Transfer audiobooks from your self-hosted Audiobookshelf server to Yoto MYO card
 | Cache | Redis 7 |
 | Jobs | Hangfire |
 | Real-time | SignalR |
-| Icons | Gemini 2.5 Flash + SixLabors.ImageSharp |
+| Icons | Gemini 3.1 Flash Image + SixLabors.ImageSharp |
 | Audio | FFmpeg (chapter extraction) |
 
 ## Quick Start

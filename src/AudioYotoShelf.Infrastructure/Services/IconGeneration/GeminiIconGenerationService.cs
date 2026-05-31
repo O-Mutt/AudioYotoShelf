@@ -23,7 +23,7 @@ public class GeminiIconGenerationService(
 
     private string ApiKey => configuration["Gemini:ApiKey"]
         ?? throw new InvalidOperationException("Gemini:ApiKey not configured");
-    private string Model => configuration.GetValue("Gemini:Model", "gemini-2.5-flash-preview-05-20")!;
+    private string Model => configuration.GetValue("Gemini:Model", "gemini-3.1-flash-image")!;
 
     public virtual async Task<byte[]> GenerateIconAsync(string prompt, CancellationToken ct = default)
     {
