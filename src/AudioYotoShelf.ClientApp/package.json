@@ -15,7 +15,7 @@
     "vue-router": "^5.0.3",
     "pinia": "^3.0.4",
     "@microsoft/signalr": "^10.0.0",
-    "axios": "^1.13.6"
+    "axios": "^1.16.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.4",
