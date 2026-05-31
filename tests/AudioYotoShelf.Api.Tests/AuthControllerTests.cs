@@ -1,6 +1,5 @@
 using AudioYotoShelf.Api.Controllers;
 using AudioYotoShelf.Core.DTOs.Transfer;
-using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Core.Tests.Helpers;
 using AudioYotoShelf.Infrastructure.Data;

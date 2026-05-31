@@ -1,3 +1,6 @@
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Interfaces;
 using Microsoft.Extensions.Caching.Distributed;
@@ -6,9 +9,6 @@ using Microsoft.Extensions.Logging;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
-using System.Net.Http.Json;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace AudioYotoShelf.Infrastructure.Services.IconGeneration;
 

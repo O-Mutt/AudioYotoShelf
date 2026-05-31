@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.Tests.Helpers;
 using AudioYotoShelf.Infrastructure.Services.Audiobookshelf;

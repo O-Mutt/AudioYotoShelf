@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { libraryApi, transferApi } from '@/services/api'
+import { errorMessage } from '@/utils/errors'
 import type { AbsSeriesItem } from '@/types'
 
 const props = defineProps<{ seriesId: string; libraryId?: string }>()
@@ -51,8 +52,8 @@ async function transferSeries() {
       absLibraryId: libraryId,
     })
     transferMessage.value = 'Series transfer queued successfully!'
-  } catch (err: any) {
-    transferMessage.value = `Error: ${err.response?.data?.message ?? err.message}`
+  } catch (err: unknown) {
+    transferMessage.value = `Error: ${errorMessage(err)}`
   } finally {
     isTransferring.value = false
   }
@@ -79,11 +80,17 @@ async function transferSeries() {
       </button>
     </div>
 
-    <p v-if="transferMessage" class="text-sm" :class="transferMessage.startsWith('Error') ? 'text-red-600' : 'text-green-600'">
+    <p
+      v-if="transferMessage"
+      class="text-sm"
+      :class="transferMessage.startsWith('Error') ? 'text-red-600' : 'text-green-600'"
+    >
       {{ transferMessage }}
     </p>
 
-    <p v-if="seriesDetail.description" class="text-gray-600 text-sm">{{ seriesDetail.description }}</p>
+    <p v-if="seriesDetail.description" class="text-gray-600 text-sm">
+      {{ seriesDetail.description }}
+    </p>
 
     <!-- Books in series -->
     <div class="space-y-3">
@@ -112,13 +119,18 @@ async function transferSeries() {
             </h3>
           </div>
           <p class="text-sm text-gray-500 mt-1">
-            {{ book.media?.metadata?.authors?.map(a => a.name).join(', ') }}
+            {{ book.media?.metadata?.authors?.map((a) => a.name).join(', ') }}
           </p>
           <p v-if="book.media" class="text-xs text-gray-400 mt-1">
             {{ formatDuration(book.media.duration) }} · {{ book.media.numChapters }} chapters
           </p>
         </div>
-        <svg class="w-5 h-5 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg
+          class="w-5 h-5 text-gray-300 flex-shrink-0"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
         </svg>
       </div>

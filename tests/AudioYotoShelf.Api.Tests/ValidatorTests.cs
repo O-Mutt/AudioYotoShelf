@@ -1,7 +1,6 @@
 using AudioYotoShelf.Api.Configuration;
 using AudioYotoShelf.Api.Controllers;
 using AudioYotoShelf.Core.DTOs.Transfer;
-using FluentAssertions;
 using FluentValidation.TestHelper;
 
 namespace AudioYotoShelf.Api.Tests;

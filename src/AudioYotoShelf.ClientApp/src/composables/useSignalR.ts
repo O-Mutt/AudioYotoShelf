@@ -32,8 +32,12 @@ async function connect(): Promise<void> {
     conn.on('TransferListChanged', () => {
       listChangedAt.value = Date.now()
     })
-    conn.onreconnected(() => { isConnected.value = true })
-    conn.onclose(() => { isConnected.value = false })
+    conn.onreconnected(() => {
+      isConnected.value = true
+    })
+    conn.onclose(() => {
+      isConnected.value = false
+    })
 
     connection.value = conn
     try {

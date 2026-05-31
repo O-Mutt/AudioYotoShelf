@@ -703,12 +703,20 @@ public class TransferOrchestrator(
 
         switch (lower)
         {
-            case "en": case "en-gb": case "en-us":
-            case "fr": case "fr-fr":
-            case "es": case "es-es": case "es-419":
-            case "de": case "it":
+            case "en":
+            case "en-gb":
+            case "en-us":
+            case "fr":
+            case "fr-fr":
+            case "es":
+            case "es-es":
+            case "es-419":
+            case "de":
+            case "it":
                 return lower;
-            case "zh_hans": case "zh-hans": case "zh":
+            case "zh_hans":
+            case "zh-hans":
+            case "zh":
                 return "zh_Hans";
         }
 

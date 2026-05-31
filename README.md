@@ -1,5 +1,11 @@
 # AudioYotoShelf
 
+[![CI](https://github.com/O-Mutt/AudioYotoShelf/actions/workflows/ci.yml/badge.svg)](https://github.com/O-Mutt/AudioYotoShelf/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/O-Mutt/AudioYotoShelf/graph/badge.svg)](https://codecov.io/gh/O-Mutt/AudioYotoShelf)
+![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white)
+![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
+
 Bridge your [Audiobookshelf](https://www.audiobookshelf.org/) library to [Yoto](https://www.yotoplay.com/) Make Your Own (MYO) cards.
 
 Transfer audiobooks from your self-hosted Audiobookshelf server to Yoto MYO cards with auto-generated pixel art chapter icons, series-to-playlist mapping, and age range suggestions.

@@ -28,17 +28,16 @@ function goToLibrary() {
   <div class="max-w-lg mx-auto space-y-8">
     <div class="text-center">
       <h1 class="text-3xl font-bold text-gray-900">Welcome to AudioYotoShelf</h1>
-      <p class="mt-2 text-gray-500">Connect your Audiobookshelf and Yoto accounts to get started.</p>
+      <p class="mt-2 text-gray-500">
+        Connect your Audiobookshelf and Yoto accounts to get started.
+      </p>
     </div>
 
     <!-- Step 1: Audiobookshelf -->
     <div class="card">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-semibold">1. Connect Audiobookshelf</h2>
-        <span
-          v-if="connectionStore.isAbsConnected"
-          class="text-sm text-green-600 font-medium"
-        >
+        <span v-if="connectionStore.isAbsConnected" class="text-sm text-green-600 font-medium">
           Connected
         </span>
       </div>
@@ -46,7 +45,13 @@ function goToLibrary() {
       <form v-if="!connectionStore.isAbsConnected" @submit.prevent="connectAbs" class="space-y-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Server URL</label>
-          <input v-model="absUrl" type="url" class="input-field" placeholder="http://localhost:13378" required />
+          <input
+            v-model="absUrl"
+            type="url"
+            class="input-field"
+            placeholder="http://localhost:13378"
+            required
+          />
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
@@ -62,8 +67,8 @@ function goToLibrary() {
       </form>
 
       <div v-else class="text-sm text-gray-600">
-        Connected as <strong>{{ connectionStore.username }}</strong>
-        to {{ connectionStore.status?.audiobookshelfUrl }}
+        Connected as <strong>{{ connectionStore.username }}</strong> to
+        {{ connectionStore.status?.audiobookshelfUrl }}
       </div>
 
       <p v-if="connectionStore.error" class="mt-2 text-sm text-red-600">
@@ -75,10 +80,7 @@ function goToLibrary() {
     <div class="card" :class="{ 'opacity-50': !connectionStore.isAbsConnected }">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-semibold">2. Connect Yoto</h2>
-        <span
-          v-if="connectionStore.isYotoConnected"
-          class="text-sm text-green-600 font-medium"
-        >
+        <span v-if="connectionStore.isYotoConnected" class="text-sm text-green-600 font-medium">
           Connected
         </span>
       </div>

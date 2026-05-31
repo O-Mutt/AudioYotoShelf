@@ -1,13 +1,12 @@
 using AudioYotoShelf.Infrastructure.Services.IconGeneration;
 using FluentAssertions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Png;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
+using SixLabors.ImageSharp;
 
 namespace AudioYotoShelf.Infrastructure.Tests;
 
