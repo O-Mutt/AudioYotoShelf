@@ -70,6 +70,7 @@ public class CardsController(
             var enriched = allCards.Select(card => new
             {
                 card.CardId,
+                card.Title,
                 card.Metadata,
                 ChapterCount = card.Content?.Chapters?.Length ?? 0,
                 TrackCount = card.Content?.Chapters?.Sum(ch => ch.Tracks?.Length ?? 0) ?? 0,
@@ -91,6 +92,7 @@ public class CardsController(
                 fallback.Add(new
                 {
                     card.CardId,
+                    card.Title,
                     card.Metadata,
                     ChapterCount = card.Content?.Chapters?.Length ?? 0,
                     TrackCount = card.Content?.Chapters?.Sum(ch => ch.Tracks?.Length ?? 0) ?? 0,

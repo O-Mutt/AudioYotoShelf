@@ -85,7 +85,7 @@ public class TransferOrchestratorTests : IDisposable
 
         _yotoService.Setup(s => s.CreateOrUpdateCardAsync(
                 It.IsAny<string>(), It.IsAny<YotoCardContent>(), It.IsAny<YotoCardMetadata>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("card-id-123");
 
         _iconService.Setup(s => s.GenerateChapterIconAsync(
@@ -331,6 +331,7 @@ public class TransferOrchestratorTests : IDisposable
             It.IsAny<string>(),
             It.Is<YotoCardContent>(c => c.Chapters.Length > 0 && c.PlaybackType == "linear"),
             It.Is<YotoCardMetadata>(m => m.Author == "Test Author" && m.MinAge == 5),
+            "Test Book",
             null,
             It.IsAny<CancellationToken>()), Times.Once);
     }

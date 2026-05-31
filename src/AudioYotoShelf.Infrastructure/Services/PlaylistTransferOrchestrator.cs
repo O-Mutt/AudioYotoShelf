@@ -93,15 +93,21 @@ public class PlaylistTransferOrchestrator(
                 PlaybackType: "linear",
                 Version: "1");
 
+            // For a single-book playlist, use that book's Audiobookshelf cover as the card cover.
+            var coverUrl = orderedItems.Count == 1
+                ? await TryUploadBookCoverAsync(user, orderedItems[0].AbsLibraryItemId, yotoToken, ct)
+                : null;
+
             var metadata = new YotoCardMetadata(
                 Author: firstAuthor,
                 Category: YotoCategory.Stories.ToString().ToLowerInvariant(),
                 Description: playlist.Name,
                 Genre: null, Languages: null, MinAge: null, MaxAge: null,
-                ReadBy: null, Cover: null);
+                ReadBy: null,
+                Cover: coverUrl is not null ? new YotoCover(coverUrl) : null);
 
             var cardId = await yotoService.CreateOrUpdateCardAsync(
-                yotoToken, content, metadata, playlist.YotoCardId, ct);
+                yotoToken, content, metadata, title: playlist.Name, existingCardId: playlist.YotoCardId, ct: ct);
 
             playlist.YotoCardId = cardId;
             playlist.Status = PlaylistStatus.Transferred;
@@ -238,6 +244,22 @@ public class PlaylistTransferOrchestrator(
         return segments
             .Select((path, i) => new LocalTrack(path, segmentDuration, $"{track.Title} (Part {i + 1})"))
             .ToList();
+    }
+
+    /// <summary>Uploads a book's Audiobookshelf cover to Yoto, returning the cover URL (best-effort, null on failure).</summary>
+    private async Task<string?> TryUploadBookCoverAsync(UserConnection user, string itemId, string yotoToken, CancellationToken ct)
+    {
+        try
+        {
+            var coverStream = await absService.GetCoverImageAsync(
+                user.AudiobookshelfUrl, user.AudiobookshelfToken!, itemId, ct);
+            return await yotoService.UploadCoverImageAsync(yotoToken, coverStream, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to upload cover for book {ItemId}", itemId);
+            return null;
+        }
     }
 
     /// <summary>Returns a yoto:#{mediaId} display reference for the book, or null if generation fails.</summary>

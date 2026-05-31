@@ -27,7 +27,9 @@ public record YotoCardListResponse(
 public record YotoCard(
     string CardId,
     YotoCardContent? Content,
-    YotoCardMetadata? Metadata
+    YotoCardMetadata? Metadata,
+    // Top-level card name shown in the Yoto app (separate from metadata.description).
+    string? Title = null
 );
 
 public record YotoCardContent(

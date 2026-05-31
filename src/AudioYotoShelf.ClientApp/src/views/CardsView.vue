@@ -161,7 +161,7 @@ function formatDuration(seconds: number): string {
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2">
               <h3 class="font-medium text-gray-900 truncate">
-                {{ card.sourceBookTitle || card.metadata?.description || `Card ${card.cardId.slice(0, 8)}` }}
+                {{ card.title || card.sourceBookTitle || card.metadata?.description || `Card ${card.cardId.slice(0, 8)}` }}
               </h3>
               <span
                 v-if="card.fromAudioYotoShelf"

@@ -88,9 +88,9 @@ public class PlaylistTransferOrchestratorTests : IDisposable
         YotoCardContent? captured = null;
         _yotoService.Setup(s => s.CreateOrUpdateCardAsync(
                 It.IsAny<string>(), It.IsAny<YotoCardContent>(), It.IsAny<YotoCardMetadata>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .Callback<string, YotoCardContent, YotoCardMetadata, string?, CancellationToken>(
-                (_, content, _, _, _) => captured = content)
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, YotoCardContent, YotoCardMetadata, string?, string?, CancellationToken>(
+                (_, content, _, _, _, _) => captured = content)
             .ReturnsAsync("card-abc");
 
         var playlistId = await SeedPlaylistAsync(
@@ -142,6 +142,6 @@ public class PlaylistTransferOrchestratorTests : IDisposable
         playlist.YotoCardId.Should().BeNull();
         _yotoService.Verify(s => s.CreateOrUpdateCardAsync(
             It.IsAny<string>(), It.IsAny<YotoCardContent>(), It.IsAny<YotoCardMetadata>(),
-            It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

@@ -124,6 +124,13 @@ public class PlaylistService(
         var series = await absService.GetSeriesDetailAsync(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, user.DefaultLibraryId, absSeriesId, ct);
 
+        // Default an unnamed playlist to the series name (the user can still rename it).
+        if (string.IsNullOrWhiteSpace(playlist.Name) && !string.IsNullOrWhiteSpace(series.Name))
+        {
+            playlist.Name = series.Name;
+            await db.SaveChangesAsync(ct);
+        }
+
         var orderedIds = series.Books
             .OrderBy(b => ParseSequence(b.Sequence) ?? 999f)
             .Select(b => b.Id)

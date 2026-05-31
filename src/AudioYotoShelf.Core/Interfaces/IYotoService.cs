@@ -16,7 +16,7 @@ public interface IYotoService
     // Cards
     Task<YotoCard[]> GetUserCardsAsync(string accessToken, CancellationToken ct = default);
     Task<YotoCard> GetCardContentAsync(string accessToken, string cardId, CancellationToken ct = default);
-    Task<string> CreateOrUpdateCardAsync(string accessToken, YotoCardContent content, YotoCardMetadata metadata, string? existingCardId = null, CancellationToken ct = default);
+    Task<string> CreateOrUpdateCardAsync(string accessToken, YotoCardContent content, YotoCardMetadata metadata, string? title = null, string? existingCardId = null, CancellationToken ct = default);
     Task DeleteCardAsync(string accessToken, string cardId, CancellationToken ct = default);
 
     // Audio Upload Pipeline (4-step)

@@ -133,22 +133,32 @@ public class YotoService(
             ? ce.Deserialize<YotoCardContent>(JsonWeb) : null;
         var metadata = cardNode.TryGetProperty("metadata", out var me) && me.ValueKind == JsonValueKind.Object
             ? me.Deserialize<YotoCardMetadata>(JsonWeb) : null;
+        var title = cardNode.TryGetProperty("title", out var te) && te.ValueKind == JsonValueKind.String
+            ? te.GetString() : null;
 
-        return new YotoCard(cardId, content, metadata);
+        return new YotoCard(cardId, content, metadata, title);
     }
 
     public async Task<string> CreateOrUpdateCardAsync(
         string accessToken, YotoCardContent content, YotoCardMetadata metadata,
-        string? existingCardId = null, CancellationToken ct = default)
+        string? title = null, string? existingCardId = null, CancellationToken ct = default)
     {
         using var client = CreateApiClient(accessToken);
 
-        var body = new { cardId = existingCardId, content, metadata };
+        // 'title' is the top-level card name shown in the Yoto app/editor (separate from metadata.description).
+        var body = new { cardId = existingCardId, title, content, metadata };
         var response = await client.PostAsJsonAsync("/content", body, ct);
         var responseBody = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
         {
+            // The card we tried to update was deleted on Yoto — create a fresh one instead.
+            if (existingCardId is not null && responseBody.Contains("Deleted card", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning("Yoto card {CardId} was deleted; creating a new card instead", existingCardId);
+                return await CreateOrUpdateCardAsync(accessToken, content, metadata, title, null, ct);
+            }
+
             logger.LogError("Yoto card create/update failed: {StatusCode} {Body}", response.StatusCode, responseBody);
             response.EnsureSuccessStatusCode();
         }
@@ -334,14 +344,45 @@ public class YotoService(
 
     public async Task<string> UploadCoverImageAsync(string accessToken, Stream imageStream, CancellationToken ct = default)
     {
-        using var client = CreateApiClient(accessToken);
-        using var formContent = new MultipartFormDataContent();
-        formContent.Add(new StreamContent(imageStream), "file", "cover.jpg");
+        // Buffer so we can retry the upload across candidate endpoints.
+        using var buffer = new MemoryStream();
+        await imageStream.CopyToAsync(buffer, ct);
+        var bytes = buffer.ToArray();
 
-        var response = await client.PostAsync("/media/cover/upload?autoconvert=true", formContent, ct);
+        using var client = CreateApiClient(accessToken);
+
+        // The cover endpoint wants the raw image bytes as the request body (not multipart);
+        // it parallels the icon endpoint but takes a binary body.
+        using var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+
+        var response = await client.PostAsync(
+            "/media/coverImage/user/me/upload?autoConvert=true&coverType=default", content, ct);
+        var json = await response.Content.ReadAsStringAsync(ct);
+        logger.LogInformation("Cover upload -> {Status}: {Body}", (int)response.StatusCode, json.Length > 400 ? json[..400] : json);
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<YotoCoverUploadResponse>(ct);
-        return result?.Url ?? throw new InvalidOperationException("No cover URL returned");
+        return ExtractCoverUrl(json) ?? throw new InvalidOperationException("No cover URL in Yoto response");
+    }
+
+    /// <summary>
+    /// Finds the cover image URL in the upload response, tolerating Yoto's wrapper nesting
+    /// (e.g. { "coverImage": { "mediaUrl": ... } }) and varied key names.
+    /// </summary>
+    private static string? ExtractCoverUrl(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object) return null;
+
+        IEnumerable<JsonElement> nodes = [root, .. new[] { "coverImage", "cover", "upload", "media" }
+            .Where(w => root.TryGetProperty(w, out var e) && e.ValueKind == JsonValueKind.Object)
+            .Select(w => root.GetProperty(w))];
+
+        foreach (var node in nodes)
+            foreach (var key in new[] { "mediaUrl", "imageL", "url", "coverImageL" })
+                if (node.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String)
+                    return v.GetString();
+        return null;
     }
 }

@@ -562,11 +562,12 @@ public class TransferOrchestrator(
             Version: "1"
         );
 
+        var cardTitle = metadata.Title ?? transfer.BookTitle;
         var language = MapYotoLanguage(metadata.Language);
         var cardMetadata = new YotoCardMetadata(
             Author: metadata.Authors?.FirstOrDefault()?.Name,
             Category: transfer.Category.ToString().ToLowerInvariant(),
-            Description: metadata.Title,
+            Description: metadata.Description ?? metadata.Subtitle ?? cardTitle,
             Genre: metadata.Genres,
             Languages: language is not null ? [language] : null,
             MinAge: transfer.EffectiveMinAge,
@@ -590,7 +591,7 @@ public class TransferOrchestrator(
         }
 
         return await yotoService.CreateOrUpdateCardAsync(
-            yotoAccessToken, content, cardMetadata, existingCardId, ct);
+            yotoAccessToken, content, cardMetadata, title: cardTitle, existingCardId: existingCardId, ct: ct);
     }
 
     // =========================================================================
