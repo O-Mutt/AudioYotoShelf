@@ -31,7 +31,7 @@ function addToast(message: string, variant: ToastVariant, duration: number) {
 }
 
 function dismiss(id: string) {
-  toasts.value = toasts.value.filter(t => t.id !== id)
+  toasts.value = toasts.value.filter((t) => t.id !== id)
 }
 
 /**

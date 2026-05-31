@@ -1,4 +1,3 @@
-using AudioYotoShelf.Core.DTOs.Icons;
 using AudioYotoShelf.Core.DTOs.Yoto;
 
 namespace AudioYotoShelf.Core.Interfaces;

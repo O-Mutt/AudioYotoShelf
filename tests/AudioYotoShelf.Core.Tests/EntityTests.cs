@@ -1,5 +1,3 @@
-using AudioYotoShelf.Core.Entities;
-using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Tests.Helpers;
 using FluentAssertions;
 

@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text.Json;
 using AudioYotoShelf.Api.Middleware;
 using FluentAssertions;

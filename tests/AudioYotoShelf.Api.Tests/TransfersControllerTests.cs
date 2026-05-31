@@ -4,7 +4,6 @@ using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Core.Tests.Helpers;
 using AudioYotoShelf.Infrastructure.Data;
-using AudioYotoShelf.Infrastructure.Services.BackgroundJobs;
 using FluentAssertions;
 using Hangfire;
 using Hangfire.States;
@@ -12,7 +11,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
-using System.Linq.Expressions;
 
 namespace AudioYotoShelf.Api.Tests;
 

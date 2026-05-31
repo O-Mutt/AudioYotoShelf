@@ -56,5 +56,6 @@
     <!-- Held at 7.x: FluentAssertions 8+ requires a paid commercial license. -->
     <PackageVersion Include="FluentAssertions" Version="7.0.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.8" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
   </ItemGroup>
 </Project>

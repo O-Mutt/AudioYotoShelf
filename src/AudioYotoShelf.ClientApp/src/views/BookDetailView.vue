@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref, computed, watch } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useSignalR } from '@/composables/useSignalR'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { transferApi } from '@/services/api'
+import { errorMessage } from '@/utils/errors'
 import type { TransferProgressUpdate } from '@/types'
 
 const props = defineProps<{ itemId: string }>()
@@ -25,8 +26,12 @@ const book = computed(() => libraryStore.currentBookDetail)
 const metadata = computed(() => book.value?.item?.media?.metadata)
 const ageSuggestion = computed(() => book.value?.ageSuggestion)
 
-const effectiveMinAge = computed(() => overrideMinAge.value ?? ageSuggestion.value?.suggestedMinAge ?? 5)
-const effectiveMaxAge = computed(() => overrideMaxAge.value ?? ageSuggestion.value?.suggestedMaxAge ?? 10)
+const effectiveMinAge = computed(
+  () => overrideMinAge.value ?? ageSuggestion.value?.suggestedMinAge ?? 5,
+)
+const effectiveMaxAge = computed(
+  () => overrideMaxAge.value ?? ageSuggestion.value?.suggestedMaxAge ?? 10,
+)
 const isOverridden = computed(() => overrideMinAge.value !== null || overrideMaxAge.value !== null)
 
 // Live progress from SignalR
@@ -38,7 +43,10 @@ const liveProgress = computed<TransferProgressUpdate | null>(() => {
 onMounted(async () => {
   await libraryStore.loadBookDetail(props.itemId)
   // If there's an active existing transfer, subscribe for updates
-  if (book.value?.existingTransfer && !['Completed', 'Failed', 'Cancelled'].includes(book.value.existingTransfer.status)) {
+  if (
+    book.value?.existingTransfer &&
+    !['Completed', 'Failed', 'Cancelled'].includes(book.value.existingTransfer.status)
+  ) {
     activeTransferId.value = book.value.existingTransfer.id
     await connect()
     await joinTransfer(book.value.existingTransfer.id)
@@ -58,7 +66,9 @@ function resetAgeOverride() {
 
 function onCoverError(e: Event) {
   const img = e.target as HTMLImageElement
-  img.src = 'data:image/svg+xml,' + encodeURIComponent(`
+  img.src =
+    'data:image/svg+xml,' +
+    encodeURIComponent(`
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300" fill="none">
       <rect width="200" height="300" rx="8" fill="#E5E7EB"/>
       <path d="M80 120h40v8H80v-8zm-8 24h56v6H72v-6zm0 16h56v6H72v-6zm0 16h40v6H72v-6z" fill="#9CA3AF"/>
@@ -93,8 +103,8 @@ async function startTransfer() {
       await connect()
       await joinTransfer(activeTransferId.value)
     }
-  } catch (err: any) {
-    toast.error(`Transfer failed: ${err.response?.data?.message ?? err.message}`)
+  } catch (err: unknown) {
+    toast.error(`Transfer failed: ${errorMessage(err)}`)
   } finally {
     isTransferring.value = false
   }
@@ -117,7 +127,7 @@ async function startTransfer() {
         <h1 class="text-3xl font-bold text-gray-900">{{ metadata?.title }}</h1>
         <p v-if="metadata?.subtitle" class="text-lg text-gray-500">{{ metadata.subtitle }}</p>
         <p class="text-gray-600">
-          by {{ metadata?.authors?.map(a => a.name).join(', ') ?? 'Unknown' }}
+          by {{ metadata?.authors?.map((a) => a.name).join(', ') ?? 'Unknown' }}
         </p>
         <p v-if="metadata?.narrators?.length" class="text-sm text-gray-500">
           Narrated by {{ metadata.narrators.join(', ') }}
@@ -154,7 +164,9 @@ async function startTransfer() {
             class="px-3 py-1 rounded-full text-sm font-medium"
             :class="{
               'bg-green-100 text-green-700': book.existingTransfer.status === 'Completed',
-              'bg-yellow-100 text-yellow-700': !['Completed', 'Failed'].includes(book.existingTransfer.status),
+              'bg-yellow-100 text-yellow-700': !['Completed', 'Failed'].includes(
+                book.existingTransfer.status,
+              ),
               'bg-red-100 text-red-700': book.existingTransfer.status === 'Failed',
             }"
           >
@@ -167,7 +179,9 @@ async function startTransfer() {
     <!-- Description -->
     <div v-if="metadata?.description" class="card">
       <h2 class="text-lg font-semibold mb-2">Description</h2>
-      <p class="text-sm text-gray-600 whitespace-pre-line leading-relaxed">{{ metadata.description }}</p>
+      <p class="text-sm text-gray-600 whitespace-pre-line leading-relaxed">
+        {{ metadata.description }}
+      </p>
     </div>
 
     <!-- Age Range Section -->
@@ -178,11 +192,18 @@ async function startTransfer() {
         <div class="flex items-center justify-between">
           <div>
             <p class="text-sm text-gray-600">
-              <span class="font-medium">Suggested:</span> {{ ageSuggestion.suggestedMinAge }}–{{ ageSuggestion.suggestedMaxAge }} years
+              <span class="font-medium">Suggested:</span> {{ ageSuggestion.suggestedMinAge }}–{{
+                ageSuggestion.suggestedMaxAge
+              }}
+              years
             </p>
             <p class="text-xs text-gray-400 mt-1">{{ ageSuggestion.reason }}</p>
           </div>
-          <button v-if="isOverridden" @click="resetAgeOverride" class="text-sm text-yoto-blue hover:underline">
+          <button
+            v-if="isOverridden"
+            @click="resetAgeOverride"
+            class="text-sm text-yoto-blue hover:underline"
+          >
             Reset to suggested
           </button>
         </div>
@@ -229,7 +250,9 @@ async function startTransfer() {
         </div>
 
         <p v-if="isOverridden" class="text-xs text-yoto-orange">
-          Age range overridden from suggested {{ ageSuggestion.suggestedMinAge }}–{{ ageSuggestion.suggestedMaxAge }}
+          Age range overridden from suggested {{ ageSuggestion.suggestedMinAge }}–{{
+            ageSuggestion.suggestedMaxAge
+          }}
         </p>
       </div>
     </div>
@@ -260,7 +283,9 @@ async function startTransfer() {
     <div v-if="liveProgress" class="card">
       <div class="flex items-center justify-between mb-2">
         <h3 class="text-sm font-medium text-gray-700">Transfer Progress</h3>
-        <span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{{ liveProgress.status }}</span>
+        <span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{{
+          liveProgress.status
+        }}</span>
       </div>
       <div class="w-full bg-gray-100 rounded-full h-2.5">
         <div
@@ -283,7 +308,9 @@ async function startTransfer() {
         <template v-if="isTransferring">Queueing Transfer...</template>
         <template v-else-if="activeTransferId">Transfer In Progress...</template>
         <template v-else-if="!connectionStore.isYotoConnected">Connect Yoto to Transfer</template>
-        <template v-else-if="book.existingTransfer?.status === 'Completed'">Re-transfer to Yoto</template>
+        <template v-else-if="book.existingTransfer?.status === 'Completed'"
+          >Re-transfer to Yoto</template
+        >
         <template v-else>Transfer to Yoto Card</template>
       </button>
     </div>

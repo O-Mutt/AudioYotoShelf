@@ -6,6 +6,9 @@ obj/
 *.csproj.user
 .vs/
 out/
+TestResults/
+coverage/
+*.cobertura.xml
 
 # Node / Vue
 node_modules/

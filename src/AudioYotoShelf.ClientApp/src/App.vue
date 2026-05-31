@@ -25,7 +25,7 @@ api.interceptors.response.use(
       toast.error('Server error. Please try again later.')
     }
     return Promise.reject(error)
-  }
+  },
 )
 
 onMounted(async () => {

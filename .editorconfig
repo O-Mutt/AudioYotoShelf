@@ -1,0 +1,52 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.cs]
+indent_size = 4
+
+# Organize usings
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# this. preferences
+dotnet_style_qualification_for_field = false:warning
+dotnet_style_qualification_for_property = false:warning
+dotnet_style_qualification_for_method = false:warning
+dotnet_style_qualification_for_event = false:warning
+
+# Language keywords vs BCL types
+dotnet_style_predefined_type_for_locals_parameters_members = true:warning
+dotnet_style_predefined_type_for_member_access = true:warning
+
+# Modern C# preferences (kept as suggestions so they guide without churning the tree)
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_prefer_braces = when_multiline:suggestion
+csharp_style_expression_bodied_members = true:suggestion
+
+# Unused usings — surface as warnings (build already treats warnings as errors)
+dotnet_diagnostic.IDE0005.severity = warning
+
+[*.{js,jsx,ts,tsx,vue,mjs,cjs,mts,cts}]
+indent_size = 2
+
+[*.{json,jsonc,yml,yaml,css,scss,html}]
+indent_size = 2
+
+[*.{csproj,props,targets,xml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+# EF Core migrations are generated; keep formatting but don't nitpick style
+[**/Migrations/*.cs]
+dotnet_diagnostic.IDE0005.severity = none
+generated_code = true

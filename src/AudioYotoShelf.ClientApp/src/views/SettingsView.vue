@@ -8,6 +8,11 @@ const router = useRouter()
 function goToSetup() {
   router.push('/setup')
 }
+
+function logout() {
+  connectionStore.logout()
+  router.push('/setup')
+}
 </script>
 
 <template>
@@ -22,14 +27,20 @@ function goToSetup() {
           <div>
             <p class="font-medium text-gray-700">Audiobookshelf</p>
             <p class="text-sm text-gray-400">
-              {{ connectionStore.isAbsConnected
-                ? connectionStore.status?.audiobookshelfUrl
-                : 'Not connected' }}
+              {{
+                connectionStore.isAbsConnected
+                  ? connectionStore.status?.audiobookshelfUrl
+                  : 'Not connected'
+              }}
             </p>
           </div>
           <span
             class="px-3 py-1 rounded-full text-sm font-medium"
-            :class="connectionStore.isAbsConnected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
+            :class="
+              connectionStore.isAbsConnected
+                ? 'bg-green-100 text-green-700'
+                : 'bg-red-100 text-red-700'
+            "
           >
             {{ connectionStore.isAbsConnected ? 'Connected' : 'Disconnected' }}
           </span>
@@ -44,16 +55,18 @@ function goToSetup() {
           </div>
           <span
             class="px-3 py-1 rounded-full text-sm font-medium"
-            :class="connectionStore.isYotoConnected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
+            :class="
+              connectionStore.isYotoConnected
+                ? 'bg-green-100 text-green-700'
+                : 'bg-red-100 text-red-700'
+            "
           >
             {{ connectionStore.isYotoConnected ? 'Connected' : 'Disconnected' }}
           </span>
         </div>
       </div>
 
-      <button @click="goToSetup" class="btn-secondary mt-4">
-        Manage Connections
-      </button>
+      <button @click="goToSetup" class="btn-secondary mt-4">Manage Connections</button>
     </div>
 
     <!-- Default Age Range -->
@@ -67,13 +80,27 @@ function goToSetup() {
           <label class="block text-sm font-medium text-gray-700 mb-1">
             Min Age: {{ connectionStore.status?.defaultMinAge ?? 5 }}
           </label>
-          <input type="range" min="0" max="18" :value="connectionStore.status?.defaultMinAge ?? 5" class="w-full accent-yoto-blue" disabled />
+          <input
+            type="range"
+            min="0"
+            max="18"
+            :value="connectionStore.status?.defaultMinAge ?? 5"
+            class="w-full accent-yoto-blue"
+            disabled
+          />
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">
             Max Age: {{ connectionStore.status?.defaultMaxAge ?? 10 }}
           </label>
-          <input type="range" min="0" max="18" :value="connectionStore.status?.defaultMaxAge ?? 10" class="w-full accent-yoto-blue" disabled />
+          <input
+            type="range"
+            min="0"
+            max="18"
+            :value="connectionStore.status?.defaultMaxAge ?? 10"
+            class="w-full accent-yoto-blue"
+            disabled
+          />
         </div>
       </div>
     </div>
@@ -98,12 +125,7 @@ function goToSetup() {
     <!-- Danger Zone -->
     <div class="card border-red-200">
       <h2 class="text-lg font-semibold text-red-600 mb-4">Danger Zone</h2>
-      <button
-        @click="connectionStore.logout(); router.push('/setup')"
-        class="btn-danger"
-      >
-        Disconnect &amp; Logout
-      </button>
+      <button @click="logout" class="btn-danger">Disconnect &amp; Logout</button>
     </div>
   </div>
 </template>

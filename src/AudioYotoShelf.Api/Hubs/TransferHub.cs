@@ -10,15 +10,15 @@ namespace AudioYotoShelf.Api.Hubs;
 /// </summary>
 public class TransferHub : Hub
 {
-	public async Task JoinTransferGroup(Guid transferId)
-	{
-		await Groups.AddToGroupAsync(Context.ConnectionId, transferId.ToString());
-	}
+    public async Task JoinTransferGroup(Guid transferId)
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, transferId.ToString());
+    }
 
-	public async Task LeaveTransferGroup(Guid transferId)
-	{
-		await Groups.RemoveFromGroupAsync(Context.ConnectionId, transferId.ToString());
-	}
+    public async Task LeaveTransferGroup(Guid transferId)
+    {
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, transferId.ToString());
+    }
 }
 
 /// <summary>
@@ -26,17 +26,17 @@ public class TransferHub : Hub
 /// DIP: Infrastructure depends on the Core interface; this Api-layer class provides the concrete impl.
 /// </summary>
 public class SignalRTransferProgressNotifier(
-		IHubContext<TransferHub> hubContext) : ITransferProgressNotifier
+        IHubContext<TransferHub> hubContext) : ITransferProgressNotifier
 {
-	public async Task SendProgressAsync(TransferProgressUpdate update, CancellationToken ct)
-	{
-		await hubContext.Clients
-				.Group(update.TransferId.ToString())
-				.SendAsync("TransferProgress", update, ct);
-	}
+    public async Task SendProgressAsync(TransferProgressUpdate update, CancellationToken ct)
+    {
+        await hubContext.Clients
+                .Group(update.TransferId.ToString())
+                .SendAsync("TransferProgress", update, ct);
+    }
 
-	public Task NotifyListChangedAsync(CancellationToken ct = default)
-		=> hubContext.Clients.All.SendAsync("TransferListChanged", ct);
+    public Task NotifyListChangedAsync(CancellationToken ct = default)
+        => hubContext.Clients.All.SendAsync("TransferListChanged", ct);
 }
 
 /// <summary>
@@ -44,12 +44,12 @@ public class SignalRTransferProgressNotifier(
 /// </summary>
 public static class TransferHubExtensions
 {
-	public static async Task SendProgressUpdateAsync(
-			this IHubContext<TransferHub> hubContext,
-			TransferProgressUpdate update)
-	{
-		await hubContext.Clients
-				.Group(update.TransferId.ToString())
-				.SendAsync("TransferProgress", update);
-	}
+    public static async Task SendProgressUpdateAsync(
+            this IHubContext<TransferHub> hubContext,
+            TransferProgressUpdate update)
+    {
+        await hubContext.Clients
+                .Group(update.TransferId.ToString())
+                .SendAsync("TransferProgress", update);
+    }
 }

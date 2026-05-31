@@ -1,11 +1,11 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @theme {
-  --color-yoto-blue: #4A90D9;
-  --color-yoto-green: #7BC67E;
-  --color-yoto-orange: #F5A623;
-  --color-yoto-red: #D0021B;
-  --color-yoto-purple: #9B59B6;
+  --color-yoto-blue: #4a90d9;
+  --color-yoto-green: #7bc67e;
+  --color-yoto-orange: #f5a623;
+  --color-yoto-red: #d0021b;
+  --color-yoto-purple: #9b59b6;
 }
 
 @layer base {

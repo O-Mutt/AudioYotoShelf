@@ -65,7 +65,10 @@ public class PlaylistTransferOrchestratorTests : IDisposable
 
         var playlist = new Playlist
         {
-            UserConnectionId = user.Id, Name = "Mix", DefaultGrouping = grouping, Status = status
+            UserConnectionId = user.Id,
+            Name = "Mix",
+            DefaultGrouping = grouping,
+            Status = status
         };
         foreach (var item in items)
         {

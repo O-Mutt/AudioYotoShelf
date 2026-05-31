@@ -4,7 +4,11 @@ import { libraryApi } from '@/services/api'
 import { useConnectionStore } from './connectionStore'
 import type { AbsLibrary, AbsLibraryItem, AbsSeriesItem, BookDetailResponse } from '@/types'
 
-export type SortField = 'media.metadata.title' | 'media.metadata.authorName' | 'media.duration' | 'addedAt'
+export type SortField =
+  | 'media.metadata.title'
+  | 'media.metadata.authorName'
+  | 'media.duration'
+  | 'addedAt'
 
 export const SORT_OPTIONS: { label: string; value: SortField }[] = [
   { label: 'Title', value: 'media.metadata.title' },
@@ -33,7 +37,11 @@ export const useLibraryStore = defineStore('library', () => {
   const VIEW_MODE_KEY = 'ays:library:viewMode'
   const viewMode = ref<'books' | 'series'>(readViewMode())
   watch(viewMode, (mode) => {
-    try { localStorage.setItem(VIEW_MODE_KEY, mode) } catch { /* storage unavailable */ }
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, mode)
+    } catch {
+      /* storage unavailable */
+    }
   })
 
   // Search, sort & pagination state
@@ -44,7 +52,9 @@ export const useLibraryStore = defineStore('library', () => {
 
   const ucid = computed(() => connectionStore.userConnectionId)
   const pageCount = computed(() => Math.max(1, Math.ceil(totalItems.value / pageSize.value)))
-  const pageCountSeries = computed(() => Math.max(1, Math.ceil(totalSeries.value / seriesPageSize.value)))
+  const pageCountSeries = computed(() =>
+    Math.max(1, Math.ceil(totalSeries.value / seriesPageSize.value)),
+  )
   const hasNoResults = computed(() => !isLoading.value && items.value.length === 0)
 
   // --- Debounce helper ---
@@ -120,9 +130,7 @@ export const useLibraryStore = defineStore('library', () => {
     if (!ucid.value || !selectedLibraryId.value) return
     isLoading.value = true
     try {
-      const { data } = await libraryApi.getSeries(
-        ucid.value, selectedLibraryId.value, page, limit,
-      )
+      const { data } = await libraryApi.getSeries(ucid.value, selectedLibraryId.value, page, limit)
       series.value = data.results
       totalSeries.value = data.total
       seriesPage.value = page

@@ -27,7 +27,9 @@ onMounted(async () => {
   // Connect up front so we receive list-changed broadcasts even with no active transfers.
   await connect()
   await loadTransfers()
-  nowTimer = setInterval(() => { now.value = Date.now() }, 10_000)
+  nowTimer = setInterval(() => {
+    now.value = Date.now()
+  }, 10_000)
 })
 
 // A transfer was queued (possibly from another page) — refresh the list.
@@ -37,33 +39,39 @@ onUnmounted(() => {
   clearInterval(nowTimer)
 })
 
-watch(progressUpdates, (updates) => {
-  for (const [id, update] of updates) {
-    const transfer = transfers.value.find(t => t.id === id)
-    if (transfer) {
-      transfer.status = update.status
-      transfer.progressPercent = update.progressPercent
-      transfer.errorMessage = update.errorMessage
-      lastUpdateTime.value[id] = Date.now()
-      now.value = Date.now()
+watch(
+  progressUpdates,
+  (updates) => {
+    for (const [id, update] of updates) {
+      const transfer = transfers.value.find((t) => t.id === id)
+      if (transfer) {
+        transfer.status = update.status
+        transfer.progressPercent = update.progressPercent
+        transfer.errorMessage = update.errorMessage
+        lastUpdateTime.value[id] = Date.now()
+        now.value = Date.now()
+      }
     }
-  }
-}, { deep: true })
+  },
+  { deep: true },
+)
 
 async function loadTransfers(page = 0) {
   if (!connectionStore.userConnectionId) return
   isLoading.value = true
   try {
     const { data } = await transferApi.getTransfers(
-      connectionStore.userConnectionId, page, 20,
-      filterStatus.value || undefined
+      connectionStore.userConnectionId,
+      page,
+      20,
+      filterStatus.value || undefined,
     )
     transfers.value = data.results
     totalTransfers.value = data.total
     currentPage.value = page
     // Subscribe to live SignalR updates for any active transfers on this page
     // (joinTransfer opens the connection if needed).
-    for (const t of transfers.value.filter(t => isActive(t.status))) {
+    for (const t of transfers.value.filter((t) => isActive(t.status))) {
       await joinTransfer(t.id)
     }
   } finally {
@@ -77,7 +85,7 @@ async function handleRetry(transferId: string, title: string) {
     toast.success(`Retry queued for "${title}"`)
     // The retry only queues a job (status is still Failed/Cancelled in the DB right now), so
     // optimistically reactivate the card and subscribe for the live updates the job will push.
-    const t = transfers.value.find(x => x.id === transferId)
+    const t = transfers.value.find((x) => x.id === transferId)
     if (t) {
       t.status = 'Pending'
       t.progressPercent = 0
@@ -118,7 +126,7 @@ async function handleDelete(transferId: string, title: string) {
 
   try {
     await transferApi.deleteTransfer(transferId)
-    transfers.value = transfers.value.filter(t => t.id !== transferId)
+    transfers.value = transfers.value.filter((t) => t.id !== transferId)
     totalTransfers.value--
     toast.success(`Transfer deleted`)
   } catch {
@@ -126,7 +134,7 @@ async function handleDelete(transferId: string, title: string) {
   }
 }
 
-const hasCompleted = computed(() => transfers.value.some(t => t.status === 'Completed'))
+const hasCompleted = computed(() => transfers.value.some((t) => t.status === 'Completed'))
 
 // Clears every completed transfer for the user (across all pages); Yoto cards are untouched.
 async function handleClearAllCompleted() {
@@ -150,7 +158,7 @@ async function handleClearAllCompleted() {
 async function handleClear(transferId: string, title: string) {
   try {
     await transferApi.deleteTransfer(transferId)
-    transfers.value = transfers.value.filter(t => t.id !== transferId)
+    transfers.value = transfers.value.filter((t) => t.id !== transferId)
     totalTransfers.value--
     toast.success(`Cleared "${title}"`)
   } catch {
@@ -215,7 +223,10 @@ function timeSinceUpdate(transferId: string): string | null {
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   })
 }
 </script>
@@ -230,8 +241,17 @@ function formatDate(iso: string): string {
           @click="handleClearAllCompleted"
           class="text-sm text-green-600 hover:text-green-700 font-medium inline-flex items-center gap-1"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-4 w-4"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path
+              fill-rule="evenodd"
+              d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+              clip-rule="evenodd"
+            />
           </svg>
           Clear completed
         </button>
@@ -251,15 +271,13 @@ function formatDate(iso: string): string {
     <div v-if="isLoading" class="text-center py-12 text-gray-400">Loading transfers...</div>
 
     <div v-else-if="transfers.length === 0" class="text-center py-12">
-      <p class="text-gray-400">No transfers yet. Browse your library to start transferring books to Yoto cards.</p>
+      <p class="text-gray-400">
+        No transfers yet. Browse your library to start transferring books to Yoto cards.
+      </p>
     </div>
 
     <div v-else class="space-y-3">
-      <div
-        v-for="transfer in transfers"
-        :key="transfer.id"
-        class="card p-4"
-      >
+      <div v-for="transfer in transfers" :key="transfer.id" class="card p-4">
         <div class="flex items-start justify-between gap-4">
           <div class="flex-1 min-w-0">
             <!-- Title row -->
@@ -279,15 +297,20 @@ function formatDate(iso: string): string {
             </div>
 
             <!-- Author -->
-            <p v-if="transfer.bookAuthor" class="text-sm text-gray-500 mt-1">{{ transfer.bookAuthor }}</p>
+            <p v-if="transfer.bookAuthor" class="text-sm text-gray-500 mt-1">
+              {{ transfer.bookAuthor }}
+            </p>
 
             <!-- Meta row -->
             <div class="flex items-center flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400 mt-2">
               <span>{{ formatDate(transfer.createdAt) }}</span>
               <span v-if="transfer.seriesName" class="text-yoto-blue">
-                {{ transfer.seriesName }}{{ transfer.seriesSequence ? ` #${transfer.seriesSequence}` : '' }}
+                {{ transfer.seriesName
+                }}{{ transfer.seriesSequence ? ` #${transfer.seriesSequence}` : '' }}
               </span>
-              <span>Age {{ transfer.ageRange.effectiveMin }}–{{ transfer.ageRange.effectiveMax }}</span>
+              <span
+                >Age {{ transfer.ageRange.effectiveMin }}–{{ transfer.ageRange.effectiveMax }}</span
+              >
               <span>{{ transfer.tracks.length }} tracks</span>
               <!-- Link back to source book -->
               <router-link
@@ -350,8 +373,17 @@ function formatDate(iso: string): string {
             @click="handleClear(transfer.id, transfer.bookTitle)"
             class="text-sm text-green-600 hover:text-green-700 font-medium inline-flex items-center gap-1"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-4 w-4"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
+              <path
+                fill-rule="evenodd"
+                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                clip-rule="evenodd"
+              />
             </svg>
             Clear
           </button>

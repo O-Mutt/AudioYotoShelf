@@ -5,19 +5,27 @@ const { toasts, dismiss } = useToast()
 
 function variantClasses(variant: string) {
   switch (variant) {
-    case 'success': return 'bg-green-600 text-white'
-    case 'error': return 'bg-red-600 text-white'
-    case 'info': return 'bg-blue-600 text-white'
-    default: return 'bg-gray-700 text-white'
+    case 'success':
+      return 'bg-green-600 text-white'
+    case 'error':
+      return 'bg-red-600 text-white'
+    case 'info':
+      return 'bg-blue-600 text-white'
+    default:
+      return 'bg-gray-700 text-white'
   }
 }
 
 function variantIcon(variant: string) {
   switch (variant) {
-    case 'success': return '✓'
-    case 'error': return '✕'
-    case 'info': return 'ℹ'
-    default: return ''
+    case 'success':
+      return '✓'
+    case 'error':
+      return '✕'
+    case 'info':
+      return 'ℹ'
+    default:
+      return ''
   }
 }
 </script>
