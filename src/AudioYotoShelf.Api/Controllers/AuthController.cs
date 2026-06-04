@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using AudioYotoShelf.Api.Auth;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Infrastructure.Data;
