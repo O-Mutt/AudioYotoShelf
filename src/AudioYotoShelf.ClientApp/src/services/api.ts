@@ -14,6 +14,8 @@ import type {
 const api = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
+  // Send the http-only session cookie with every request (and accept Set-Cookie on login).
+  withCredentials: true,
 })
 
 // --- Auth ---
@@ -21,6 +23,10 @@ const api = axios.create({
 export const authApi = {
   connectAbs(baseUrl: string, username: string, password: string) {
     return api.post<AbsConnectResponse>('/auth/abs/connect', { baseUrl, username, password })
+  },
+
+  logout() {
+    return api.post('/auth/logout')
   },
 
   validateAbsToken(userConnectionId: string) {

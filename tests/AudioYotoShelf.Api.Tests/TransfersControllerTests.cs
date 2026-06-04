@@ -101,7 +101,7 @@ public class TransfersControllerTests : IDisposable
         _db.CardTransfers.Add(transfer);
         await _db.SaveChangesAsync();
 
-        var result = await _sut.GetTransfer(transfer.Id, CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).GetTransfer(transfer.Id, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
     }
@@ -109,7 +109,22 @@ public class TransfersControllerTests : IDisposable
     [Fact]
     public async Task GetTransfer_NotFound_Returns404()
     {
-        var result = await _sut.GetTransfer(Guid.NewGuid(), CancellationToken.None);
+        var result = await _sut.AsUser(Guid.NewGuid()).GetTransfer(Guid.NewGuid(), CancellationToken.None);
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task GetTransfer_OwnedByAnotherUser_Returns404()
+    {
+        var owner = TestData.CreateUserConnection(username: "owner");
+        _db.UserConnections.Add(owner);
+        var transfer = TestData.CreateCardTransfer(owner.Id, "Secret Book");
+        _db.CardTransfers.Add(transfer);
+        await _db.SaveChangesAsync();
+
+        // A different authenticated user must not see someone else's transfer.
+        var result = await _sut.AsUser(Guid.NewGuid()).GetTransfer(transfer.Id, CancellationToken.None);
+
         result.Should().BeOfType<NotFoundResult>();
     }
 
@@ -173,19 +188,45 @@ public class TransfersControllerTests : IDisposable
     // =========================================================================
 
     [Fact]
-    public void RetryTransfer_EnqueuesJob_Returns202()
+    public async Task RetryTransfer_EnqueuesJob_Returns202()
     {
-        var result = _sut.RetryTransfer(Guid.NewGuid());
+        var user = TestData.CreateUserConnection();
+        _db.UserConnections.Add(user);
+        var transfer = TestData.CreateCardTransfer(user.Id, "Test Book");
+        _db.CardTransfers.Add(transfer);
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.AsUser(user.Id).RetryTransfer(transfer.Id, CancellationToken.None);
         result.Should().BeOfType<AcceptedResult>();
+    }
+
+    [Fact]
+    public async Task RetryTransfer_NotOwned_Returns404()
+    {
+        var result = await _sut.AsUser(Guid.NewGuid()).RetryTransfer(Guid.NewGuid(), CancellationToken.None);
+        result.Should().BeOfType<NotFoundResult>();
     }
 
     [Fact]
     public async Task CancelTransfer_CallsOrchestrator()
     {
-        var transferId = Guid.NewGuid();
-        var result = await _sut.CancelTransfer(transferId, CancellationToken.None);
+        var user = TestData.CreateUserConnection();
+        _db.UserConnections.Add(user);
+        var transfer = TestData.CreateCardTransfer(user.Id, "Test Book");
+        _db.CardTransfers.Add(transfer);
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.AsUser(user.Id).CancelTransfer(transfer.Id, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _orchestrator.Verify(o => o.CancelTransferAsync(transferId, It.IsAny<CancellationToken>()), Times.Once);
+        _orchestrator.Verify(o => o.CancelTransferAsync(transfer.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelTransfer_NotOwned_Returns404()
+    {
+        var result = await _sut.AsUser(Guid.NewGuid()).CancelTransfer(Guid.NewGuid(), CancellationToken.None);
+        result.Should().BeOfType<NotFoundResult>();
+        _orchestrator.Verify(o => o.CancelTransferAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

@@ -1,7 +1,12 @@
+using System.Security.Claims;
+using AudioYotoShelf.Api.Auth;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Infrastructure.Data;
 using AudioYotoShelf.Infrastructure.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,6 +24,7 @@ public class AuthController(
 
     public record AbsConnectRequest(string BaseUrl, string Username, string Password);
 
+    [AllowAnonymous]
     [HttpPost("abs/connect")]
     public async Task<IActionResult> ConnectToAudiobookshelf([FromBody] AbsConnectRequest request, CancellationToken ct)
     {
@@ -48,6 +54,9 @@ public class AuthController(
 
         await db.SaveChangesAsync(ct);
 
+        // Issue the session cookie that binds every subsequent request to this connection.
+        await IssueSessionAsync(userConnection);
+
         logger.LogInformation("User {Username} connected to ABS at {BaseUrl}", absUser.Username, request.BaseUrl);
 
         return Ok(new
@@ -59,6 +68,27 @@ public class AuthController(
             DefaultLibraryId = userConnection.DefaultLibraryId,
             Libraries = absUser.LibrariesAccessible
         });
+    }
+
+    [AllowAnonymous]
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout()
+    {
+        await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        return Ok(new { LoggedOut = true });
+    }
+
+    private async Task IssueSessionAsync(UserConnection user)
+    {
+        var identity = new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+                new Claim(ClaimTypes.Name, user.Username),
+            ],
+            CookieAuthenticationDefaults.AuthenticationScheme);
+
+        await HttpContext.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
     }
 
     [HttpPost("abs/validate/{userConnectionId:guid}")]
@@ -100,6 +130,10 @@ public class AuthController(
         return Ok(new { authUrl });
     }
 
+    // Top-level redirect back from Yoto. Identity here comes from the single-use, unguessable
+    // `state` nonce we persisted on the row in AuthorizeYoto — not from the session — so it stays
+    // anonymous-safe while remaining bound to the connection that initiated the flow.
+    [AllowAnonymous]
     [HttpGet("yoto/callback")]
     public async Task<IActionResult> YotoCallback(
         [FromQuery] string code, [FromQuery] string state, CancellationToken ct)
