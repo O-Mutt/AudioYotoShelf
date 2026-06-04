@@ -30,6 +30,25 @@ public class AudiobookshelfServiceTests
     }
 
     // =========================================================================
+    // RefreshTokenAsync — renews a stored connection via /auth/refresh
+    // =========================================================================
+
+    [Fact]
+    public async Task RefreshTokenAsync_PostsToAuthRefreshAndReturnsRotatedTokens()
+    {
+        _handler.SetupJsonResponseFor("/auth/refresh", new AbsLoginResponse(
+            new AbsUser("u1", "testuser", "user", "legacy", true, null, null,
+                AccessToken: "new-access-jwt", RefreshToken: "new-refresh"),
+            "lib-1"));
+
+        var result = await _sut.RefreshTokenAsync("http://abs.local", "old-refresh");
+
+        _handler.LastRequestUri!.Should().Contain("/auth/refresh");
+        result.User.AccessToken.Should().Be("new-access-jwt");
+        result.User.RefreshToken.Should().Be("new-refresh");
+    }
+
+    // =========================================================================
     // GetLibraryItemsAsync — query string construction
     // =========================================================================
 

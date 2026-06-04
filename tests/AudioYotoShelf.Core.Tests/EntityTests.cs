@@ -33,6 +33,25 @@ public class EntityTests
     }
 
     [Fact]
+    public void UserConnection_HasValidAbsConnection_TrueWhenExpiredButHasRefreshToken()
+    {
+        // A JWT access token can be expired so long as we hold a refresh token to renew it ad hoc.
+        var user = TestData.CreateUserConnection(
+            absRefreshToken: "abs-refresh",
+            absTokenExpiry: DateTimeOffset.UtcNow.AddHours(-1));
+        user.HasValidAbsConnection.Should().BeTrue();
+    }
+
+    [Fact]
+    public void UserConnection_HasValidAbsConnection_FalseWhenExpiredAndNoRefreshToken()
+    {
+        var user = TestData.CreateUserConnection(
+            absRefreshToken: null,
+            absTokenExpiry: DateTimeOffset.UtcNow.AddHours(-1));
+        user.HasValidAbsConnection.Should().BeFalse();
+    }
+
+    [Fact]
     public void UserConnection_HasValidYotoConnection_TrueWhenTokenNotExpired()
     {
         var user = TestData.CreateUserConnection(

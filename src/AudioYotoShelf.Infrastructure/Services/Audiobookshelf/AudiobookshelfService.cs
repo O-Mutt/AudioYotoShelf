@@ -23,11 +23,37 @@ public class AudiobookshelfService(
         using var client = httpClientFactory.CreateClient("Audiobookshelf");
         client.BaseAddress = new Uri(baseUrl.TrimEnd('/'));
 
-        var response = await client.PostAsJsonAsync("/login", new AbsLoginRequest(username, password), ct);
+        // We don't keep a cookie jar, so ask ABS (v2.26+) to return the refresh token in the body.
+        // Older servers ignore the header and return only the legacy opaque token.
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/login")
+        {
+            Content = JsonContent.Create(new AbsLoginRequest(username, password))
+        };
+        request.Headers.Add("x-return-tokens", "true");
+
+        var response = await client.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
 
         return await response.Content.ReadFromJsonAsync<AbsLoginResponse>(ct)
             ?? throw new InvalidOperationException("Failed to deserialize ABS login response");
+    }
+
+    public async Task<AbsLoginResponse> RefreshTokenAsync(string baseUrl, string refreshToken, CancellationToken ct = default)
+    {
+        using var client = httpClientFactory.CreateClient("Audiobookshelf");
+        client.BaseAddress = new Uri(baseUrl.TrimEnd('/'));
+
+        // ABS accepts the refresh token via the x-refresh-token header for cookie-less clients,
+        // and returns the same payload as /login (with x-return-tokens to echo the rotated token).
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/auth/refresh");
+        request.Headers.Add("x-refresh-token", refreshToken);
+        request.Headers.Add("x-return-tokens", "true");
+
+        var response = await client.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+
+        return await response.Content.ReadFromJsonAsync<AbsLoginResponse>(ct)
+            ?? throw new InvalidOperationException("Failed to deserialize ABS refresh response");
     }
 
     public async Task<bool> ValidateTokenAsync(string baseUrl, string token, CancellationToken ct = default)

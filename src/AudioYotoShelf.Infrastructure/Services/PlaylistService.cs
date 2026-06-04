@@ -199,6 +199,7 @@ public class PlaylistService(
             ?? throw new InvalidOperationException("User connection not found");
         if (!user.HasValidAbsConnection)
             throw new InvalidOperationException("No valid Audiobookshelf connection");
+        await AbsTokens.EnsureValidAsync(db, absService, user, logger, ct);
         return user;
     }
 

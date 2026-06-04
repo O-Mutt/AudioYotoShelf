@@ -1,6 +1,8 @@
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
+using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Infrastructure.Data;
+using AudioYotoShelf.Infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,16 +13,32 @@ namespace AudioYotoShelf.Api.Controllers;
 public class LibrariesController(
     IAudiobookshelfService absService,
     IAgeSuggestionService ageSuggestionService,
-    AudioYotoShelfDbContext db) : ControllerBase
+    AudioYotoShelfDbContext db,
+    ILogger<LibrariesController> logger) : ControllerBase
 {
+    /// <summary>
+    /// Loads the user's connection, verifies it has a usable Audiobookshelf connection, and
+    /// refreshes the stored access token from the refresh token when it's near expiry. Returns
+    /// null when there is no valid connection (callers translate that to 401).
+    /// </summary>
+    private async Task<UserConnection?> ResolveAbsUserAsync(Guid userConnectionId, CancellationToken ct)
+    {
+        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
+        if (user is null || !user.HasValidAbsConnection)
+            return null;
+
+        await AbsTokens.EnsureValidAsync(db, absService, user, logger, ct);
+        return user;
+    }
+
     /// <summary>
     /// Get all accessible libraries for the current user.
     /// </summary>
     [HttpGet("{userConnectionId:guid}")]
     public async Task<IActionResult> GetLibraries(Guid userConnectionId, CancellationToken ct)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
-        if (user is null || !user.HasValidAbsConnection)
+        var user = await ResolveAbsUserAsync(userConnectionId, ct);
+        if (user is null)
             return Unauthorized("No valid Audiobookshelf connection");
 
         var libraries = await absService.GetLibrariesAsync(user.AudiobookshelfUrl, user.AudiobookshelfToken!, ct);
@@ -44,8 +62,8 @@ public class LibrariesController(
         [FromQuery] string? filter = null,
         CancellationToken ct = default)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
-        if (user is null || !user.HasValidAbsConnection)
+        var user = await ResolveAbsUserAsync(userConnectionId, ct);
+        if (user is null)
             return Unauthorized("No valid Audiobookshelf connection");
 
         // Free-text search uses the dedicated ABS search endpoint; the items endpoint ignores it.
@@ -70,8 +88,8 @@ public class LibrariesController(
     [HttpGet("{userConnectionId:guid}/items/{itemId}")]
     public async Task<IActionResult> GetItem(Guid userConnectionId, string itemId, CancellationToken ct)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
-        if (user is null || !user.HasValidAbsConnection)
+        var user = await ResolveAbsUserAsync(userConnectionId, ct);
+        if (user is null)
             return Unauthorized("No valid Audiobookshelf connection");
 
         var item = await absService.GetLibraryItemAsync(
@@ -114,8 +132,8 @@ public class LibrariesController(
         [FromQuery] int page = 0, [FromQuery] int limit = 20,
         CancellationToken ct = default)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
-        if (user is null || !user.HasValidAbsConnection)
+        var user = await ResolveAbsUserAsync(userConnectionId, ct);
+        if (user is null)
             return Unauthorized("No valid Audiobookshelf connection");
 
         var series = await absService.GetSeriesAsync(
@@ -131,8 +149,8 @@ public class LibrariesController(
     public async Task<IActionResult> GetSeriesDetail(
         Guid userConnectionId, string seriesId, [FromQuery] string? libraryId, CancellationToken ct)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
-        if (user is null || !user.HasValidAbsConnection)
+        var user = await ResolveAbsUserAsync(userConnectionId, ct);
+        if (user is null)
             return Unauthorized("No valid Audiobookshelf connection");
 
         // The series' books are fetched from the library items endpoint, which needs a library.
@@ -170,8 +188,8 @@ public class LibrariesController(
     [HttpGet("{userConnectionId:guid}/items/{itemId}/cover")]
     public async Task<IActionResult> GetCover(Guid userConnectionId, string itemId, CancellationToken ct)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
-        if (user is null || !user.HasValidAbsConnection)
+        var user = await ResolveAbsUserAsync(userConnectionId, ct);
+        if (user is null)
             return Unauthorized("No valid Audiobookshelf connection");
 
         var coverStream = await absService.GetCoverImageAsync(

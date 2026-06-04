@@ -132,7 +132,12 @@ public record AbsUser(
     string Token,
     bool IsActive,
     AbsPermissions? Permissions,
-    string[]? LibrariesAccessible
+    string[]? LibrariesAccessible,
+    // ABS v2.26+ JWT auth: a short-lived JWT access token plus a long-lived refresh token.
+    // RefreshToken is only present in the body when the request sends `x-return-tokens: true`
+    // (otherwise ABS sets it as an http-only cookie). Older servers return only the legacy Token.
+    string? AccessToken = null,
+    string? RefreshToken = null
 );
 
 public record AbsPermissions(
