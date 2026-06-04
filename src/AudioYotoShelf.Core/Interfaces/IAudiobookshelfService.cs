@@ -12,6 +12,13 @@ public interface IAudiobookshelfService
     Task<AbsLoginResponse> LoginAsync(string baseUrl, string username, string password, CancellationToken ct = default);
     Task<bool> ValidateTokenAsync(string baseUrl, string token, CancellationToken ct = default);
 
+    /// <summary>
+    /// Exchanges a stored Audiobookshelf refresh token (v2.26+ JWT auth) for a fresh access token,
+    /// letting a stored connection be reused without re-prompting the user for credentials.
+    /// Returns the same shape as <see cref="LoginAsync"/>.
+    /// </summary>
+    Task<AbsLoginResponse> RefreshTokenAsync(string baseUrl, string refreshToken, CancellationToken ct = default);
+
     // Libraries
     Task<AbsLibrary[]> GetLibrariesAsync(string baseUrl, string token, CancellationToken ct = default);
     Task<AbsLibraryItemsResponse> GetLibraryItemsAsync(string baseUrl, string token, string libraryId, int page = 0, int limit = 20, string? sort = null, bool desc = false, bool collapseSeries = false, string? search = null, string? filter = null, CancellationToken ct = default);

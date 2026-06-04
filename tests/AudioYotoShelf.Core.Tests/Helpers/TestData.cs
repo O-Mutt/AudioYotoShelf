@@ -20,6 +20,8 @@ public static class TestData
         string username = "testuser",
         string absUrl = "http://abs.local",
         string absToken = "abs-test-token",
+        string? absRefreshToken = null,
+        DateTimeOffset? absTokenExpiry = null,
         string? yotoAccessToken = "yoto-access-token",
         string? yotoRefreshToken = "yoto-refresh-token",
         DateTimeOffset? yotoTokenExpiry = null)
@@ -30,6 +32,8 @@ public static class TestData
             Username = username,
             AudiobookshelfUrl = absUrl,
             AudiobookshelfToken = absToken,
+            AudiobookshelfRefreshToken = absRefreshToken,
+            AudiobookshelfTokenExpiresAt = absTokenExpiry,
             AudiobookshelfTokenValidatedAt = DateTimeOffset.UtcNow,
             YotoAccessToken = yotoAccessToken,
             YotoRefreshToken = yotoRefreshToken,

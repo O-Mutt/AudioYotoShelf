@@ -42,6 +42,9 @@ public class PlaylistTransferOrchestrator(
             ?? throw new InvalidOperationException("User connection not found");
         EnsureValidConnections(user);
 
+        // Refresh the stored ABS access token before downloading any book audio for this card.
+        await AbsTokens.EnsureValidAsync(db, absService, user, logger, ct);
+
         // Pre-flight capacity gate — refuse to build a card that can't fit.
         var capacity = calculator.Calculate(PlaylistCapacity.BuildPlans(playlist, planner));
         if (!capacity.WithinLimits)

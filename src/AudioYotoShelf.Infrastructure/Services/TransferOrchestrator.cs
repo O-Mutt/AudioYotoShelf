@@ -32,6 +32,10 @@ public class TransferOrchestrator(
 
         EnsureValidConnections(user);
 
+        // Refresh the stored ABS access token up front so every download in this job uses a fresh
+        // token (mutates user.AudiobookshelfToken in place; no-op for legacy/opaque tokens).
+        await AbsTokens.EnsureValidAsync(db, absService, user, logger, ct);
+
         logger.LogInformation("Starting transfer for item {ItemId}, user {UserId}",
             request.AbsLibraryItemId, userConnectionId);
 
@@ -168,6 +172,8 @@ public class TransferOrchestrator(
             ?? throw new InvalidOperationException("User connection not found");
 
         EnsureValidConnections(user);
+
+        await AbsTokens.EnsureValidAsync(db, absService, user, logger, ct);
 
         var seriesDetail = await absService.GetSeriesDetailAsync(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, request.AbsLibraryId, request.AbsSeriesId, ct);

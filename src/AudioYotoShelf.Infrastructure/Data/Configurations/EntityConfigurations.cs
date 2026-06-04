@@ -14,6 +14,7 @@ public class UserConnectionConfiguration : IEntityTypeConfiguration<UserConnecti
         builder.Property(x => x.Username).HasMaxLength(256).IsRequired();
         builder.Property(x => x.AudiobookshelfUrl).HasMaxLength(2048).IsRequired();
         builder.Property(x => x.AudiobookshelfToken).HasMaxLength(4096);
+        builder.Property(x => x.AudiobookshelfRefreshToken).HasMaxLength(4096);
         builder.Property(x => x.YotoAccessToken).HasMaxLength(4096);
         builder.Property(x => x.YotoRefreshToken).HasMaxLength(4096);
         builder.Property(x => x.YotoDeviceCode).HasMaxLength(512);

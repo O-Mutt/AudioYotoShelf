@@ -2,7 +2,9 @@ namespace AudioYotoShelf.Core.Entities;
 
 /// <summary>
 /// Stores a user's connections to Audiobookshelf and Yoto.
-/// ABS token is obtained via login delegation; Yoto tokens via OAuth authorization code flow.
+/// ABS tokens are obtained via login delegation; Yoto tokens via OAuth authorization code flow.
+/// Both connections persist a refresh token so the stored connection can be reused ad hoc
+/// (re-minting a fresh access token in the background) without the user logging in again.
 /// </summary>
 public class UserConnection : BaseEntity
 {
@@ -11,6 +13,16 @@ public class UserConnection : BaseEntity
     // Audiobookshelf connection
     public required string AudiobookshelfUrl { get; set; }
     public string? AudiobookshelfToken { get; set; }
+    /// <summary>
+    /// Refresh token from Audiobookshelf (v2.26+ JWT auth), used to silently mint a new
+    /// access token when the stored one expires. Null for legacy/opaque-token servers.
+    /// </summary>
+    public string? AudiobookshelfRefreshToken { get; set; }
+    /// <summary>
+    /// Expiry of <see cref="AudiobookshelfToken"/>, parsed from the JWT's <c>exp</c> claim.
+    /// Null when the token is a legacy opaque token with no embedded expiry.
+    /// </summary>
+    public DateTimeOffset? AudiobookshelfTokenExpiresAt { get; set; }
     public DateTimeOffset? AudiobookshelfTokenValidatedAt { get; set; }
 
     // Yoto OAuth connection
@@ -31,7 +43,12 @@ public class UserConnection : BaseEntity
 
     public bool HasValidAbsConnection =>
         !string.IsNullOrEmpty(AudiobookshelfToken) &&
-        AudiobookshelfTokenValidatedAt.HasValue;
+        AudiobookshelfTokenValidatedAt.HasValue &&
+        // A legacy/opaque token has no known expiry (treated as non-expiring); a JWT access token
+        // is valid while unexpired, or once expired so long as we hold a refresh token to renew it.
+        (AudiobookshelfTokenExpiresAt is null ||
+         AudiobookshelfTokenExpiresAt > DateTimeOffset.UtcNow ||
+         !string.IsNullOrEmpty(AudiobookshelfRefreshToken));
 
     public bool HasValidYotoConnection =>
         !string.IsNullOrEmpty(YotoAccessToken) &&

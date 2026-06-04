@@ -1,6 +1,7 @@
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Infrastructure.Data;
+using AudioYotoShelf.Infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -33,17 +34,15 @@ public class AuthController(
             {
                 Username = absUser.Username,
                 AudiobookshelfUrl = request.BaseUrl.TrimEnd('/'),
-                AudiobookshelfToken = absUser.Token,
-                AudiobookshelfTokenValidatedAt = DateTimeOffset.UtcNow,
                 DefaultLibraryId = loginResponse.UserDefaultLibraryId
             };
+            AbsTokens.ApplyLogin(userConnection, absUser);
             db.UserConnections.Add(userConnection);
         }
         else
         {
             userConnection.AudiobookshelfUrl = request.BaseUrl.TrimEnd('/');
-            userConnection.AudiobookshelfToken = absUser.Token;
-            userConnection.AudiobookshelfTokenValidatedAt = DateTimeOffset.UtcNow;
+            AbsTokens.ApplyLogin(userConnection, absUser);
             userConnection.DefaultLibraryId = loginResponse.UserDefaultLibraryId ?? userConnection.DefaultLibraryId;
         }
 
@@ -68,8 +67,11 @@ public class AuthController(
         var user = await db.UserConnections.FindAsync([userConnectionId], ct);
         if (user is null) return NotFound();
 
+        // Renew the stored access token from the refresh token if it's expiring, then validate it.
+        var token = await AbsTokens.EnsureValidAsync(db, absService, user, logger, ct);
+
         var isValid = await absService.ValidateTokenAsync(
-            user.AudiobookshelfUrl, user.AudiobookshelfToken ?? "", ct);
+            user.AudiobookshelfUrl, token, ct);
 
         if (isValid)
             user.AudiobookshelfTokenValidatedAt = DateTimeOffset.UtcNow;

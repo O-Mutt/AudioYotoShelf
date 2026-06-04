@@ -6,6 +6,7 @@ using AudioYotoShelf.Infrastructure.Data;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Moq;
 
 namespace AudioYotoShelf.Api.Tests;
@@ -28,7 +29,8 @@ public class LibrariesControllerTests : IDisposable
         _ageService = new Mock<IAgeSuggestionService>();
 
         _sut = new LibrariesController(
-            _absService.Object, _ageService.Object, _db);
+            _absService.Object, _ageService.Object, _db,
+            Mock.Of<ILogger<LibrariesController>>());
     }
 
     public void Dispose()
