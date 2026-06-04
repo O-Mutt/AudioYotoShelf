@@ -78,6 +78,8 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   function logout() {
+    // Fire-and-forget server-side sign-out (clears the session cookie); clear local state now.
+    authApi.logout().catch(() => {})
     userConnectionId.value = null
     status.value = null
     error.value = null

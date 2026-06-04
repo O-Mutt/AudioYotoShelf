@@ -17,7 +17,8 @@ const toast = useToast()
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    // 401 = no/expired session; 403 = a stale stored id no longer matches the session.
+    if (error.response?.status === 401 || error.response?.status === 403) {
       connectionStore.logout()
       router.push('/setup')
       toast.error('Session expired. Please reconnect.')

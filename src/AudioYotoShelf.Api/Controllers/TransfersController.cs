@@ -1,3 +1,4 @@
+using AudioYotoShelf.Api.Auth;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
@@ -55,7 +56,9 @@ public class TransfersController(
                 .ThenInclude(tm => tm.GeneratedIcon)
             .FirstOrDefaultAsync(t => t.Id == transferId, ct);
 
-        if (transfer is null) return NotFound();
+        // Treat "not yours" as "not found" so a transfer id can't be probed across accounts.
+        if (transfer is null || transfer.UserConnectionId != User.GetUserConnectionId())
+            return NotFound();
         return Ok(MapToResponse(transfer));
     }
 
@@ -141,8 +144,10 @@ public class TransfersController(
     }
 
     [HttpPost("retry/{transferId:guid}")]
-    public IActionResult RetryTransfer(Guid transferId)
+    public async Task<IActionResult> RetryTransfer(Guid transferId, CancellationToken ct)
     {
+        if (!await OwnsTransferAsync(transferId, ct)) return NotFound();
+
         var jobId = backgroundJobs.Enqueue<ITransferJobService>(
             svc => svc.ExecuteRetryTransferAsync(transferId, CancellationToken.None));
 
@@ -152,6 +157,8 @@ public class TransfersController(
     [HttpPost("cancel/{transferId:guid}")]
     public async Task<IActionResult> CancelTransfer(Guid transferId, CancellationToken ct)
     {
+        if (!await OwnsTransferAsync(transferId, ct)) return NotFound();
+
         await orchestrator.CancelTransferAsync(transferId, ct);
         return Ok(new { Message = "Transfer cancelled" });
     }
@@ -163,7 +170,8 @@ public class TransfersController(
             .Include(t => t.TrackMappings)
             .FirstOrDefaultAsync(t => t.Id == transferId, ct);
 
-        if (transfer is null) return NotFound();
+        if (transfer is null || transfer.UserConnectionId != User.GetUserConnectionId())
+            return NotFound();
 
         if (transfer.Status is not (Core.Enums.TransferStatus.Completed
             or Core.Enums.TransferStatus.Failed
@@ -194,6 +202,16 @@ public class TransfersController(
 
         logger.LogInformation("Cleared {Count} completed transfers for user {UserId}", completed.Count, userConnectionId);
         return Ok(new { Cleared = completed.Count });
+    }
+
+    /// <summary>True when the transfer exists and belongs to the authenticated connection.</summary>
+    private async Task<bool> OwnsTransferAsync(Guid transferId, CancellationToken ct)
+    {
+        var owner = await db.CardTransfers
+            .Where(t => t.Id == transferId)
+            .Select(t => (Guid?)t.UserConnectionId)
+            .FirstOrDefaultAsync(ct);
+        return owner is not null && owner == User.GetUserConnectionId();
     }
 
     private static TransferResponse MapToResponse(Core.Entities.CardTransfer t) => new(

@@ -1,3 +1,4 @@
+using AudioYotoShelf.Api.Auth;
 using AudioYotoShelf.Api.Hubs;
 using AudioYotoShelf.Api.Middleware;
 using AudioYotoShelf.Core.Interfaces;
@@ -13,6 +14,8 @@ using FluentValidation;
 using FluentValidation.AspNetCore;
 using Hangfire;
 using Hangfire.PostgreSql;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -135,8 +138,38 @@ if (!string.IsNullOrEmpty(redisConnectionString))
     });
 }
 
+// --- AuthN/AuthZ ---
+// Session lives in an http-only cookie issued at ABS login, so the credential is never readable by
+// JS, never in a URL, and never in request logs. SameSite=Lax still lets the cookie ride the Yoto
+// OAuth top-level redirect back to /api/auth/yoto/callback while blocking cross-site POST (CSRF).
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.Cookie.Name = "ays_session";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest; // Secure on https, works on local http
+        options.ExpireTimeSpan = TimeSpan.FromDays(30);
+        options.SlidingExpiration = true;
+        // This is an API/SPA: answer with status codes instead of redirecting to a login page.
+        options.Events.OnRedirectToLogin = ctx =>
+        {
+            ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return Task.CompletedTask;
+        };
+        options.Events.OnRedirectToAccessDenied = ctx =>
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        };
+    });
+
+// Authenticated by default; opt out per-endpoint with [AllowAnonymous] (login, OAuth callback, health).
+builder.Services.AddAuthorizationBuilder()
+    .SetFallbackPolicy(new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
+
 // --- API ---
-builder.Services.AddControllers()
+builder.Services.AddControllers(options => options.Filters.Add<ConnectionOwnershipFilter>())
     .AddJsonOptions(options =>
         options.JsonSerializerOptions.Converters.Add(
             new System.Text.Json.Serialization.JsonStringEnumConverter()));
@@ -162,7 +195,7 @@ app.UseGlobalExceptionHandling();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.MapOpenApi().AllowAnonymous(); // exempt from the global authenticated-by-default policy
     app.UseCors("Development");
 }
 
@@ -170,14 +203,20 @@ app.UseSerilogRequestLogging();
 app.UseStaticFiles();
 app.UseRouting();
 
+app.UseAuthentication();
+app.UseAuthorization();
+
+// NOTE: the Hangfire dashboard is left unauthenticated as before (it has no UI login). It can expose
+// job arguments — restrict it at the network layer or add a dashboard auth filter as a follow-up.
 app.MapHangfireDashboard("/hangfire", new DashboardOptions
 {
     DashboardTitle = "AudioYotoShelf Jobs"
-});
+}).AllowAnonymous();
 
 app.MapControllers();
 app.MapHub<TransferHub>("/hubs/transfer");
-app.MapFallbackToFile("index.html");
+// The SPA shell must load for anonymous visitors so they can reach the login/setup screen.
+app.MapFallbackToFile("index.html").AllowAnonymous();
 
 // --- Database migration on startup ---
 using (var scope = app.Services.CreateScope())
