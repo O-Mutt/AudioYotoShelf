@@ -52,12 +52,16 @@ public class AuthController(
             userConnection.DefaultLibraryId = loginResponse.UserDefaultLibraryId ?? userConnection.DefaultLibraryId;
         }
 
-        // Bootstrap admin rights from a comma-separated allowlist (ADMIN_USERNAMES env var or
-        // Admin:Usernames config). The flag also persists in the DB, so it can be granted/revoked
-        // there independently of config. We only promote — never demote — from the allowlist.
+        // Admin rights are only granted to allow-listed usernames that authenticate against the
+        // TRUSTED admin Audiobookshelf server (Admin:AudiobookshelfUrl). request.BaseUrl is
+        // attacker-controllable, so admin must never be derived from a username reported by an
+        // arbitrary server — requiring the trusted URL forces a real login against the real server.
+        var adminAbsUrl = configuration["Admin:AudiobookshelfUrl"];
+        var fromAdminServer = !string.IsNullOrWhiteSpace(adminAbsUrl) &&
+            string.Equals(request.BaseUrl.TrimEnd('/'), adminAbsUrl.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
         var adminUsernames = (configuration["Admin:Usernames"] ?? configuration["ADMIN_USERNAMES"] ?? "")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (adminUsernames.Contains(absUser.Username, StringComparer.OrdinalIgnoreCase))
+        if (fromAdminServer && adminUsernames.Contains(absUser.Username, StringComparer.OrdinalIgnoreCase))
             userConnection.IsAdmin = true;
 
         // Record the login (a session start) for usage analytics.
@@ -66,8 +70,10 @@ public class AuthController(
 
         await db.SaveChangesAsync(ct);
 
-        // Issue the session cookie that binds every subsequent request to this connection.
-        await IssueSessionAsync(userConnection);
+        // Only mint the admin role when the persisted flag is set AND this login is against the
+        // trusted admin server, so an admin row reached via a forged BaseUrl never yields an
+        // admin session.
+        await IssueSessionAsync(userConnection, isAdminSession: userConnection.IsAdmin && fromAdminServer);
 
         logger.LogInformation("User {Username} connected to ABS at {BaseUrl}", absUser.Username, request.BaseUrl);
 
@@ -90,14 +96,14 @@ public class AuthController(
         return Ok(new { LoggedOut = true });
     }
 
-    private async Task IssueSessionAsync(UserConnection user)
+    private async Task IssueSessionAsync(UserConnection user, bool isAdminSession)
     {
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new(ClaimTypes.Name, user.Username),
         };
-        if (user.IsAdmin)
+        if (isAdminSession)
             claims.Add(new Claim(ClaimTypes.Role, "Admin"));
 
         var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
@@ -203,7 +209,7 @@ public class AuthController(
 
         logger.LogInformation("Settings updated for user {Username}", user.Username);
 
-        return Ok(MapConnectionStatus(user));
+        return Ok(MapConnectionStatus(user, User.IsInRole("Admin")));
     }
 
     // --- Connection Status ---
@@ -214,10 +220,12 @@ public class AuthController(
         var user = await db.UserConnections.FindAsync([CurrentUserConnectionId], ct);
         if (user is null) return NotFound();
 
-        return Ok(MapConnectionStatus(user));
+        return Ok(MapConnectionStatus(user, User.IsInRole("Admin")));
     }
 
-    private static object MapConnectionStatus(UserConnection user) => new
+    // isAdmin reflects the current session's actual privilege (the cookie's Admin role), not just
+    // the persisted flag — the two only differ for a session that isn't from the trusted server.
+    private static object MapConnectionStatus(UserConnection user, bool isAdmin) => new
     {
         user.Id,
         user.Username,
@@ -228,6 +236,6 @@ public class AuthController(
         user.DefaultLibraryId,
         user.DefaultMinAge,
         user.DefaultMaxAge,
-        user.IsAdmin
+        IsAdmin = isAdmin
     };
 }
