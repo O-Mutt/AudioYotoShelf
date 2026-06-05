@@ -2,12 +2,29 @@ coverage:
   status:
     project:
       default:
+        # No-regression ratchet. Once the Codecov baseline is known, raise this to an absolute
+        # floor (e.g. 70-80%) per flag.
         target: auto
         threshold: 1%
     patch:
       default:
+        # New / changed lines must be covered. Blocking (informational removed).
         target: 70%
-        informational: true
+
+# Track backend and frontend coverage independently.
+flag_management:
+  default_rules:
+    carryforward: true
+
+flags:
+  backend:
+    paths:
+      - src/AudioYotoShelf.Api/
+      - src/AudioYotoShelf.Core/
+      - src/AudioYotoShelf.Infrastructure/
+  frontend:
+    paths:
+      - src/AudioYotoShelf.ClientApp/src/
 
 comment:
   layout: "reach, diff, flags, files"
@@ -16,3 +33,4 @@ comment:
 ignore:
   - "src/**/Migrations/**"
   - "tests/**"
+  - "src/AudioYotoShelf.ClientApp/src/**/*.spec.ts"

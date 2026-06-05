@@ -96,5 +96,17 @@ jobs:
       - name: Type check
         run: npm run type-check
 
+      - name: Test + coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: src/AudioYotoShelf.ClientApp/coverage/cobertura-coverage.xml
+          flags: frontend
+          token: ${{ secrets.CODECOV_TOKEN }}
+          # Frontend coverage path mapping can need tuning; don't fail the build on upload issues.
+          fail_ci_if_error: false
+
       - name: Build
         run: npm run build

@@ -1,6 +1,6 @@
 {
   "extends": "@tsconfig/node-lts/tsconfig.json",
-  "include": ["vite.config.*", "tailwind.config.*", "postcss.config.*"],
+  "include": ["vite.config.*", "vitest.config.*", "tailwind.config.*", "postcss.config.*"],
   "compilerOptions": {
     "composite": true,
     "noEmit": false,
