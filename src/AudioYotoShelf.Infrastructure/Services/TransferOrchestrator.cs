@@ -5,6 +5,7 @@ using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Infrastructure.Data;
+using AudioYotoShelf.Infrastructure.Observability;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -20,6 +21,7 @@ public class TransferOrchestrator(
     IChapterExtractor chapterExtractor,
     ITransferProgressNotifier notifier,
     IConfiguration configuration,
+    TransferMetrics metrics,
     ILogger<TransferOrchestrator> logger) : ITransferOrchestrator
 {
     private string TempDir => configuration.GetValue("Transfer:TempDirectory", "/app/temp")!;
@@ -140,6 +142,7 @@ public class TransferOrchestrator(
             await db.SaveChangesAsync(ct);
 
             logger.LogInformation("Transfer completed: {TransferId} → Card {CardId}", transfer.Id, cardId);
+            metrics.RecordCompleted();
             await NotifyAsync(transfer, StepLabel(TransferStatus.Completed), CancellationToken.None);
             return MapToResponse(transfer);
         }
@@ -153,6 +156,7 @@ public class TransferOrchestrator(
         catch (Exception ex)
         {
             logger.LogError(ex, "Transfer failed: {TransferId}", transfer.Id);
+            metrics.RecordFailed();
             transfer.Status = TransferStatus.Failed;
             transfer.ErrorMessage = ex.Message.Length > 4000 ? ex.Message[..4000] : ex.Message;
             await db.SaveChangesAsync(CancellationToken.None);
