@@ -15,6 +15,7 @@ const api = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
   // Send the http-only session cookie with every request (and accept Set-Cookie on login).
+  // The caller's connection id rides in the cookie, so it never appears in URLs.
   withCredentials: true,
 })
 
@@ -29,40 +30,36 @@ export const authApi = {
     return api.post('/auth/logout')
   },
 
-  validateAbsToken(userConnectionId: string) {
-    return api.post<{ valid: boolean }>(`/auth/abs/validate/${userConnectionId}`)
+  validateAbsToken() {
+    return api.post<{ valid: boolean }>('/auth/abs/validate')
   },
 
-  getYotoAuthUrl(userConnectionId: string) {
-    return api.get<{ authUrl: string }>(`/auth/yoto/authorize/${userConnectionId}`)
+  getYotoAuthUrl() {
+    return api.get<{ authUrl: string }>('/auth/yoto/authorize')
   },
 
-  getConnectionStatus(userConnectionId: string) {
-    return api.get<ConnectionStatus>(`/auth/status/${userConnectionId}`)
+  getConnectionStatus() {
+    return api.get<ConnectionStatus>('/auth/status')
   },
 
   // Phase 3: Settings save
-  updateSettings(
-    userConnectionId: string,
-    settings: {
-      defaultLibraryId?: string
-      defaultMinAge?: number
-      defaultMaxAge?: number
-    },
-  ) {
-    return api.patch<ConnectionStatus>(`/auth/settings/${userConnectionId}`, settings)
+  updateSettings(settings: {
+    defaultLibraryId?: string
+    defaultMinAge?: number
+    defaultMaxAge?: number
+  }) {
+    return api.patch<ConnectionStatus>('/auth/settings', settings)
   },
 }
 
 // --- Libraries ---
 
 export const libraryApi = {
-  getLibraries(userConnectionId: string) {
-    return api.get<AbsLibrary[]>(`/libraries/${userConnectionId}`)
+  getLibraries() {
+    return api.get<AbsLibrary[]>('/libraries')
   },
 
   getLibraryItems(
-    userConnectionId: string,
     libraryId: string,
     page = 0,
     limit = 20,
@@ -71,96 +68,82 @@ export const libraryApi = {
     sort?: string,
     sortDesc = false,
   ) {
-    return api.get<AbsLibraryItemsResponse>(
-      `/libraries/${userConnectionId}/library/${libraryId}/items`,
-      {
-        params: {
-          page,
-          limit,
-          collapseSeries,
-          search: search || undefined,
-          sort: sort || undefined,
-          sortDesc: sortDesc || undefined,
-        },
+    return api.get<AbsLibraryItemsResponse>(`/libraries/library/${libraryId}/items`, {
+      params: {
+        page,
+        limit,
+        collapseSeries,
+        search: search || undefined,
+        sort: sort || undefined,
+        sortDesc: sortDesc || undefined,
       },
-    )
+    })
   },
 
-  getBookDetail(userConnectionId: string, itemId: string) {
-    return api.get<BookDetailResponse>(`/libraries/${userConnectionId}/items/${itemId}`)
+  getBookDetail(itemId: string) {
+    return api.get<BookDetailResponse>(`/libraries/items/${itemId}`)
   },
 
-  getSeries(userConnectionId: string, libraryId: string, page = 0, limit = 20) {
-    return api.get<AbsSeriesResponse>(
-      `/libraries/${userConnectionId}/library/${libraryId}/series`,
-      { params: { page, limit } },
-    )
+  getSeries(libraryId: string, page = 0, limit = 20) {
+    return api.get<AbsSeriesResponse>(`/libraries/library/${libraryId}/series`, {
+      params: { page, limit },
+    })
   },
 
-  getSeriesDetail(userConnectionId: string, seriesId: string, libraryId?: string) {
-    return api.get<AbsSeriesItem>(`/libraries/${userConnectionId}/series/${seriesId}`, {
+  getSeriesDetail(seriesId: string, libraryId?: string) {
+    return api.get<AbsSeriesItem>(`/libraries/series/${seriesId}`, {
       params: { libraryId: libraryId || undefined },
     })
   },
 
-  getCoverUrl(userConnectionId: string, itemId: string) {
-    return `/api/libraries/${userConnectionId}/items/${itemId}/cover`
+  getCoverUrl(itemId: string) {
+    return `/api/libraries/items/${itemId}/cover`
   },
 }
 
 // --- Transfers ---
 
 export const transferApi = {
-  getTransfers(userConnectionId: string, page = 0, limit = 20, status?: string) {
-    return api.get<{ results: TransferResponse[]; total: number }>(
-      `/transfers/${userConnectionId}`,
-      { params: { page, limit, status } },
-    )
+  getTransfers(page = 0, limit = 20, status?: string) {
+    return api.get<{ results: TransferResponse[]; total: number }>('/transfers', {
+      params: { page, limit, status },
+    })
   },
 
   getTransfer(transferId: string) {
     return api.get<TransferResponse>(`/transfers/detail/${transferId}`)
   },
 
-  transferBook(
-    userConnectionId: string,
-    request: {
-      absLibraryItemId: string
-      category?: string
-      playbackType?: string
-      overrideMinAge?: number
-      overrideMaxAge?: number
-    },
-  ) {
-    return api.post(`/transfers/${userConnectionId}/book`, request)
+  transferBook(request: {
+    absLibraryItemId: string
+    category?: string
+    playbackType?: string
+    overrideMinAge?: number
+    overrideMaxAge?: number
+  }) {
+    return api.post('/transfers/book', request)
   },
 
-  transferSeries(
-    userConnectionId: string,
-    request: {
-      absSeriesId: string
-      absLibraryId: string
-      category?: string
-      oneCardPerBook?: boolean
-      overrideMinAge?: number
-      overrideMaxAge?: number
-    },
-  ) {
-    return api.post(`/transfers/${userConnectionId}/series`, request)
+  transferSeries(request: {
+    absSeriesId: string
+    absLibraryId: string
+    category?: string
+    oneCardPerBook?: boolean
+    overrideMinAge?: number
+    overrideMaxAge?: number
+  }) {
+    return api.post('/transfers/series', request)
   },
 
   // Phase 2: Batch transfer
-  transferBatch(
-    userConnectionId: string,
-    request: {
-      absLibraryItemIds: string[]
-      category?: string
-      playbackType?: string
-      overrideMinAge?: number
-      overrideMaxAge?: number
-    },
-  ) {
-    return api.post<BatchTransferResponse>(`/transfers/${userConnectionId}/batch`, request)
+  transferBatch(request: {
+    absLibraryItemIds: string[]
+    category?: string
+    playbackType?: string
+    overrideMinAge?: number
+    overrideMaxAge?: number
+  }) {
+    return api.post<BatchTransferResponse>('/transfers/batch', request)
   },
 
   // Phase 6 (wired now): Retry + Cancel
@@ -176,24 +159,24 @@ export const transferApi = {
     return api.delete(`/transfers/${transferId}`)
   },
 
-  clearCompleted(userConnectionId: string) {
-    return api.delete<{ cleared: number }>(`/transfers/${userConnectionId}/completed`)
+  clearCompleted() {
+    return api.delete<{ cleared: number }>('/transfers/completed')
   },
 }
 
 // --- Cards (Phase 5) ---
 
 export const cardsApi = {
-  getCards(userConnectionId: string) {
-    return api.get<import('@/types').YotoCardSummary[]>(`/cards/${userConnectionId}`)
+  getCards() {
+    return api.get<import('@/types').YotoCardSummary[]>('/cards')
   },
 
-  getCard(userConnectionId: string, cardId: string) {
-    return api.get<import('@/types').YotoCardDetail>(`/cards/${userConnectionId}/${cardId}`)
+  getCard(cardId: string) {
+    return api.get<import('@/types').YotoCardDetail>(`/cards/${cardId}`)
   },
 
-  deleteCard(userConnectionId: string, cardId: string) {
-    return api.delete(`/cards/${userConnectionId}/${cardId}`)
+  deleteCard(cardId: string) {
+    return api.delete(`/cards/${cardId}`)
   },
 }
 

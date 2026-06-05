@@ -1,4 +1,3 @@
-using AudioYotoShelf.Api.Auth;
 using AudioYotoShelf.Core.DTOs.Playlist;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Infrastructure.Data;
@@ -15,19 +14,19 @@ public class PlaylistsController(
     IPlaylistService playlists,
     IBackgroundJobClient backgroundJobs,
     AudioYotoShelfDbContext db,
-    ILogger<PlaylistsController> logger) : ControllerBase
+    ILogger<PlaylistsController> logger) : AppControllerBase
 {
-    [HttpPost("{userConnectionId:guid}")]
+    [HttpPost]
     public async Task<IActionResult> Create(
-        Guid userConnectionId, [FromBody] CreatePlaylistRequest request, CancellationToken ct)
+        [FromBody] CreatePlaylistRequest request, CancellationToken ct)
     {
-        var result = await playlists.CreateAsync(userConnectionId, request, ct);
+        var result = await playlists.CreateAsync(CurrentUserConnectionId, request, ct);
         return CreatedAtAction(nameof(GetDetail), new { playlistId = result.Id }, result);
     }
 
-    [HttpGet("{userConnectionId:guid}")]
-    public async Task<IActionResult> List(Guid userConnectionId, CancellationToken ct)
-        => Ok(await playlists.ListAsync(userConnectionId, ct));
+    [HttpGet]
+    public async Task<IActionResult> List(CancellationToken ct)
+        => Ok(await playlists.ListAsync(CurrentUserConnectionId, ct));
 
     [HttpGet("detail/{playlistId:guid}")]
     public async Task<IActionResult> GetDetail(Guid playlistId, CancellationToken ct)
@@ -127,6 +126,6 @@ public class PlaylistsController(
             .Where(p => p.Id == playlistId)
             .Select(p => (Guid?)p.UserConnectionId)
             .FirstOrDefaultAsync(ct);
-        return owner is not null && owner == User.GetUserConnectionId();
+        return owner is not null && owner == CurrentUserConnectionId;
     }
 }

@@ -2,7 +2,6 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLibraryStore, SORT_OPTIONS } from '@/stores/libraryStore'
-import { useConnectionStore } from '@/stores/connectionStore'
 import { useSelection } from '@/composables/useSelection'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
@@ -10,7 +9,6 @@ import { transferApi } from '@/services/api'
 
 const router = useRouter()
 const libraryStore = useLibraryStore()
-const connectionStore = useConnectionStore()
 const toast = useToast()
 const { confirm } = useConfirm()
 const {
@@ -95,8 +93,7 @@ async function handleBatchTransfer() {
 
   isBatchTransferring.value = true
   try {
-    const ucid = connectionStore.userConnectionId!
-    const { data } = await transferApi.transferBatch(ucid, {
+    const { data } = await transferApi.transferBatch({
       absLibraryItemIds: ids,
     })
     toast.success(`Queued ${data.queued} transfer${data.queued > 1 ? 's' : ''}`)

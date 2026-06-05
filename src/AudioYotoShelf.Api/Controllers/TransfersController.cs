@@ -1,4 +1,3 @@
-using AudioYotoShelf.Api.Auth;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
@@ -17,15 +16,15 @@ public class TransfersController(
     ITransferOrchestrator orchestrator,
     IBackgroundJobClient backgroundJobs,
     ITransferProgressNotifier notifier,
-    ILogger<TransfersController> logger) : ControllerBase
+    ILogger<TransfersController> logger) : AppControllerBase
 {
-    [HttpGet("{userConnectionId:guid}")]
+    [HttpGet]
     public async Task<IActionResult> GetTransfers(
-        Guid userConnectionId,
         [FromQuery] int page = 0, [FromQuery] int limit = 20,
         [FromQuery] TransferStatus? status = null,
         CancellationToken ct = default)
     {
+        var userConnectionId = CurrentUserConnectionId;
         var query = db.CardTransfers
             .Where(t => t.UserConnectionId == userConnectionId)
             .Include(t => t.TrackMappings)
@@ -57,17 +56,18 @@ public class TransfersController(
             .FirstOrDefaultAsync(t => t.Id == transferId, ct);
 
         // Treat "not yours" as "not found" so a transfer id can't be probed across accounts.
-        if (transfer is null || transfer.UserConnectionId != User.GetUserConnectionId())
+        if (transfer is null || transfer.UserConnectionId != CurrentUserConnectionId)
             return NotFound();
         return Ok(MapToResponse(transfer));
     }
 
-    [HttpPost("{userConnectionId:guid}/book")]
+    [HttpPost("book")]
     public async Task<IActionResult> TransferBook(
-        Guid userConnectionId,
         [FromBody] CreateTransferRequest request,
         CancellationToken ct)
     {
+        var userConnectionId = CurrentUserConnectionId;
+
         // Guard against duplicate transfers for the same item
         var hasActive = await db.CardTransfers.AnyAsync(
             t => t.UserConnectionId == userConnectionId
@@ -93,14 +93,13 @@ public class TransfersController(
         return Accepted(new { TransferId = transferId, JobId = jobId, Message = "Transfer queued" });
     }
 
-    [HttpPost("{userConnectionId:guid}/series")]
+    [HttpPost("series")]
     public async Task<IActionResult> TransferSeries(
-        Guid userConnectionId,
         [FromBody] CreateSeriesTransferRequest request,
         CancellationToken ct)
     {
         var jobId = backgroundJobs.Enqueue<ITransferJobService>(
-            svc => svc.ExecuteSeriesTransferAsync(userConnectionId, request, CancellationToken.None));
+            svc => svc.ExecuteSeriesTransferAsync(CurrentUserConnectionId, request, CancellationToken.None));
 
         logger.LogInformation("Series transfer queued: {SeriesId} → Job {JobId}",
             request.AbsSeriesId, jobId);
@@ -113,12 +112,12 @@ public class TransfersController(
     /// Phase 2: Batch transfer — enqueues one Hangfire job per book, returns batch summary.
     /// ISP: BatchTransferRequest is its own DTO, not overloading CreateTransferRequest.
     /// </summary>
-    [HttpPost("{userConnectionId:guid}/batch")]
+    [HttpPost("batch")]
     public async Task<IActionResult> TransferBatch(
-        Guid userConnectionId,
         [FromBody] BatchTransferRequest request,
         CancellationToken ct)
     {
+        var userConnectionId = CurrentUserConnectionId;
         var jobIds = new List<string>();
         foreach (var itemId in request.AbsLibraryItemIds)
         {
@@ -170,7 +169,7 @@ public class TransfersController(
             .Include(t => t.TrackMappings)
             .FirstOrDefaultAsync(t => t.Id == transferId, ct);
 
-        if (transfer is null || transfer.UserConnectionId != User.GetUserConnectionId())
+        if (transfer is null || transfer.UserConnectionId != CurrentUserConnectionId)
             return NotFound();
 
         if (transfer.Status is not (Core.Enums.TransferStatus.Completed
@@ -187,9 +186,10 @@ public class TransfersController(
     }
 
     /// <summary>Clears (removes the records for) all completed transfers for a user. Yoto cards are untouched.</summary>
-    [HttpDelete("{userConnectionId:guid}/completed")]
-    public async Task<IActionResult> ClearCompleted(Guid userConnectionId, CancellationToken ct)
+    [HttpDelete("completed")]
+    public async Task<IActionResult> ClearCompleted(CancellationToken ct)
     {
+        var userConnectionId = CurrentUserConnectionId;
         var completed = await db.CardTransfers
             .Where(t => t.UserConnectionId == userConnectionId && t.Status == Core.Enums.TransferStatus.Completed)
             .Include(t => t.TrackMappings)
@@ -211,7 +211,7 @@ public class TransfersController(
             .Where(t => t.Id == transferId)
             .Select(t => (Guid?)t.UserConnectionId)
             .FirstOrDefaultAsync(ct);
-        return owner is not null && owner == User.GetUserConnectionId();
+        return owner is not null && owner == CurrentUserConnectionId;
     }
 
     private static TransferResponse MapToResponse(Core.Entities.CardTransfer t) => new(

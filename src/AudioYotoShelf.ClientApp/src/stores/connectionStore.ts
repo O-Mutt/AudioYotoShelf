@@ -25,7 +25,7 @@ export const useConnectionStore = defineStore('connection', () => {
     if (!userConnectionId.value) return
     isLoading.value = true
     try {
-      const { data } = await authApi.getConnectionStatus(userConnectionId.value)
+      const { data } = await authApi.getConnectionStatus()
       status.value = data
     } catch {
       status.value = null
@@ -57,7 +57,7 @@ export const useConnectionStore = defineStore('connection', () => {
     isLoading.value = true
     error.value = null
     try {
-      const { data } = await authApi.getYotoAuthUrl(userConnectionId.value)
+      const { data } = await authApi.getYotoAuthUrl()
       window.location.href = data.authUrl
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to start Yoto authorization'
@@ -73,7 +73,7 @@ export const useConnectionStore = defineStore('connection', () => {
     defaultMaxAge?: number
   }) {
     if (!userConnectionId.value) throw new Error('Not connected')
-    const { data } = await authApi.updateSettings(userConnectionId.value, settings)
+    const { data } = await authApi.updateSettings(settings)
     status.value = data
   }
 

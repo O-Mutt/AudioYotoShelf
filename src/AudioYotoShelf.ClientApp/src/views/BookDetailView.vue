@@ -90,7 +90,7 @@ async function startTransfer() {
   isTransferring.value = true
 
   try {
-    const { data } = await transferApi.transferBook(connectionStore.userConnectionId, {
+    const { data } = await transferApi.transferBook({
       absLibraryItemId: props.itemId,
       overrideMinAge: overrideMinAge.value ?? undefined,
       overrideMaxAge: overrideMaxAge.value ?? undefined,

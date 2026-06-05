@@ -90,7 +90,7 @@ export const useLibraryStore = defineStore('library', () => {
     if (!ucid.value) return
     isLoading.value = true
     try {
-      const { data } = await libraryApi.getLibraries(ucid.value)
+      const { data } = await libraryApi.getLibraries()
       libraries.value = data
 
       const defaultId = connectionStore.status?.defaultLibraryId
@@ -109,7 +109,6 @@ export const useLibraryStore = defineStore('library', () => {
     isLoading.value = true
     try {
       const { data } = await libraryApi.getLibraryItems(
-        ucid.value,
         selectedLibraryId.value,
         page,
         limit,
@@ -130,7 +129,7 @@ export const useLibraryStore = defineStore('library', () => {
     if (!ucid.value || !selectedLibraryId.value) return
     isLoading.value = true
     try {
-      const { data } = await libraryApi.getSeries(ucid.value, selectedLibraryId.value, page, limit)
+      const { data } = await libraryApi.getSeries(selectedLibraryId.value, page, limit)
       series.value = data.results
       totalSeries.value = data.total
       seriesPage.value = page
@@ -143,7 +142,7 @@ export const useLibraryStore = defineStore('library', () => {
     if (!ucid.value) return
     isLoading.value = true
     try {
-      const { data } = await libraryApi.getBookDetail(ucid.value, itemId)
+      const { data } = await libraryApi.getBookDetail(itemId)
       currentBookDetail.value = data
     } finally {
       isLoading.value = false
@@ -152,7 +151,7 @@ export const useLibraryStore = defineStore('library', () => {
 
   function getCoverUrl(itemId: string): string {
     if (!ucid.value) return ''
-    return libraryApi.getCoverUrl(ucid.value, itemId)
+    return libraryApi.getCoverUrl(itemId)
   }
 
   function selectLibrary(libraryId: string) {
