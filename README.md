@@ -20,6 +20,9 @@ Transfer audiobooks from your self-hosted Audiobookshelf server to Yoto MYO card
 - **Real-time progress** — SignalR-powered live transfer status updates
 - **Background processing** — Hangfire job queue with dashboard
 - **Per-user permissions** — Respects ABS library access controls
+- **Secure sessions** — http-only cookie auth; every request is bound to your own connection
+- **Admin analytics** — optional admin dashboard: users, logins/sessions, transfer success rate
+- **Health & metrics** — liveness/readiness probes and Prometheus metrics for monitoring
 
 ## Architecture
 
@@ -57,7 +60,7 @@ sequenceDiagram
     participant Y as Yoto
 
     U->>SPA: Pick a book, start transfer
-    SPA->>API: POST /api/transfers/{id}/book
+    SPA->>API: POST /api/transfers/book (session cookie)
     API->>HF: Enqueue transfer job
     HF->>ABS: Download audio + chapters
     HF->>G: Generate 16x16 chapter icons
@@ -89,7 +92,8 @@ sequenceDiagram
 - (Optional) a Gemini API key for AI icon generation (see below)
 
 Audiobookshelf needs no pre-provisioned token — you sign in with your normal ABS
-username and password inside the app, and it stores the resulting token per user.
+username and password inside the app. The app stores the resulting token per user and issues an
+http-only session cookie, so your identity is never carried in the URL or written to request logs.
 
 ### Getting your credentials
 
@@ -119,6 +123,8 @@ Set in `.env` (copied from [`.env.example`](.env.example)). Used by [`docker-com
 | `GEMINI_API_KEY` | no | — | Google AI Studio key for icon generation |
 | `DB_PASSWORD` | recommended | `changeme` | PostgreSQL password |
 | `BRIDGE_PORT` | no | `8080` | Host port the app listens on |
+| `ADMIN_AUDIOBOOKSHELF_URL` | no | — | Trusted ABS server URL that can grant admin (see [Admin analytics](#admin-analytics)) |
+| `ADMIN_USERNAMES` | no | — | Comma-separated ABS usernames granted admin when they sign in via the trusted server |
 
 ### Setup
 
@@ -142,6 +148,40 @@ open http://localhost:8080
 1. Open `http://localhost:8080` and enter your Audiobookshelf server URL, username, and password
 2. Authorize with Yoto — you're redirected to Yoto's login (OAuth authorization code flow) and back to the app
 3. Browse your library and transfer books to MYO cards
+
+## Admin analytics
+
+An optional, read-only **admin dashboard** at `/admin` shows usage at a glance: total and active
+users, logins/sessions over time, transfer counts and success rate, and a per-user table.
+
+Admin access is deliberately strict: a user becomes admin **only** when their ABS username is in
+`ADMIN_USERNAMES` **and** they sign in against the trusted server named in
+`ADMIN_AUDIOBOOKSHELF_URL`. Requiring the trusted server stops anyone from pointing the app at a
+look-alike ABS instance to claim an admin username. Leave `ADMIN_AUDIOBOOKSHELF_URL` unset to
+disable admin promotion entirely.
+
+```bash
+# .env — grant yourself admin, then sign in against that ABS server
+ADMIN_AUDIOBOOKSHELF_URL=https://abs.example.com
+ADMIN_USERNAMES=alice,bob
+```
+
+The `IsAdmin` flag is persisted per user, so you can also grant or revoke it directly in the database.
+
+## Monitoring & observability
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /health/live` | Liveness — the process is up (no dependency checks) |
+| `GET /health/ready` | Readiness — PostgreSQL + Redis reachable (FFmpeg reported as degraded, not failing) |
+| `GET /metrics` | Prometheus scrape: HTTP rate/latency/errors, outbound ABS/Yoto/Gemini calls, .NET runtime, and `ays.transfers.completed` / `ays.transfers.failed` counters |
+| `GET /hangfire` | Hangfire background-job dashboard |
+
+Logs are written to the console (structured, via Serilog); set `Serilog__SeqUrl` to also ship them
+to a [Seq](https://datalust.co/seq) server.
+
+> **Restrict `/metrics` and `/hangfire` at the network/proxy layer.** They expose operational data
+> (not user data) and are intentionally unauthenticated so scrapers and operators can reach them.
 
 ## Development
 
