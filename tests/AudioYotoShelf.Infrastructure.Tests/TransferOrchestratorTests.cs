@@ -6,6 +6,7 @@ using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Core.Tests.Helpers;
 using AudioYotoShelf.Infrastructure.Data;
+using AudioYotoShelf.Infrastructure.Observability;
 using AudioYotoShelf.Infrastructure.Services;
 using AudioYotoShelf.Infrastructure.Tests.Fixtures;
 using FluentAssertions;
@@ -51,6 +52,7 @@ public class TransferOrchestratorTests : IDisposable
             _db, _absService.Object, _yotoService.Object,
             _iconService.Object, _ageService.Object,
             _chapterExtractor.Object, Mock.Of<ITransferProgressNotifier>(), _configuration,
+            new TransferMetrics(),
             Mock.Of<ILogger<TransferOrchestrator>>());
 
         _tempChapterFile = Path.Combine(Path.GetTempPath(), $"test_chapter_{Guid.NewGuid():N}.m4a");

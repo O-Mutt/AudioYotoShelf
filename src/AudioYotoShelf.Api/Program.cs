@@ -1,9 +1,11 @@
+using AudioYotoShelf.Api.Health;
 using AudioYotoShelf.Api.Hubs;
 using AudioYotoShelf.Api.Middleware;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Infrastructure.Caching;
 using AudioYotoShelf.Infrastructure.Data;
+using AudioYotoShelf.Infrastructure.Observability;
 using AudioYotoShelf.Infrastructure.Services;
 using AudioYotoShelf.Infrastructure.Services.Audiobookshelf;
 using AudioYotoShelf.Infrastructure.Services.BackgroundJobs;
@@ -15,7 +17,11 @@ using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -137,6 +143,25 @@ if (!string.IsNullOrEmpty(redisConnectionString))
     });
 }
 
+// --- Observability ---
+builder.Services.AddSingleton<TransferMetrics>();
+
+builder.Services.AddHealthChecks()
+    .AddCheck<PostgresHealthCheck>("postgres", tags: ["ready"])
+    .AddCheck<RedisHealthCheck>("redis", tags: ["ready"])
+    .AddCheck<FfmpegHealthCheck>("ffmpeg", tags: ["ready"]);
+
+// OpenTelemetry metrics: ASP.NET request rate/latency/5xx, outbound HTTP (ABS/Yoto/Gemini)
+// latency+errors, runtime/GC stats, and our transfer counters — scraped at /metrics (Prometheus).
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService("AudioYotoShelf"))
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddMeter(TransferMetrics.MeterName)
+        .AddPrometheusExporter());
+
 // --- AuthN/AuthZ ---
 // Session lives in an http-only cookie issued at ABS login, so the credential is never readable by
 // JS, never in a URL, and never in request logs. SameSite=Lax still lets the cookie ride the Yoto
@@ -214,6 +239,19 @@ app.MapHangfireDashboard("/hangfire", new DashboardOptions
 
 app.MapControllers();
 app.MapHub<TransferHub>("/hubs/transfer");
+
+// Liveness = process is up (no dependency checks); readiness = dependencies reachable. Both
+// anonymous so orchestrators/uptime monitors can probe them.
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false }).AllowAnonymous();
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+}).AllowAnonymous();
+
+// Prometheus scrape endpoint (/metrics). Like /hangfire, restrict this at the network layer —
+// it exposes operational metrics, not user data.
+app.MapPrometheusScrapingEndpoint().AllowAnonymous();
+
 // The SPA shell must load for anonymous visitors so they can reach the login/setup screen.
 app.MapFallbackToFile("index.html").AllowAnonymous();
 
