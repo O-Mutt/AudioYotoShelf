@@ -180,4 +180,20 @@ export const cardsApi = {
   },
 }
 
+// --- Admin analytics ---
+
+export const adminApi = {
+  getOverview() {
+    return api.get<import('@/types').AdminOverview>('/admin/overview')
+  },
+
+  getUsers() {
+    return api.get<import('@/types').AdminUser[]>('/admin/users')
+  },
+
+  getUsage(days = 14) {
+    return api.get<import('@/types').UsagePoint[]>('/admin/usage', { params: { days } })
+  },
+}
+
 export default api

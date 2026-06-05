@@ -12,6 +12,7 @@ public class AudioYotoShelfDbContext(DbContextOptions<AudioYotoShelfDbContext> o
     public DbSet<GeneratedIcon> GeneratedIcons => Set<GeneratedIcon>();
     public DbSet<Playlist> Playlists => Set<Playlist>();
     public DbSet<PlaylistItem> PlaylistItems => Set<PlaylistItem>();
+    public DbSet<LoginEvent> LoginEvents => Set<LoginEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

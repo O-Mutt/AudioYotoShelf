@@ -54,6 +54,12 @@ const router = createRouter({
       name: 'settings',
       component: () => import('@/views/SettingsView.vue'),
     },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('@/views/AdminView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
   ],
 })
 
@@ -67,6 +73,11 @@ router.beforeEach(async (to) => {
 
   if (to.meta.requiresAuth && !connectionStore.isAbsConnected) {
     return { name: 'setup' }
+  }
+
+  // Admin-only routes: bounce non-admins back to the library.
+  if (to.meta.requiresAdmin && !connectionStore.isAdmin) {
+    return { name: 'library' }
   }
 })
 

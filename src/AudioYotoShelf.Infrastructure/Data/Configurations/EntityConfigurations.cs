@@ -19,6 +19,22 @@ public class UserConnectionConfiguration : IEntityTypeConfiguration<UserConnecti
         builder.Property(x => x.YotoRefreshToken).HasMaxLength(4096);
         builder.Property(x => x.YotoDeviceCode).HasMaxLength(512);
         builder.Property(x => x.DefaultLibraryId).HasMaxLength(256);
+        builder.Property(x => x.IsAdmin).HasDefaultValue(false);
+    }
+}
+
+public class LoginEventConfiguration : IEntityTypeConfiguration<LoginEvent>
+{
+    public void Configure(EntityTypeBuilder<LoginEvent> builder)
+    {
+        builder.HasKey(x => x.Id);
+        builder.HasIndex(x => x.UserConnectionId);
+        builder.HasIndex(x => x.CreatedAt);
+
+        builder.HasOne(x => x.UserConnection)
+            .WithMany(x => x.LoginEvents)
+            .HasForeignKey(x => x.UserConnectionId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }
 

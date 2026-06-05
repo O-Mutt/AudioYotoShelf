@@ -6,6 +6,7 @@ using AudioYotoShelf.Infrastructure.Data;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -27,6 +28,7 @@ public class AuthControllerTests : IDisposable
             Mock.Of<IAudiobookshelfService>(),
             Mock.Of<IYotoService>(),
             _db,
+            new ConfigurationBuilder().Build(),
             Mock.Of<ILogger<AuthController>>());
     }
 
