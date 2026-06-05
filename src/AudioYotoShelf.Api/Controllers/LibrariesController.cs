@@ -27,7 +27,18 @@ public class LibrariesController(
         if (user is null || !user.HasValidAbsConnection)
             return null;
 
-        await AbsTokens.EnsureValidAsync(db, absService, user, logger, ct);
+        try
+        {
+            await AbsTokens.EnsureValidAsync(db, absService, user, logger, ct);
+        }
+        catch (HttpRequestException ex)
+        {
+            // The stored refresh token is expired/revoked — treat as "no valid connection" (→ 401
+            // so the client re-authenticates) rather than letting it surface as a 502 that looks
+            // like Audiobookshelf itself is down.
+            logger.LogWarning(ex, "Audiobookshelf token refresh failed for {Username}", user.Username);
+            return null;
+        }
         return user;
     }
 

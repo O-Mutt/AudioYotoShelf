@@ -66,8 +66,8 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const connectionStore = useConnectionStore()
 
-  // Restore session on first navigation
-  if (connectionStore.userConnectionId && !connectionStore.status) {
+  // Restore session from the http-only cookie on first navigation.
+  if (!connectionStore.status) {
     await connectionStore.refreshStatus()
   }
 

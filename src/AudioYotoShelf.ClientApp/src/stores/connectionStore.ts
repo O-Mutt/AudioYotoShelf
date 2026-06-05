@@ -23,11 +23,16 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   async function loadStatus() {
-    if (!userConnectionId.value) return
+    // The http-only session cookie is the source of truth, so always probe the server rather than
+    // gating on the local marker. Keep the marker in sync from the response.
     isLoading.value = true
     try {
       const { data } = await authApi.getConnectionStatus()
       status.value = data
+      if (data?.id) {
+        userConnectionId.value = data.id
+        localStorage.setItem(STORAGE_KEY, data.id)
+      }
     } catch {
       status.value = null
     } finally {
