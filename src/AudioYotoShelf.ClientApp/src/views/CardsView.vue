@@ -27,7 +27,7 @@ async function loadCards() {
   isLoading.value = true
   yotoSessionExpired.value = false
   try {
-    const { data } = await cardsApi.getCards(connectionStore.userConnectionId)
+    const { data } = await cardsApi.getCards()
     cards.value = data
   } catch (err: unknown) {
     if (statusCode(err) === 401) {
@@ -50,7 +50,7 @@ async function toggleExpand(cardId: string) {
   expandedDetail.value = null
   isLoadingDetail.value = true
   try {
-    const { data } = await cardsApi.getCard(connectionStore.userConnectionId!, cardId)
+    const { data } = await cardsApi.getCard(cardId)
     expandedDetail.value = data
   } catch {
     toast.error('Failed to load card details')
@@ -69,7 +69,7 @@ async function handleDelete(cardId: string, title: string) {
   if (!ok) return
 
   try {
-    await cardsApi.deleteCard(connectionStore.userConnectionId!, cardId)
+    await cardsApi.deleteCard(cardId)
     cards.value = cards.value.filter((c) => c.cardId !== cardId)
     if (expandedCardId.value === cardId) {
       expandedCardId.value = null

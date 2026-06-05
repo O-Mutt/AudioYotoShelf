@@ -57,7 +57,7 @@ public class LibrariesControllerTests : IDisposable
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AbsLibraryItemsResponse([], 0, 20, 0));
 
-        await _sut.GetLibraryItems(user.Id, "lib-1", sort: "media.duration");
+        await _sut.AsUser(user.Id).GetLibraryItems("lib-1", sort: "media.duration");
 
         _absService.Verify(s => s.GetLibraryItemsAsync(
             It.IsAny<string>(), It.IsAny<string>(), "lib-1",
@@ -80,7 +80,7 @@ public class LibrariesControllerTests : IDisposable
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AbsLibraryItemsResponse([], 0, 20, 0));
 
-        await _sut.GetLibraryItems(user.Id, "lib-1");
+        await _sut.AsUser(user.Id).GetLibraryItems("lib-1");
 
         _absService.Verify(s => s.GetLibraryItemsAsync(
             It.IsAny<string>(), It.IsAny<string>(), "lib-1",
@@ -103,7 +103,7 @@ public class LibrariesControllerTests : IDisposable
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AbsLibraryItemsResponse([], 100, 10, 3));
 
-        var result = await _sut.GetLibraryItems(user.Id, "lib-1", page: 3, limit: 10);
+        var result = await _sut.AsUser(user.Id).GetLibraryItems("lib-1", page: 3, limit: 10);
 
         result.Should().BeOfType<OkObjectResult>();
         _absService.Verify(s => s.GetLibraryItemsAsync(
@@ -118,9 +118,10 @@ public class LibrariesControllerTests : IDisposable
     // =========================================================================
 
     [Fact]
-    public async Task GetItems_NoAuth_Returns401()
+    public async Task GetItems_NoConnection_Returns401()
     {
-        var result = await _sut.GetLibraryItems(Guid.NewGuid(), "lib-1");
+        // Authenticated, but the connection row doesn't exist.
+        var result = await _sut.AsUser(Guid.NewGuid()).GetLibraryItems("lib-1");
         result.Should().BeOfType<UnauthorizedObjectResult>();
     }
 
@@ -132,7 +133,7 @@ public class LibrariesControllerTests : IDisposable
         _db.UserConnections.Add(user);
         await _db.SaveChangesAsync();
 
-        var result = await _sut.GetLibraryItems(user.Id, "lib-1");
+        var result = await _sut.AsUser(user.Id).GetLibraryItems("lib-1");
         result.Should().BeOfType<UnauthorizedObjectResult>();
     }
 
@@ -155,7 +156,7 @@ public class LibrariesControllerTests : IDisposable
                 new AbsLibrary("lib-3", "Kids Books", "book", null),
             ]);
 
-        var result = await _sut.GetLibraries(user.Id, CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).GetLibraries(CancellationToken.None);
 
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var libraries = ok.Value as AbsLibrary[];
@@ -183,7 +184,7 @@ public class LibrariesControllerTests : IDisposable
             .Returns(new Core.DTOs.Transfer.AgeSuggestionResponse(
                 5, 10, "Genre-based", Core.Enums.AgeRangeSource.GenreInferred, []));
 
-        var result = await _sut.GetItem(user.Id, "item-1", CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).GetItem("item-1", CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
     }
@@ -203,7 +204,7 @@ public class LibrariesControllerTests : IDisposable
                 It.IsAny<string>(), It.IsAny<string>(), "lib-1", "narnia", It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([TestData.CreateAbsLibraryItem("book-1")]);
 
-        var result = await _sut.GetLibraryItems(user.Id, "lib-1", search: "narnia");
+        var result = await _sut.AsUser(user.Id).GetLibraryItems("lib-1", search: "narnia");
 
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         (ok.Value as AbsLibraryItemsResponse)!.Total.Should().Be(1);
@@ -231,7 +232,7 @@ public class LibrariesControllerTests : IDisposable
                 It.IsAny<string>(), It.IsAny<string>(), "lib-2", "s1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestData.CreateAbsSeriesItem("Harry Potter", 3));
 
-        var result = await _sut.GetSeriesDetail(user.Id, "s1", "lib-2", CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).GetSeriesDetail("s1", "lib-2", CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
         _absService.Verify(s => s.GetLibrariesAsync(
@@ -255,7 +256,7 @@ public class LibrariesControllerTests : IDisposable
                 It.IsAny<string>(), It.IsAny<string>(), "lib-b", "s1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestData.CreateAbsSeriesItem("Harry Potter", 3));      // lives here
 
-        var result = await _sut.GetSeriesDetail(user.Id, "s1", null, CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).GetSeriesDetail("s1", null, CancellationToken.None);
 
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         (ok.Value as AbsSeriesItem)!.Books.Should().HaveCount(3);

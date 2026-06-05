@@ -52,7 +52,7 @@ public class AuthControllerTests : IDisposable
             DefaultMinAge: 3,
             DefaultMaxAge: 8);
 
-        var result = await _sut.UpdateSettings(user.Id, request, CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).UpdateSettings(request, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
         var updated = await _db.UserConnections.FindAsync(user.Id);
@@ -74,7 +74,7 @@ public class AuthControllerTests : IDisposable
         // Only update max age
         var request = new UpdateSettingsRequest(DefaultMaxAge: 15);
 
-        await _sut.UpdateSettings(user.Id, request, CancellationToken.None);
+        await _sut.AsUser(user.Id).UpdateSettings(request, CancellationToken.None);
 
         var updated = await _db.UserConnections.FindAsync(user.Id);
         updated!.DefaultMinAge.Should().Be(2); // Unchanged
@@ -87,7 +87,7 @@ public class AuthControllerTests : IDisposable
     {
         var request = new UpdateSettingsRequest(DefaultMinAge: 5);
 
-        var result = await _sut.UpdateSettings(Guid.NewGuid(), request, CancellationToken.None);
+        var result = await _sut.AsUser(Guid.NewGuid()).UpdateSettings(request, CancellationToken.None);
 
         result.Should().BeOfType<NotFoundResult>();
     }
@@ -103,7 +103,7 @@ public class AuthControllerTests : IDisposable
         _db.UserConnections.Add(user);
         await _db.SaveChangesAsync();
 
-        var result = await _sut.GetConnectionStatus(user.Id, CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).GetConnectionStatus(CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
     }
@@ -111,7 +111,7 @@ public class AuthControllerTests : IDisposable
     [Fact]
     public async Task GetStatus_NotFound_Returns404()
     {
-        var result = await _sut.GetConnectionStatus(Guid.NewGuid(), CancellationToken.None);
+        var result = await _sut.AsUser(Guid.NewGuid()).GetConnectionStatus(CancellationToken.None);
 
         result.Should().BeOfType<NotFoundResult>();
     }

@@ -21,7 +21,6 @@ onMounted(async () => {
   if (!connectionStore.userConnectionId) return
   try {
     const { data } = await libraryApi.getSeriesDetail(
-      connectionStore.userConnectionId,
       props.seriesId,
       props.libraryId ?? libraryStore.selectedLibraryId ?? undefined,
     )
@@ -47,7 +46,7 @@ async function transferSeries() {
   isTransferring.value = true
   transferMessage.value = null
   try {
-    await transferApi.transferSeries(connectionStore.userConnectionId, {
+    await transferApi.transferSeries({
       absSeriesId: props.seriesId,
       absLibraryId: libraryId,
     })

@@ -14,16 +14,16 @@ public class LibrariesController(
     IAudiobookshelfService absService,
     IAgeSuggestionService ageSuggestionService,
     AudioYotoShelfDbContext db,
-    ILogger<LibrariesController> logger) : ControllerBase
+    ILogger<LibrariesController> logger) : AppControllerBase
 {
     /// <summary>
-    /// Loads the user's connection, verifies it has a usable Audiobookshelf connection, and
-    /// refreshes the stored access token from the refresh token when it's near expiry. Returns
-    /// null when there is no valid connection (callers translate that to 401).
+    /// Loads the authenticated caller's connection, verifies it has a usable Audiobookshelf
+    /// connection, and refreshes the stored access token from the refresh token when it's near
+    /// expiry. Returns null when there is no valid connection (callers translate that to 401).
     /// </summary>
-    private async Task<UserConnection?> ResolveAbsUserAsync(Guid userConnectionId, CancellationToken ct)
+    private async Task<UserConnection?> ResolveAbsUserAsync(CancellationToken ct)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
+        var user = await db.UserConnections.FindAsync([CurrentUserConnectionId], ct);
         if (user is null || !user.HasValidAbsConnection)
             return null;
 
@@ -34,10 +34,10 @@ public class LibrariesController(
     /// <summary>
     /// Get all accessible libraries for the current user.
     /// </summary>
-    [HttpGet("{userConnectionId:guid}")]
-    public async Task<IActionResult> GetLibraries(Guid userConnectionId, CancellationToken ct)
+    [HttpGet]
+    public async Task<IActionResult> GetLibraries(CancellationToken ct)
     {
-        var user = await ResolveAbsUserAsync(userConnectionId, ct);
+        var user = await ResolveAbsUserAsync(ct);
         if (user is null)
             return Unauthorized("No valid Audiobookshelf connection");
 
@@ -51,9 +51,9 @@ public class LibrariesController(
     /// <summary>
     /// Get paginated books in a library.
     /// </summary>
-    [HttpGet("{userConnectionId:guid}/library/{libraryId}/items")]
+    [HttpGet("library/{libraryId}/items")]
     public async Task<IActionResult> GetLibraryItems(
-        Guid userConnectionId, string libraryId,
+        string libraryId,
         [FromQuery] int page = 0, [FromQuery] int limit = 20,
         [FromQuery] bool collapseSeries = false,
         [FromQuery] string? search = null,
@@ -62,7 +62,7 @@ public class LibrariesController(
         [FromQuery] string? filter = null,
         CancellationToken ct = default)
     {
-        var user = await ResolveAbsUserAsync(userConnectionId, ct);
+        var user = await ResolveAbsUserAsync(ct);
         if (user is null)
             return Unauthorized("No valid Audiobookshelf connection");
 
@@ -85,10 +85,10 @@ public class LibrariesController(
     /// <summary>
     /// Get detailed book info including chapters, with age suggestion.
     /// </summary>
-    [HttpGet("{userConnectionId:guid}/items/{itemId}")]
-    public async Task<IActionResult> GetItem(Guid userConnectionId, string itemId, CancellationToken ct)
+    [HttpGet("items/{itemId}")]
+    public async Task<IActionResult> GetItem(string itemId, CancellationToken ct)
     {
-        var user = await ResolveAbsUserAsync(userConnectionId, ct);
+        var user = await ResolveAbsUserAsync(ct);
         if (user is null)
             return Unauthorized("No valid Audiobookshelf connection");
 
@@ -105,7 +105,7 @@ public class LibrariesController(
 
         // Check if this book has already been transferred
         var existingTransfer = await db.CardTransfers
-            .Where(t => t.UserConnectionId == userConnectionId && t.AbsLibraryItemId == itemId)
+            .Where(t => t.UserConnectionId == user.Id && t.AbsLibraryItemId == itemId)
             .OrderByDescending(t => t.CreatedAt)
             .FirstOrDefaultAsync(ct);
 
@@ -126,13 +126,13 @@ public class LibrariesController(
     /// <summary>
     /// Get series list for a library.
     /// </summary>
-    [HttpGet("{userConnectionId:guid}/library/{libraryId}/series")]
+    [HttpGet("library/{libraryId}/series")]
     public async Task<IActionResult> GetSeries(
-        Guid userConnectionId, string libraryId,
+        string libraryId,
         [FromQuery] int page = 0, [FromQuery] int limit = 20,
         CancellationToken ct = default)
     {
-        var user = await ResolveAbsUserAsync(userConnectionId, ct);
+        var user = await ResolveAbsUserAsync(ct);
         if (user is null)
             return Unauthorized("No valid Audiobookshelf connection");
 
@@ -145,11 +145,11 @@ public class LibrariesController(
     /// <summary>
     /// Get series detail with all books.
     /// </summary>
-    [HttpGet("{userConnectionId:guid}/series/{seriesId}")]
+    [HttpGet("series/{seriesId}")]
     public async Task<IActionResult> GetSeriesDetail(
-        Guid userConnectionId, string seriesId, [FromQuery] string? libraryId, CancellationToken ct)
+        string seriesId, [FromQuery] string? libraryId, CancellationToken ct)
     {
-        var user = await ResolveAbsUserAsync(userConnectionId, ct);
+        var user = await ResolveAbsUserAsync(ct);
         if (user is null)
             return Unauthorized("No valid Audiobookshelf connection");
 
@@ -185,10 +185,10 @@ public class LibrariesController(
     /// <summary>
     /// Proxy cover image from ABS (avoids CORS issues).
     /// </summary>
-    [HttpGet("{userConnectionId:guid}/items/{itemId}/cover")]
-    public async Task<IActionResult> GetCover(Guid userConnectionId, string itemId, CancellationToken ct)
+    [HttpGet("items/{itemId}/cover")]
+    public async Task<IActionResult> GetCover(string itemId, CancellationToken ct)
     {
-        var user = await ResolveAbsUserAsync(userConnectionId, ct);
+        var user = await ResolveAbsUserAsync(ct);
         if (user is null)
             return Unauthorized("No valid Audiobookshelf connection");
 

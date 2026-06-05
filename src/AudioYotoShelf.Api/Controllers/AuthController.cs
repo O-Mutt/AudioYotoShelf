@@ -17,7 +17,7 @@ public class AuthController(
     IAudiobookshelfService absService,
     IYotoService yotoService,
     AudioYotoShelfDbContext db,
-    ILogger<AuthController> logger) : ControllerBase
+    ILogger<AuthController> logger) : AppControllerBase
 {
     // --- Audiobookshelf Auth ---
 
@@ -90,10 +90,10 @@ public class AuthController(
             CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
     }
 
-    [HttpPost("abs/validate/{userConnectionId:guid}")]
-    public async Task<IActionResult> ValidateAbsToken(Guid userConnectionId, CancellationToken ct)
+    [HttpPost("abs/validate")]
+    public async Task<IActionResult> ValidateAbsToken(CancellationToken ct)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
+        var user = await db.UserConnections.FindAsync([CurrentUserConnectionId], ct);
         if (user is null) return NotFound();
 
         // Renew the stored access token from the refresh token if it's expiring, then validate it.
@@ -112,9 +112,10 @@ public class AuthController(
 
     // --- Yoto OAuth Authorization Code Flow ---
 
-    [HttpGet("yoto/authorize/{userConnectionId:guid}")]
-    public async Task<IActionResult> AuthorizeYoto(Guid userConnectionId, CancellationToken ct)
+    [HttpGet("yoto/authorize")]
+    public async Task<IActionResult> AuthorizeYoto(CancellationToken ct)
     {
+        var userConnectionId = CurrentUserConnectionId;
         var user = await db.UserConnections.FindAsync([userConnectionId], ct);
         if (user is null) return NotFound();
 
@@ -165,13 +166,12 @@ public class AuthController(
 
     // --- User Settings (Phase 3) ---
 
-    [HttpPatch("settings/{userConnectionId:guid}")]
+    [HttpPatch("settings")]
     public async Task<IActionResult> UpdateSettings(
-        Guid userConnectionId,
         [FromBody] Core.DTOs.Transfer.UpdateSettingsRequest request,
         CancellationToken ct)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
+        var user = await db.UserConnections.FindAsync([CurrentUserConnectionId], ct);
         if (user is null) return NotFound();
 
         if (request.DefaultLibraryId is not null)
@@ -192,10 +192,10 @@ public class AuthController(
 
     // --- Connection Status ---
 
-    [HttpGet("status/{userConnectionId:guid}")]
-    public async Task<IActionResult> GetConnectionStatus(Guid userConnectionId, CancellationToken ct)
+    [HttpGet("status")]
+    public async Task<IActionResult> GetConnectionStatus(CancellationToken ct)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
+        var user = await db.UserConnections.FindAsync([CurrentUserConnectionId], ct);
         if (user is null) return NotFound();
 
         return Ok(MapConnectionStatus(user));

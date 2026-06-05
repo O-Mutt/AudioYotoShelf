@@ -13,7 +13,7 @@ namespace AudioYotoShelf.Api.Controllers;
 public class CardsController(
     IYotoService yotoService,
     AudioYotoShelfDbContext db,
-    ILogger<CardsController> logger) : ControllerBase
+    ILogger<CardsController> logger) : AppControllerBase
 {
     /// <summary>
     /// List user's Yoto MYO cards.
@@ -21,10 +21,10 @@ public class CardsController(
     /// mismatch is common), falls back to fetching individual card details for each card
     /// we transferred via this app.
     /// </summary>
-    [HttpGet("{userConnectionId:guid}")]
-    public async Task<IActionResult> GetCards(Guid userConnectionId, CancellationToken ct)
+    [HttpGet]
+    public async Task<IActionResult> GetCards(CancellationToken ct)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
+        var user = await db.UserConnections.FindAsync([CurrentUserConnectionId], ct);
 
         // Require tokens exist, but don't reject on expiry — EnsureYotoTokenAsync will refresh
         if (user is null || string.IsNullOrEmpty(user.YotoRefreshToken))
@@ -43,7 +43,7 @@ public class CardsController(
 
         // Load our transfer records regardless — used for enrichment and as fallback
         var knownCards = await db.CardTransfers
-            .Where(t => t.UserConnectionId == userConnectionId && t.YotoCardId != null)
+            .Where(t => t.UserConnectionId == user.Id && t.YotoCardId != null)
             .Select(t => new { t.YotoCardId, t.BookTitle, t.BookAuthor })
             .ToListAsync(ct);
 
@@ -117,10 +117,10 @@ public class CardsController(
     /// <summary>
     /// Get full card content including chapters and tracks.
     /// </summary>
-    [HttpGet("{userConnectionId:guid}/{cardId}")]
-    public async Task<IActionResult> GetCard(Guid userConnectionId, string cardId, CancellationToken ct)
+    [HttpGet("{cardId}")]
+    public async Task<IActionResult> GetCard(string cardId, CancellationToken ct)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
+        var user = await db.UserConnections.FindAsync([CurrentUserConnectionId], ct);
         if (user is null || string.IsNullOrEmpty(user.YotoRefreshToken))
             return Unauthorized("No valid Yoto connection");
 
@@ -135,10 +135,10 @@ public class CardsController(
     /// <summary>
     /// Delete a Yoto MYO card.
     /// </summary>
-    [HttpDelete("{userConnectionId:guid}/{cardId}")]
-    public async Task<IActionResult> DeleteCard(Guid userConnectionId, string cardId, CancellationToken ct)
+    [HttpDelete("{cardId}")]
+    public async Task<IActionResult> DeleteCard(string cardId, CancellationToken ct)
     {
-        var user = await db.UserConnections.FindAsync([userConnectionId], ct);
+        var user = await db.UserConnections.FindAsync([CurrentUserConnectionId], ct);
         if (user is null || string.IsNullOrEmpty(user.YotoRefreshToken))
             return Unauthorized("No valid Yoto connection");
 

@@ -1,4 +1,3 @@
-using AudioYotoShelf.Api.Auth;
 using AudioYotoShelf.Api.Hubs;
 using AudioYotoShelf.Api.Middleware;
 using AudioYotoShelf.Core.Interfaces;
@@ -169,7 +168,7 @@ builder.Services.AddAuthorizationBuilder()
     .SetFallbackPolicy(new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
 
 // --- API ---
-builder.Services.AddControllers(options => options.Filters.Add<ConnectionOwnershipFilter>())
+builder.Services.AddControllers()
     .AddJsonOptions(options =>
         options.JsonSerializerOptions.Converters.Add(
             new System.Text.Json.Serialization.JsonStringEnumConverter()));

@@ -64,7 +64,7 @@ public class TransfersControllerTests : IDisposable
         }
         await _db.SaveChangesAsync();
 
-        var result = await _sut.GetTransfers(user.Id, ct: CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).GetTransfers(ct: CancellationToken.None);
 
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         ok.Value.Should().NotBeNull();
@@ -83,7 +83,7 @@ public class TransfersControllerTests : IDisposable
         _db.CardTransfers.AddRange(t1, t2);
         await _db.SaveChangesAsync();
 
-        var result = await _sut.GetTransfers(user.Id, status: TransferStatus.Completed, ct: CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).GetTransfers(status: TransferStatus.Completed, ct: CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
     }
@@ -136,7 +136,7 @@ public class TransfersControllerTests : IDisposable
     public async Task TransferBook_EnqueuesJob_Returns202()
     {
         var request = new CreateTransferRequest("item-1");
-        var result = await _sut.TransferBook(Guid.NewGuid(), request, CancellationToken.None);
+        var result = await _sut.AsUser(Guid.NewGuid()).TransferBook(request, CancellationToken.None);
 
         result.Should().BeOfType<AcceptedResult>();
     }
@@ -149,7 +149,7 @@ public class TransfersControllerTests : IDisposable
     public async Task TransferSeries_EnqueuesJob_Returns202()
     {
         var request = new CreateSeriesTransferRequest("ser-1", "lib-1");
-        var result = await _sut.TransferSeries(Guid.NewGuid(), request, CancellationToken.None);
+        var result = await _sut.AsUser(Guid.NewGuid()).TransferSeries(request, CancellationToken.None);
 
         result.Should().BeOfType<AcceptedResult>();
     }
@@ -162,7 +162,7 @@ public class TransfersControllerTests : IDisposable
     public async Task TransferBatch_EnqueuesJobPerBook()
     {
         var request = new BatchTransferRequest(["item-1", "item-2", "item-3"]);
-        var result = await _sut.TransferBatch(Guid.NewGuid(), request, CancellationToken.None);
+        var result = await _sut.AsUser(Guid.NewGuid()).TransferBatch(request, CancellationToken.None);
 
         var accepted = result.Should().BeOfType<AcceptedResult>().Subject;
         var response = accepted.Value as BatchTransferResponse;
@@ -176,7 +176,7 @@ public class TransfersControllerTests : IDisposable
     public async Task TransferBatch_SingleItem_Works()
     {
         var request = new BatchTransferRequest(["item-1"]);
-        var result = await _sut.TransferBatch(Guid.NewGuid(), request, CancellationToken.None);
+        var result = await _sut.AsUser(Guid.NewGuid()).TransferBatch(request, CancellationToken.None);
 
         var accepted = result.Should().BeOfType<AcceptedResult>().Subject;
         var response = accepted.Value as BatchTransferResponse;

@@ -60,12 +60,7 @@ async function loadTransfers(page = 0) {
   if (!connectionStore.userConnectionId) return
   isLoading.value = true
   try {
-    const { data } = await transferApi.getTransfers(
-      connectionStore.userConnectionId,
-      page,
-      20,
-      filterStatus.value || undefined,
-    )
+    const { data } = await transferApi.getTransfers(page, 20, filterStatus.value || undefined)
     transfers.value = data.results
     totalTransfers.value = data.total
     currentPage.value = page
@@ -146,7 +141,7 @@ async function handleClearAllCompleted() {
   })
   if (!ok) return
   try {
-    const { data } = await transferApi.clearCompleted(connectionStore.userConnectionId!)
+    const { data } = await transferApi.clearCompleted()
     toast.success(`Cleared ${data.cleared} completed transfer${data.cleared !== 1 ? 's' : ''}`)
     await loadTransfers(0)
   } catch {

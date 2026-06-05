@@ -50,7 +50,7 @@ public class CardsControllerTests : IDisposable
                 new YotoCard("card-2", null, null)
             ]);
 
-        var result = await _sut.GetCards(user.Id, CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).GetCards(CancellationToken.None);
 
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         ok.Value.Should().NotBeNull();
@@ -73,7 +73,7 @@ public class CardsControllerTests : IDisposable
                 new YotoCard("card-2", null, null)
             ]);
 
-        var result = await _sut.GetCards(user.Id, CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).GetCards(CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
     }
@@ -85,7 +85,7 @@ public class CardsControllerTests : IDisposable
         _db.UserConnections.Add(user);
         await _db.SaveChangesAsync();
 
-        var result = await _sut.GetCards(user.Id, CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).GetCards(CancellationToken.None);
 
         result.Should().BeOfType<UnauthorizedObjectResult>();
     }
@@ -93,7 +93,7 @@ public class CardsControllerTests : IDisposable
     [Fact]
     public async Task GetCards_UserNotFound_Returns401()
     {
-        var result = await _sut.GetCards(Guid.NewGuid(), CancellationToken.None);
+        var result = await _sut.AsUser(Guid.NewGuid()).GetCards(CancellationToken.None);
         result.Should().BeOfType<UnauthorizedObjectResult>();
     }
 
@@ -115,7 +115,7 @@ public class CardsControllerTests : IDisposable
         _yotoService.Setup(s => s.GetCardContentAsync(It.IsAny<string>(), "card-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(card);
 
-        var result = await _sut.GetCard(user.Id, "card-1", CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).GetCard("card-1", CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
     }
@@ -130,7 +130,7 @@ public class CardsControllerTests : IDisposable
         _yotoService.Setup(s => s.DeleteCardAsync(It.IsAny<string>(), "card-1", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var result = await _sut.DeleteCard(user.Id, "card-1", CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).DeleteCard("card-1", CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
         _yotoService.Verify(s => s.DeleteCardAsync(user.YotoAccessToken!, "card-1", It.IsAny<CancellationToken>()), Times.Once);
@@ -143,7 +143,7 @@ public class CardsControllerTests : IDisposable
         _db.UserConnections.Add(user);
         await _db.SaveChangesAsync();
 
-        var result = await _sut.DeleteCard(user.Id, "card-1", CancellationToken.None);
+        var result = await _sut.AsUser(user.Id).DeleteCard("card-1", CancellationToken.None);
         result.Should().BeOfType<UnauthorizedObjectResult>();
     }
 }
