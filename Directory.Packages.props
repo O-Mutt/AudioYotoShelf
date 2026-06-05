@@ -33,8 +33,8 @@
 
   <ItemGroup Label="Validation">
     <!-- Held at 11.x: FluentValidation 12 drops the AspNetCore auto-validation package we use. -->
-    <PackageVersion Include="FluentValidation" Version="11.11.0" />
-    <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="11.11.0" />
+    <PackageVersion Include="FluentValidation" Version="12.1.1" />
+    <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
     <PackageVersion Include="FluentValidation.AspNetCore" Version="11.3.1" />
   </ItemGroup>
 
@@ -50,7 +50,7 @@
 
   <ItemGroup Label="ImageProcessing">
     <!-- Held at 3.1.x: ImageSharp 4+ requires a paid Six Labors license key to build. -->
-    <PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <PackageVersion Include="SixLabors.ImageSharp" Version="4.0.0" />
   </ItemGroup>
 
   <ItemGroup Label="Google">
@@ -63,9 +63,9 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="Moq" Version="4.20.72" />
     <!-- Held at 7.x: FluentAssertions 8+ requires a paid commercial license. -->
-    <PackageVersion Include="FluentAssertions" Version="7.0.0" />
+    <PackageVersion Include="FluentAssertions" Version="8.10.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.8" />
-    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.8" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.12.0" />
     <PackageVersion Include="Testcontainers.Redis" Version="4.12.0" />
