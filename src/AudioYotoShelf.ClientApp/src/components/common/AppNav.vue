@@ -56,6 +56,14 @@ const statusText = computed(() => {
             >
               My Cards
             </router-link>
+            <router-link
+              v-if="connectionStore.isAdmin"
+              to="/admin"
+              class="text-gray-600 hover:text-gray-900 font-medium"
+              active-class="text-yoto-blue"
+            >
+              Admin
+            </router-link>
           </template>
         </div>
 

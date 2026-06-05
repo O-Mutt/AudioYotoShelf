@@ -10,6 +10,45 @@ export interface ConnectionStatus {
   defaultLibraryId: string | null
   defaultMinAge: number
   defaultMaxAge: number
+  isAdmin: boolean
+}
+
+// --- Admin analytics ---
+
+export interface AdminOverview {
+  totalUsers: number
+  absConnectedUsers: number
+  yotoConnectedUsers: number
+  adminUsers: number
+  activeUsers7d: number
+  activeUsers30d: number
+  totalLogins: number
+  logins7d: number
+  logins30d: number
+  totalTransfers: number
+  completedTransfers: number
+  failedTransfers: number
+  transferSuccessRate: number
+  transfers7d: number
+  totalPlaylists: number
+}
+
+export interface AdminUser {
+  id: string
+  username: string
+  isAdmin: boolean
+  absConnected: boolean
+  yotoConnected: boolean
+  createdAt: string
+  lastLoginAt: string | null
+  loginCount: number
+  transferCount: number
+}
+
+export interface UsagePoint {
+  date: string
+  logins: number
+  transfers: number
 }
 
 export interface AbsConnectResponse {

@@ -17,6 +17,7 @@ public class AuthController(
     IAudiobookshelfService absService,
     IYotoService yotoService,
     AudioYotoShelfDbContext db,
+    IConfiguration configuration,
     ILogger<AuthController> logger) : AppControllerBase
 {
     // --- Audiobookshelf Auth ---
@@ -51,6 +52,18 @@ public class AuthController(
             userConnection.DefaultLibraryId = loginResponse.UserDefaultLibraryId ?? userConnection.DefaultLibraryId;
         }
 
+        // Bootstrap admin rights from a comma-separated allowlist (ADMIN_USERNAMES env var or
+        // Admin:Usernames config). The flag also persists in the DB, so it can be granted/revoked
+        // there independently of config. We only promote — never demote — from the allowlist.
+        var adminUsernames = (configuration["Admin:Usernames"] ?? configuration["ADMIN_USERNAMES"] ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (adminUsernames.Contains(absUser.Username, StringComparer.OrdinalIgnoreCase))
+            userConnection.IsAdmin = true;
+
+        // Record the login (a session start) for usage analytics.
+        userConnection.LastLoginAt = DateTimeOffset.UtcNow;
+        db.LoginEvents.Add(new LoginEvent { UserConnectionId = userConnection.Id });
+
         await db.SaveChangesAsync(ct);
 
         // Issue the session cookie that binds every subsequent request to this connection.
@@ -79,12 +92,15 @@ public class AuthController(
 
     private async Task IssueSessionAsync(UserConnection user)
     {
-        var identity = new ClaimsIdentity(
-            [
-                new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-                new Claim(ClaimTypes.Name, user.Username),
-            ],
-            CookieAuthenticationDefaults.AuthenticationScheme);
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new(ClaimTypes.Name, user.Username),
+        };
+        if (user.IsAdmin)
+            claims.Add(new Claim(ClaimTypes.Role, "Admin"));
+
+        var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
 
         await HttpContext.SignInAsync(
             CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
@@ -211,6 +227,7 @@ public class AuthController(
         YotoTokenExpiresAt = user.YotoTokenExpiresAt,
         user.DefaultLibraryId,
         user.DefaultMinAge,
-        user.DefaultMaxAge
+        user.DefaultMaxAge,
+        user.IsAdmin
     };
 }

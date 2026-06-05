@@ -15,6 +15,7 @@ export const useConnectionStore = defineStore('connection', () => {
   const isYotoConnected = computed(() => status.value?.yotoConnected ?? false)
   const isFullyConnected = computed(() => isAbsConnected.value && isYotoConnected.value)
   const username = computed(() => status.value?.username ?? null)
+  const isAdmin = computed(() => status.value?.isAdmin ?? false)
 
   function setUserConnectionId(id: string) {
     userConnectionId.value = id
@@ -95,6 +96,7 @@ export const useConnectionStore = defineStore('connection', () => {
     isYotoConnected,
     isFullyConnected,
     username,
+    isAdmin,
     setUserConnectionId,
     loadStatus,
     refreshStatus: loadStatus,

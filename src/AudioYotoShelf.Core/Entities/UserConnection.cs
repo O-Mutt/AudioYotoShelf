@@ -37,9 +37,17 @@ public class UserConnection : BaseEntity
     public int DefaultMinAge { get; set; } = 5;
     public int DefaultMaxAge { get; set; } = 10;
 
+    // Admin & usage
+    /// <summary>Grants access to the admin analytics area. Set in the DB, or bootstrapped from the
+    /// <c>Admin:Usernames</c> configuration at login.</summary>
+    public bool IsAdmin { get; set; }
+    /// <summary>Timestamp of the most recent successful ABS login (session start).</summary>
+    public DateTimeOffset? LastLoginAt { get; set; }
+
     // Navigation
     public ICollection<CardTransfer> CardTransfers { get; set; } = [];
     public ICollection<GeneratedIcon> GeneratedIcons { get; set; } = [];
+    public ICollection<LoginEvent> LoginEvents { get; set; } = [];
 
     public bool HasValidAbsConnection =>
         !string.IsNullOrEmpty(AudiobookshelfToken) &&
