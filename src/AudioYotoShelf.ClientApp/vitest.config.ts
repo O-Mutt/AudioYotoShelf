@@ -13,6 +13,9 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.spec.ts'],
+    // Console output plus a JUnit file so CI can publish results to the PR (like the backend).
+    reporters: ['default', 'junit'],
+    outputFile: { junit: './test-results/junit.xml' },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'cobertura'],

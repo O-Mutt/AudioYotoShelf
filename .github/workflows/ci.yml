@@ -99,6 +99,14 @@ jobs:
       - name: Test + coverage
         run: npm run test:coverage
 
+      - name: Publish test results to PR
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: src/AudioYotoShelf.ClientApp/test-results/junit.xml
+          check_name: "Frontend Test Results"
+          comment_mode: always
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
