@@ -3,6 +3,10 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Testcontainers 4.12 deprecated the parameterless module builders (we still use
+         new PostgreSqlBuilder().WithImage(...)); TreatWarningsAsErrors would otherwise fail the
+         build on CS0618. Suppress until we migrate to the image-parameter constructor. -->
+    <NoWarn>$(NoWarn);CS0618</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
