@@ -118,3 +118,32 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  integration:
+    name: Integration (.NET + Testcontainers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Testcontainers spins real Postgres + Redis via the runner's Docker daemon, so the app's
+      # startup migrations and the cookie/auth/admin pipeline run for real (the in-memory unit
+      # tests can't cover these).
+      - name: Integration tests
+        run: >
+          dotnet test tests/AudioYotoShelf.IntegrationTests/AudioYotoShelf.IntegrationTests.csproj
+          -c Release
+          --results-directory ./TestResults
+          --logger "trx;LogFileName=integration.trx"
+
+      - name: Publish test results to PR
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: ./TestResults/**/*.trx
+          check_name: "Integration Test Results"
+          comment_mode: always
