@@ -7,3 +7,5 @@ vitest.config.js
 vitest.config.d.ts
 coverage
 test-results
+playwright-report
+playwright/.cache
