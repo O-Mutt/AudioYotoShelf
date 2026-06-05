@@ -38,8 +38,10 @@ public class UserConnection : BaseEntity
     public int DefaultMaxAge { get; set; } = 10;
 
     // Admin & usage
-    /// <summary>Grants access to the admin analytics area. Set in the DB, or bootstrapped from the
-    /// <c>Admin:Usernames</c> configuration at login.</summary>
+    /// <summary>Grants access to the admin analytics area. Set in the DB, or bootstrapped at login
+    /// for <c>Admin:Usernames</c> users who authenticate against the trusted
+    /// <c>Admin:AudiobookshelfUrl</c> server. An admin session (role claim) is only minted when the
+    /// login is against that trusted server, so this flag alone is not sufficient for access.</summary>
     public bool IsAdmin { get; set; }
     /// <summary>Timestamp of the most recent successful ABS login (session start).</summary>
     public DateTimeOffset? LastLoginAt { get; set; }

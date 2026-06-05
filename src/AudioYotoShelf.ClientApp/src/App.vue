@@ -17,8 +17,12 @@ const toast = useToast()
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // 401 = no/expired session; 403 = a stale stored id no longer matches the session.
-    if (error.response?.status === 401 || error.response?.status === 403) {
+    const url: string = error.config?.url ?? ''
+    // The startup /auth/status probe 401s simply when not logged in — handle silently (no toast/
+    // redirect). A 403 is an authorization failure (e.g. a non-admin endpoint), not a dead
+    // session, so it must NOT log the user out.
+    const isStatusProbe = url.includes('/auth/status')
+    if (error.response?.status === 401 && !isStatusProbe) {
       connectionStore.logout()
       router.push('/setup')
       toast.error('Session expired. Please reconnect.')
@@ -30,12 +34,11 @@ api.interceptors.response.use(
 )
 
 onMounted(async () => {
-  if (connectionStore.userConnectionId) {
+  // Identity lives in the http-only cookie; probe the server to restore the session.
+  if (!connectionStore.status) {
     await connectionStore.loadStatus()
-    if (!connectionStore.isAbsConnected) {
-      router.push('/setup')
-    }
-  } else {
+  }
+  if (!connectionStore.isAbsConnected) {
     router.push('/setup')
   }
 })

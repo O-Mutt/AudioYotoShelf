@@ -119,7 +119,16 @@ public class AuthController(
         if (user is null) return NotFound();
 
         // Renew the stored access token from the refresh token if it's expiring, then validate it.
-        var token = await AbsTokens.EnsureValidAsync(db, absService, user, logger, ct);
+        string token;
+        try
+        {
+            token = await AbsTokens.EnsureValidAsync(db, absService, user, logger, ct);
+        }
+        catch (HttpRequestException)
+        {
+            // Refresh token expired/revoked — the connection is no longer valid.
+            return Ok(new { Valid = false });
+        }
 
         var isValid = await absService.ValidateTokenAsync(
             user.AudiobookshelfUrl, token, ct);
