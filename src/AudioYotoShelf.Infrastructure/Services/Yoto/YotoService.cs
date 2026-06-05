@@ -14,12 +14,15 @@ public class YotoService(
     IConfiguration configuration,
     ILogger<YotoService> logger) : IYotoService
 {
-    private const string YotoApiBase = "https://api.yotoplay.com";
-    private const string YotoAuthBase = "https://login.yotoplay.com";
     private const int MaxTranscodePollAttempts = 360;
     private const int TranscodePollDelayMs = 5000;
     private const int MaxUploadAttempts = 4;
     private static readonly JsonSerializerOptions JsonWeb = new(JsonSerializerDefaults.Web);
+
+    // Base URLs are configurable (Yoto:ApiBase / Yoto:AuthBase) so tests/E2E can point them at a
+    // mock Yoto server; they default to the real Yoto endpoints in production.
+    private string YotoApiBase => configuration["Yoto:ApiBase"] ?? "https://api.yotoplay.com";
+    private string YotoAuthBase => configuration["Yoto:AuthBase"] ?? "https://login.yotoplay.com";
 
     private string ClientId => configuration["Yoto:ClientId"]
         ?? throw new InvalidOperationException("Yoto:ClientId not configured");

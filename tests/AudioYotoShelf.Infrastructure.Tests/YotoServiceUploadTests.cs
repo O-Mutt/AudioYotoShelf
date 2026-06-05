@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using AudioYotoShelf.Infrastructure.Services.Yoto;
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -59,6 +60,25 @@ public class YotoServiceUploadTests
         handler.CallCount.Should().Be(1); // a real status is a hard failure, not a transient reset
     }
 
+    [Fact]
+    public void GetAuthorizationUrl_UsesConfiguredAuthBase()
+    {
+        // Lets E2E/tests point the OAuth flow at a mock Yoto server instead of login.yotoplay.com.
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Yoto:ClientId"] = "client-123",
+                ["Yoto:AuthBase"] = "http://localhost:9999",
+            })
+            .Build();
+        var sut = new YotoService(Mock.Of<IHttpClientFactory>(), config, Mock.Of<ILogger<YotoService>>());
+
+        var url = sut.GetAuthorizationUrl("http://app/callback", "state-1");
+
+        url.Should().StartWith("http://localhost:9999/authorize");
+        url.Should().Contain("client_id=client-123");
+    }
+
     private static TestableYotoService CreateSut(HttpMessageHandler handler)
     {
         var factory = new Mock<IHttpClientFactory>();
@@ -69,7 +89,7 @@ public class YotoServiceUploadTests
 
     // Overrides the backoff to a no-op so retry tests run instantly.
     private sealed class TestableYotoService(IHttpClientFactory factory)
-        : YotoService(factory, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(),
+        : YotoService(factory, new ConfigurationBuilder().Build(),
             Mock.Of<ILogger<YotoService>>())
     {
         protected override Task DelayBetweenUploadAttemptsAsync(int attempt, CancellationToken ct) =>
