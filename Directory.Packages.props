@@ -50,7 +50,7 @@
 
   <ItemGroup Label="ImageProcessing">
     <!-- Held at 3.1.x: ImageSharp 4+ requires a paid Six Labors license key to build. -->
-    <PackageVersion Include="SixLabors.ImageSharp" Version="4.0.0" />
+    <PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />
   </ItemGroup>
 
   <ItemGroup Label="Google">
@@ -63,7 +63,7 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="Moq" Version="4.20.72" />
     <!-- Held at 7.x: FluentAssertions 8+ requires a paid commercial license. -->
-    <PackageVersion Include="FluentAssertions" Version="8.10.0" />
+    <PackageVersion Include="FluentAssertions" Version="7.2.2" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.8" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.8" />
