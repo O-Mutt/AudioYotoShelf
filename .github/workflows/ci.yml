@@ -21,7 +21,7 @@ jobs:
     name: Backend (.NET)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -75,7 +75,7 @@ jobs:
       run:
         working-directory: src/AudioYotoShelf.ClientApp
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -123,7 +123,7 @@ jobs:
     name: Integration (.NET + Testcontainers)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -155,7 +155,7 @@ jobs:
       run:
         working-directory: src/AudioYotoShelf.ClientApp
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node
         uses: actions/setup-node@v6
