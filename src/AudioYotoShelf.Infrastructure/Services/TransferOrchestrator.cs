@@ -1,3 +1,4 @@
+using AudioYotoShelf.Core;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.DTOs.Yoto;
@@ -24,6 +25,9 @@ public class TransferOrchestrator(
     TransferMetrics metrics,
     ILogger<TransferOrchestrator> logger) : ITransferOrchestrator
 {
+    // The ErrorMessage column is bounded; a longer message is cut rather than failing the save.
+    private const int MaxStoredErrorLength = 4000;
+
     private string TempDir => configuration.GetValue("Transfer:TempDirectory", "/app/temp")!;
 
     public async Task<TransferResponse> TransferBookAsync(
@@ -86,6 +90,7 @@ public class TransferOrchestrator(
 
         await db.SaveChangesAsync(ct);
 
+        IEnumerable<string> extractedChapterFiles = [];
         try
         {
             var item = await absService.GetLibraryItemAsync(
@@ -109,6 +114,7 @@ public class TransferOrchestrator(
 
             await UpdateStatus(transfer, TransferStatus.DownloadingAudio, 5, ct);
             var (trackMappings, chapterPaths) = await BuildTrackMappingsAsync(user, item, transfer, ct);
+            extractedChapterFiles = chapterPaths.Values;
 
             await UpdateStatus(transfer, TransferStatus.UploadingToYoto, 20, ct);
             var yotoAccessToken = await EnsureYotoTokenAsync(user, ct);
@@ -158,7 +164,7 @@ public class TransferOrchestrator(
             logger.LogError(ex, "Transfer failed: {TransferId}", transfer.Id);
             metrics.RecordFailed();
             transfer.Status = TransferStatus.Failed;
-            transfer.ErrorMessage = ex.Message.Length > 4000 ? ex.Message[..4000] : ex.Message;
+            transfer.ErrorMessage = ex.Message[..Math.Min(ex.Message.Length, MaxStoredErrorLength)];
             await db.SaveChangesAsync(CancellationToken.None);
             await NotifyAsync(transfer, StepLabel(TransferStatus.Failed), CancellationToken.None);
             throw;
@@ -166,6 +172,7 @@ public class TransferOrchestrator(
         finally
         {
             CleanupTempFiles(transfer.Id);
+            DeleteFiles(extractedChapterFiles);
         }
     }
 
@@ -286,12 +293,33 @@ public class TransferOrchestrator(
     // Private pipeline methods
     // =========================================================================
 
+    /// <summary>
+    /// Builds the tracks for a transfer. Extracted chapter files are named by ffmpeg, not by the transfer,
+    /// so <see cref="CleanupTempFiles"/> cannot find them: they are deleted here if building fails, and by
+    /// the caller once the transfer ends.
+    /// </summary>
     internal async Task<(List<TrackMapping> Mappings, Dictionary<int, string> ChapterPaths)> BuildTrackMappingsAsync(
         UserConnection user, AbsLibraryItem item, CardTransfer transfer, CancellationToken ct)
     {
+        var chapterPaths = new Dictionary<int, string>();
+        try
+        {
+            var mappings = await CreateTrackMappingsAsync(user, item, transfer, chapterPaths, ct);
+            return (mappings, chapterPaths);
+        }
+        catch
+        {
+            DeleteFiles(chapterPaths.Values);
+            throw;
+        }
+    }
+
+    private async Task<List<TrackMapping>> CreateTrackMappingsAsync(
+        UserConnection user, AbsLibraryItem item, CardTransfer transfer,
+        Dictionary<int, string> chapterPaths, CancellationToken ct)
+    {
         var media = item.Media!;
         var mappings = new List<TrackMapping>();
-        var chapterPaths = new Dictionary<int, string>();
 
         if (media.AudioFiles.Length == 0)
             throw new InvalidOperationException("Item has no audio files to transfer");
@@ -371,7 +399,7 @@ public class TransferOrchestrator(
         }
 
         await db.SaveChangesAsync(ct);
-        return (mappings, chapterPaths);
+        return mappings;
     }
 
     internal async Task UploadTracksAsync(
@@ -379,27 +407,48 @@ public class TransferOrchestrator(
         CardTransfer transfer, CancellationToken ct)
     {
         var user = await db.UserConnections.FindAsync([transfer.UserConnectionId], ct)!;
+        TrackMapping mapping = null!;
+        TrackUpdate? lastReported = null;
+
+        // Says what is happening to the current track. A repeat of the last thing said is dropped,
+        // because every update is a live message to the browser.
+        void ReportTrack(TrackPhase phase, int? percent, string step)
+        {
+            var update = new TrackUpdate(mapping.Id, phase, percent);
+            if (update == lastReported) return;
+            lastReported = update;
+            _ = NotifyAsync(transfer, step, CancellationToken.None, update);
+        }
 
         for (int i = 0; i < mappings.Count; i++)
         {
-            var mapping = mappings[i];
+            // Cancel only sets a flag; without looking for it here a cancelled book keeps going
+            // through every remaining track (about three minutes each at Yoto).
+            await ThrowIfCancelledAsync(transfer, ct);
+            mapping = mappings[i];
 
             // Check for existing SHA256 deduplication.
             // Scoped to the same user connection: Yoto media (yoto:#sha) is account-scoped and
             // AbsFileIno (inode) can collide across different Audiobookshelf servers.
-            var existingSha = await db.TrackMappings
+            var existing = await db.TrackMappings
                 .Where(tm => tm.AbsFileIno == mapping.AbsFileIno &&
                              tm.YotoTranscodedSha256 != null &&
                              tm.Id != mapping.Id &&
                              tm.CardTransfer.UserConnectionId == transfer.UserConnectionId)
-                .Select(tm => tm.YotoTranscodedSha256)
+                .Select(tm => new { tm.YotoTranscodedSha256, tm.TranscodedFormat, tm.TranscodedDuration, tm.TranscodedFileSize })
                 .FirstOrDefaultAsync(ct);
 
-            if (existingSha is not null)
+            if (existing is not null)
             {
                 logger.LogInformation("Reusing existing SHA256 for track {FileIno}", mapping.AbsFileIno);
-                mapping.YotoTranscodedSha256 = existingSha;
-                mapping.YotoTrackUrl = $"yoto:#{existingSha}";
+                mapping.YotoTranscodedSha256 = existing.YotoTranscodedSha256;
+                mapping.YotoTrackUrl = $"yoto:#{existing.YotoTranscodedSha256}";
+                // Carried from the row this was matched against — Format especially, since a wrong
+                // declared Format (not what Yoto actually transcoded) is what breaks playback.
+                mapping.TranscodedFormat = existing.TranscodedFormat;
+                mapping.TranscodedDuration = existing.TranscodedDuration;
+                mapping.TranscodedFileSize = existing.TranscodedFileSize;
+                ReportTrack(TrackPhase.Reused, null, $"Track {i + 1}/{mappings.Count} is already on Yoto");
                 continue;
             }
 
@@ -418,37 +467,59 @@ public class TransferOrchestrator(
             {
                 // Direct download from ABS — need to buffer to temp file for content-length
                 var tempPath = Path.Combine(TempDir, $"{transfer.Id}_track{i}.tmp");
-                await DownloadToFileAsync(user!, transfer.AbsLibraryItemId, mapping.AbsFileIno, tempPath, ct);
+                ReportTrack(TrackPhase.Downloading, null, $"Downloading track {i + 1}/{mappings.Count} from Audiobookshelf…");
+                contentType = await DownloadToFileAsync(user!, transfer.AbsLibraryItemId, mapping.AbsFileIno, tempPath, ct);
                 audioStream = File.OpenRead(tempPath);
                 contentLength = new FileInfo(tempPath).Length;
-                contentType = "audio/mpeg";
             }
 
             try
             {
-                var sha256 = await yotoService.UploadAndTranscodeAsync(
+                var result = await yotoService.UploadAndTranscodeAsync(
                     yotoAccessToken, audioStream, contentLength, contentType,
-                    new Progress<int>(p =>
+                    new InlineProgress<int>(p =>
                     {
                         var overallProgress = 20 + (int)((i + p / 100.0) / mappings.Count * 50);
                         transfer.ProgressPercent = Math.Min(overallProgress, 70);
-                        var step = p >= 60
-                            ? $"Transcoding track {i + 1}/{mappings.Count} on Yoto…"
-                            : $"Uploading track {i + 1}/{mappings.Count}…";
+                        var (phase, percent) = DescribeTrackProgress(p);
                         // Best-effort live update; no DB write from the progress callback.
-                        _ = NotifyAsync(transfer, step, CancellationToken.None);
+                        ReportTrack(phase, percent, DescribeUploadStep(p, i + 1, mappings.Count));
                     }),
                     ct);
 
-                mapping.YotoTranscodedSha256 = sha256;
-                mapping.YotoTrackUrl = $"yoto:#{sha256}";
+                mapping.YotoTranscodedSha256 = result.Sha256;
+                mapping.YotoTrackUrl = $"yoto:#{result.Sha256}";
+                mapping.TranscodedFormat = result.Format;
+                mapping.TranscodedDuration = result.Duration;
+                mapping.TranscodedFileSize = result.FileSize;
                 await db.SaveChangesAsync(ct);
+                ReportTrack(TrackPhase.Uploaded, null, $"Track {i + 1}/{mappings.Count} is on Yoto");
             }
             finally
             {
                 await audioStream.DisposeAsync();
             }
         }
+    }
+
+    private readonly record struct TrackUpdate(Guid TrackId, TrackPhase Phase, int? Percent);
+
+    /// <summary>The stage a track is at, and Yoto's percentage once it is transcoding, from the track's 0-100 progress.</summary>
+    internal static (TrackPhase Phase, int? Percent) DescribeTrackProgress(int trackProgress) =>
+        trackProgress < YotoUploadProgress.TranscodeStart
+            ? (TrackPhase.Uploading, null)
+            : (TrackPhase.Transcoding, YotoUploadProgress.ToTranscodePercent(trackProgress));
+
+    /// <summary>What to tell the person about a track: the upload is quick, so most of the time it is Yoto's transcode.</summary>
+    internal static string DescribeUploadStep(int trackProgress, int trackNumber, int trackCount)
+    {
+        if (trackProgress < YotoUploadProgress.TranscodeStart)
+            return $"Uploading track {trackNumber}/{trackCount}…";
+
+        var transcoding = $"Transcoding track {trackNumber}/{trackCount} on Yoto…";
+        return trackProgress == YotoUploadProgress.TranscodeStart
+            ? transcoding
+            : $"{transcoding} {YotoUploadProgress.ToTranscodePercent(trackProgress)}%";
     }
 
     internal async Task<Dictionary<int, string>> GenerateIconsAsync(
@@ -553,7 +624,11 @@ public class TransferOrchestrator(
                         Key: $"{(i + 1):D2}01",
                         Title: mapping.ChapterTitle,
                         TrackUrl: mapping.YotoTrackUrl ?? "",
-                        Format: "aac",
+                        // What Yoto actually transcoded to, not what we declared on upload — a mismatch
+                        // (declaring "aac" for audio Yoto kept as opus) plays for a couple of seconds
+                        // then fails on the device. "aac" is the fallback for a row from before this was
+                        // tracked; it matches the extracted-chapter path, which historically was the only one.
+                        Format: mapping.TranscodedFormat ?? "aac",
                         Type: "audio",
                         Duration: mapping.TranscodedDuration ?? (mapping.EndTime - mapping.StartTime),
                         FileSize: mapping.TranscodedFileSize ?? mapping.FileSizeBytes,
@@ -619,29 +694,42 @@ public class TransferOrchestrator(
     private Task<string> EnsureYotoTokenAsync(UserConnection user, CancellationToken ct) =>
         YotoTokens.EnsureValidAsync(db, yotoService, user, logger, ct);
 
-    private async Task DownloadToFileAsync(
+    /// <summary>
+    /// Downloads the source file and returns the content type Audiobookshelf served it as, so the
+    /// caller can tell Yoto the truth. It matters: ABS audiobooks are commonly m4b/m4a, ogg/opus or
+    /// mp3, and Yoto's transcoder is told what it is receiving, not shown it — a wrong declared type
+    /// (e.g. an ogg/opus file sent as "audio/mpeg") produced a card that Yoto played for about a
+    /// second per track before moving on, because it decoded the bytes as the wrong format.
+    /// </summary>
+    private async Task<string> DownloadToFileAsync(
         UserConnection user, string itemId, string fileIno, string outputPath, CancellationToken ct)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
 
-        await using var sourceStream = await absService.DownloadAudioFileAsync(
+        var (sourceStream, _, contentType) = await absService.DownloadAudioFileWithMetadataAsync(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, itemId, fileIno, ct);
-        await using var fileStream = File.Create(outputPath);
-        await sourceStream.CopyToAsync(fileStream, ct);
-        await fileStream.FlushAsync(ct);
+        await using (sourceStream)
+        await using (var fileStream = File.Create(outputPath))
+            await sourceStream.CopyToAsync(fileStream, ct);
 
-        var fileSize = fileStream.Length;
-        logger.LogInformation("Downloaded {FileIno} to {Path} ({Size} bytes)",
-            fileIno, outputPath, fileSize);
+        var fileSize = new FileInfo(outputPath).Length;
+        logger.LogInformation("Downloaded {FileIno} to {Path} ({Size} bytes, {ContentType})",
+            fileIno, outputPath, fileSize, contentType);
+        return contentType;
+    }
+
+    /// <summary>Re-reads the transfer from the database, because Cancel is a write made by another request.</summary>
+    private async Task ThrowIfCancelledAsync(CardTransfer transfer, CancellationToken ct)
+    {
+        await db.Entry(transfer).ReloadAsync(ct);
+        if (transfer.Status == TransferStatus.Cancelled)
+            throw new OperationCanceledException("Transfer was cancelled");
     }
 
     private async Task UpdateStatus(
         CardTransfer transfer, TransferStatus status, int progress, CancellationToken ct)
     {
-        // Re-read from DB to detect if transfer was cancelled while we were working
-        await db.Entry(transfer).ReloadAsync(ct);
-        if (transfer.Status == TransferStatus.Cancelled)
-            throw new OperationCanceledException("Transfer was cancelled");
+        await ThrowIfCancelledAsync(transfer, ct);
 
         transfer.Status = status;
         transfer.ProgressPercent = progress;
@@ -650,12 +738,14 @@ public class TransferOrchestrator(
         await NotifyAsync(transfer, StepLabel(status), ct);
     }
 
-    private async Task NotifyAsync(CardTransfer transfer, string step, CancellationToken ct)
+    private async Task NotifyAsync(CardTransfer transfer, string step, CancellationToken ct, TrackUpdate? track = null)
     {
         try
         {
             await notifier.SendProgressAsync(
-                new TransferProgressUpdate(transfer.Id, transfer.Status, transfer.ProgressPercent, step, transfer.ErrorMessage),
+                new TransferProgressUpdate(
+                    transfer.Id, transfer.Status, transfer.ProgressPercent, step, transfer.ErrorMessage,
+                    track?.TrackId, track?.Phase, track?.Percent),
                 ct);
         }
         catch (Exception ex)
@@ -681,6 +771,7 @@ public class TransferOrchestrator(
     {
         try
         {
+            // Stryker disable once Statement : without the guard GetFiles throws and the catch below logs a warning; nothing else differs
             if (!Directory.Exists(TempDir)) return;
 
             var files = Directory.GetFiles(TempDir, $"{transferId}*");
@@ -693,6 +784,21 @@ public class TransferOrchestrator(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to clean up temp files for transfer {TransferId}", transferId);
+        }
+    }
+
+    private void DeleteFiles(IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to delete temp file {File}", path);
+            }
         }
     }
 

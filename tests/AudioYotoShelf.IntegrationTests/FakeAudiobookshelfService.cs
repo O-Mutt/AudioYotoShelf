@@ -13,7 +13,54 @@ public sealed class FakeAudiobookshelfService : IAudiobookshelfService
     /// <summary>Username the fake ABS server reports for the next login.</summary>
     public string Username { get; set; } = "alice";
 
+    /// <summary>Base URL of the most recent login or API-key authorize call.</summary>
+    public string? LastBaseUrl { get; private set; }
+
     public Task<AbsLoginResponse> LoginAsync(string baseUrl, string username, string password, CancellationToken ct = default)
+    {
+        LastBaseUrl = baseUrl;
+        return Task.FromResult(CurrentUserResponse());
+    }
+
+    public Task<AbsLoginResponse> AuthorizeApiKeyAsync(string baseUrl, string apiKey, CancellationToken ct = default)
+    {
+        LastBaseUrl = baseUrl;
+        return Task.FromResult(CurrentUserResponse());
+    }
+
+    private readonly Dictionary<string, AbsSsoStart> _ssoStartsByState = [];
+
+    public Task<AbsSsoStart> StartSsoAsync(string baseUrl, string? publicBaseUrl, string redirectUri, CancellationToken ct = default)
+    {
+        LastBaseUrl = baseUrl;
+        var state = Guid.NewGuid().ToString("N");
+        var start = new AbsSsoStart(
+            $"https://idp.example/authorize?state={state}",
+            new Dictionary<string, string> { ["connect.sid"] = $"abs-session-{state}" },
+            state,
+            CodeVerifier: $"verifier-{state}");
+        _ssoStartsByState[state] = start;
+        return Task.FromResult(start);
+    }
+
+    /// <summary>
+    /// Behaves as Audiobookshelf does: the exchange only works when it is handed back exactly the
+    /// verifier and session cookies from the start of the same flow, and only once.
+    /// </summary>
+    public Task<AbsLoginResponse> CompleteSsoAsync(
+        string baseUrl, string code, string state, string codeVerifier,
+        IReadOnlyDictionary<string, string> cookies, CancellationToken ct = default)
+    {
+        var isKnownFlow = _ssoStartsByState.Remove(state, out var start);
+        if (!isKnownFlow || start!.CodeVerifier != codeVerifier || !cookies.SequenceEqual(start.Cookies))
+            throw new HttpRequestException("No session");
+
+        LastBaseUrl = baseUrl;
+        var user = CurrentUserResponse().User with { AccessToken = "sso-access-token", RefreshToken = "sso-refresh-token" };
+        return Task.FromResult(new AbsLoginResponse(user, "lib-1"));
+    }
+
+    private AbsLoginResponse CurrentUserResponse()
     {
         var user = new AbsUser(
             Id: "abs-user-1",
@@ -25,7 +72,7 @@ public sealed class FakeAudiobookshelfService : IAudiobookshelfService
             LibrariesAccessible: ["lib-1"],
             AccessToken: null,
             RefreshToken: null);
-        return Task.FromResult(new AbsLoginResponse(user, "lib-1"));
+        return new AbsLoginResponse(user, "lib-1");
     }
 
     public Task<bool> ValidateTokenAsync(string baseUrl, string token, CancellationToken ct = default) =>

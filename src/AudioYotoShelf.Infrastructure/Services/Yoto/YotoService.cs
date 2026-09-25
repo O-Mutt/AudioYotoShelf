@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text.Json;
+using AudioYotoShelf.Core;
 using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Interfaces;
 using Microsoft.Extensions.Configuration;
@@ -15,12 +16,20 @@ public class YotoService(
     ILogger<YotoService> logger) : IYotoService
 {
     private const int MaxTranscodePollAttempts = 360;
+    private const int MaxPercent = 100;
     private const int TranscodePollDelayMs = 5000;
     private const int MaxUploadAttempts = 4;
     private static readonly JsonSerializerOptions JsonWeb = new(JsonSerializerDefaults.Web);
 
     // Base URLs are configurable (Yoto:ApiBase / Yoto:AuthBase) so tests/E2E can point them at a
     // mock Yoto server; they default to the real Yoto endpoints in production.
+    // Yoto grants only a default (user:account:view) to a client that does not ask, and refuses
+    // uploads with "User does not have required scope(s): 'user:content:manage'". Ask for what the
+    // app calls: content (upload audio, create/update/delete cards, list the person's own),
+    // and icons (upload custom ones).
+    private const string OAuthScopes =
+        "profile offline_access openid user:content:manage user:content:view user:icons:manage";
+
     private string YotoApiBase => configuration["Yoto:ApiBase"] ?? "https://api.yotoplay.com";
     private string YotoAuthBase => configuration["Yoto:AuthBase"] ?? "https://login.yotoplay.com";
 
@@ -44,7 +53,7 @@ public class YotoService(
         query["response_type"] = "code";
         query["client_id"] = ClientId;
         query["redirect_uri"] = redirectUri;
-        query["scope"] = "profile offline_access openid";
+        query["scope"] = OAuthScopes;
         query["audience"] = YotoApiBase;
         query["state"] = state;
         return $"{YotoAuthBase}/authorize?{query}";
@@ -169,6 +178,7 @@ public class YotoService(
         }
 
         var cardId = ExtractCardId(responseBody);
+        // Stryker disable once Equality : the condition only gates a warning log line
         if (cardId is null)
             logger.LogWarning("Yoto card create/update returned no recognizable cardId: {Body}",
                 responseBody.Length > 600 ? responseBody[..600] : responseBody);
@@ -229,6 +239,10 @@ public class YotoService(
         }
     }
 
+    // Seam for tests: production waits TranscodePollDelayMs between polls; tests do not wait.
+    protected virtual Task DelayBetweenTranscodePollsAsync(CancellationToken ct) =>
+        Task.Delay(TranscodePollDelayMs, ct);
+
     // Seam for tests: backoff is 2s, 4s, 8s in production; overridden to no-op in unit tests.
     protected virtual Task DelayBetweenUploadAttemptsAsync(int attempt, CancellationToken ct) =>
         Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), ct);
@@ -252,9 +266,10 @@ public class YotoService(
     }
 
     public async Task<YotoTranscodeResponse> PollTranscodeStatusAsync(
-        string accessToken, string uploadId, CancellationToken ct = default)
+        string accessToken, string uploadId, IProgress<int>? progress = null, CancellationToken ct = default)
     {
         using var client = CreateApiClient(accessToken);
+        int? lastReportedPercent = null;
 
         for (var attempt = 0; attempt < MaxTranscodePollAttempts; attempt++)
         {
@@ -265,6 +280,7 @@ public class YotoService(
             var json = await response.Content.ReadAsStringAsync(ct);
 
             // Raw body once per upload (Debug) for diagnosing response-shape changes.
+            // Stryker disable once Equality : the condition only gates a debug log line
             if (attempt == 0)
                 logger.LogDebug("Transcode response for {UploadId}: {Body}",
                     uploadId, json.Length > 600 ? json[..600] : json);
@@ -277,11 +293,17 @@ public class YotoService(
                 return result;
             }
 
-            if (attempt % 10 == 0)
-                logger.LogInformation("Transcode poll {Attempt}/{Max} for {UploadId}: status={Status}",
-                    attempt, MaxTranscodePollAttempts, uploadId, result.Status ?? "null");
+            if (result.Percent is { } percent && percent != lastReportedPercent)
+            {
+                lastReportedPercent = percent;
+                progress?.Report(percent);
+            }
 
-            await Task.Delay(TranscodePollDelayMs, ct);
+            if (attempt % 10 == 0)
+                logger.LogInformation("Transcode poll {Attempt}/{Max} for {UploadId}: phase={Phase} percent={Percent}",
+                    attempt, MaxTranscodePollAttempts, uploadId, result.Phase ?? "unknown", result.Percent?.ToString() ?? "unknown");
+
+            await DelayBetweenTranscodePollsAsync(ct);
         }
 
         var elapsedMinutes = MaxTranscodePollAttempts * TranscodePollDelayMs / 60_000.0;
@@ -335,13 +357,55 @@ public class YotoService(
         string? Str(string name) =>
             node.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() : null;
 
+        var (phase, percent) = ReadYotoProgress(node);
         return new YotoTranscodeResponse(
             Str("transcodedSha256"),
-            TranscodedInfo: null,
-            Str("status") ?? Str("transcodeStatus"));
+            ReadTranscodedInfo(node),
+            Str("status") ?? Str("transcodeStatus"),
+            phase,
+            percent);
     }
 
-    public async Task<string> UploadAndTranscodeAsync(
+    /// <summary>
+    /// What Yoto actually produced — duration, size, channels and (critically) the real codec/format,
+    /// which does not always match what we declared on upload. Absent, or missing any one field, counts
+    /// as no info at all: a caller falling back to its own default is safer than one field being wrong.
+    /// </summary>
+    private static YotoTranscodedInfo? ReadTranscodedInfo(JsonElement node)
+    {
+        if (!node.TryGetProperty("transcodedInfo", out var info) || info.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var hasDuration = info.TryGetProperty("duration", out var duration) && duration.ValueKind == JsonValueKind.Number;
+        var hasFileSize = info.TryGetProperty("fileSize", out var fileSize) && fileSize.ValueKind == JsonValueKind.Number;
+        var channels = info.TryGetProperty("channels", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
+        var format = info.TryGetProperty("format", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
+
+        if (!hasDuration || !hasFileSize || channels is null || format is null)
+            return null;
+
+        return new YotoTranscodedInfo(duration.GetDouble(), fileSize.GetInt64(), channels, format);
+    }
+
+    /// <summary>Yoto reports how far it has got under <c>progress: { phase, percent }</c>.</summary>
+    private static (string? Phase, int? Percent) ReadYotoProgress(JsonElement transcode)
+    {
+        if (!transcode.TryGetProperty("progress", out var progress) || progress.ValueKind != JsonValueKind.Object)
+            return (null, null);
+
+        var phase = progress.TryGetProperty("phase", out var phaseElement) && phaseElement.ValueKind == JsonValueKind.String
+            ? phaseElement.GetString()
+            : null;
+        var hasPercent = progress.TryGetProperty("percent", out var percentElement)
+                         && percentElement.ValueKind == JsonValueKind.Number
+                         && percentElement.TryGetDouble(out _);
+
+        // Kept inside 0-100 here so nothing downstream has to trust what Yoto sends.
+        return (phase, hasPercent ? Math.Clamp((int)Math.Round(percentElement.GetDouble()), 0, MaxPercent) : null);
+    }
+
+
+    public async Task<YotoTranscodeResult> UploadAndTranscodeAsync(
         string accessToken, Stream audioStream, long contentLength, string contentType,
         IProgress<int>? progress = null, CancellationToken ct = default)
     {
@@ -354,11 +418,15 @@ public class YotoService(
         await UploadAudioFileAsync(uploadInfo.UploadUrl, audioStream, contentLength, contentType, ct);
 
         // Step 3: Poll for transcode completion
-        progress?.Report(60);
-        var transcodeResult = await PollTranscodeStatusAsync(accessToken, uploadInfo.UploadId, ct);
+        progress?.Report(YotoUploadProgress.TranscodeStart);
+        var transcodeResult = await PollTranscodeStatusAsync(
+            accessToken, uploadInfo.UploadId,
+            progress is null ? null : new InlineProgress<int>(yoto => progress.Report(YotoUploadProgress.FromTranscodePercent(yoto))),
+            ct);
 
-        progress?.Report(100);
-        return transcodeResult.TranscodedSha256!;
+        progress?.Report(YotoUploadProgress.Complete);
+        var info = transcodeResult.TranscodedInfo;
+        return new YotoTranscodeResult(transcodeResult.TranscodedSha256!, info?.Format, info?.Duration, info?.FileSize);
     }
 
     // --- Icons ---

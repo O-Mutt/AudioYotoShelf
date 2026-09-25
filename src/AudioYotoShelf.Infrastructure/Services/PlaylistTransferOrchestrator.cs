@@ -150,17 +150,20 @@ public class PlaylistTransferOrchestrator(
             {
                 var length = new FileInfo(piece.Path).Length;
                 await using var stream = File.OpenRead(piece.Path);
-                var sha = await yotoService.UploadAndTranscodeAsync(
+                var result = await yotoService.UploadAndTranscodeAsync(
                     yotoToken, stream, length, ContentTypeFor(piece.Path), null, ct);
 
                 yotoTracks.Add(new YotoTrack(
                     Key: $"{chapterIndex:D2}{trackNumber:D2}",
                     Title: piece.Title,
-                    TrackUrl: $"yoto:#{sha}",
-                    Format: "aac",
+                    TrackUrl: $"yoto:#{result.Sha256}",
+                    // What Yoto actually transcoded to; a declared Format that doesn't match plays for
+                    // a couple of seconds then fails on the device. "aac" is the fallback for the rare
+                    // case Yoto's response carries no transcodedInfo at all.
+                    Format: result.Format ?? "aac",
                     Type: "audio",
-                    Duration: piece.DurationSeconds,
-                    FileSize: length,
+                    Duration: result.Duration ?? piece.DurationSeconds,
+                    FileSize: result.FileSize ?? length,
                     Channels: "stereo",
                     Display: display));
                 trackNumber++;
@@ -299,10 +302,22 @@ public class PlaylistTransferOrchestrator(
         return path;
     }
 
-    private static string ContentTypeFor(string path) =>
-        Path.GetExtension(path).ToLowerInvariant() is ".m4a" or ".m4b" or ".mp4" or ".aac"
-            ? "audio/mp4"
-            : "audio/mpeg";
+    /// <summary>
+    /// The declared type sent to Yoto's transcoder, which trusts it rather than sniffing the bytes.
+    /// A merged or chapter-extracted file is always our own ffmpeg m4a output; a file that reached
+    /// here unmerged still has the extension Audiobookshelf served it with (<see cref="DownloadToTempAsync"/>),
+    /// so an ogg/opus or flac source must not fall into the "everything else is mp3" bucket — that
+    /// mismatch is what made a real ogg/opus book play about a second per track before skipping on.
+    /// </summary>
+    internal static string ContentTypeFor(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".m4a" or ".m4b" or ".mp4" or ".aac" => "audio/mp4",
+            ".ogg" or ".opus" => "audio/ogg",
+            ".flac" => "audio/flac",
+            ".wav" => "audio/wav",
+            _ => "audio/mpeg"
+        };
 
     private static void EnsureValidConnections(UserConnection user)
     {

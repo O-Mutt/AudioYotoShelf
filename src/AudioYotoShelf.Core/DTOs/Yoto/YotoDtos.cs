@@ -96,10 +96,14 @@ public record YotoUploadInfo(
     string UploadId
 );
 
+/// <param name="Phase">Yoto's own stage, for example "transcoding" (from <c>transcode.progress.phase</c>).</param>
+/// <param name="Percent">How far Yoto's transcode has got, 0-100 (from <c>transcode.progress.percent</c>); null before it reports one.</param>
 public record YotoTranscodeResponse(
     string? TranscodedSha256,
     YotoTranscodedInfo? TranscodedInfo,
-    string? Status
+    string? Status,
+    string? Phase = null,
+    int? Percent = null
 );
 
 public record YotoTranscodedInfo(
@@ -107,6 +111,18 @@ public record YotoTranscodedInfo(
     long FileSize,
     string Channels,
     string Format
+);
+
+/// <summary>
+/// What a completed upload produced. <see cref="Format"/>/<see cref="Duration"/>/<see cref="FileSize"/>
+/// are null when Yoto's response carried no <c>transcodedInfo</c> — the caller falls back to its own
+/// estimate, but must not invent a format: a wrong declared Format is what breaks playback.
+/// </summary>
+public record YotoTranscodeResult(
+    string Sha256,
+    string? Format,
+    double? Duration,
+    long? FileSize
 );
 
 // --- Icons ---

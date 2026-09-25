@@ -1,6 +1,7 @@
 using AudioYotoShelf.Api.Health;
 using AudioYotoShelf.Api.Hubs;
 using AudioYotoShelf.Api.Middleware;
+using AudioYotoShelf.Core.Configuration;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Infrastructure.Caching;
@@ -41,6 +42,13 @@ builder.Host.UseSerilog((context, loggerConfig) =>
         loggerConfig.WriteTo.Seq(seqUrl);
 });
 
+// The one Audiobookshelf server this deployment may talk to, if configured. Resolved here so a
+// malformed URL stops the boot rather than failing every connect with a generic 500.
+var configuredAbsUrl = AudiobookshelfServer.ResolveConfiguredUrl(
+    builder.Configuration[AudiobookshelfServer.UrlConfigKey]);
+_ = AudiobookshelfServer.ResolveConfiguredUrl(
+    builder.Configuration[AudiobookshelfServer.PublicUrlConfigKey], AudiobookshelfServer.PublicUrlConfigKey);
+
 // --- Database ---
 builder.Services.AddDbContext<AudioYotoShelfDbContext>(options =>
         options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres"), npgsql =>
@@ -75,6 +83,14 @@ builder.Services.AddHttpClient("Audiobookshelf", client =>
     client.DefaultRequestHeaders.Add("Accept", "application/json");
     client.Timeout = TimeSpan.FromMinutes(10);
 });
+// Single sign-on has to read Audiobookshelf's redirect (it is the authorization URL), not follow it,
+// and must never let a cookie jar be shared between people.
+builder.Services.AddHttpClient("AudiobookshelfSso", client => client.Timeout = TimeSpan.FromSeconds(30))
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+    });
 builder.Services.AddHttpClient("Yoto", client =>
 {
     client.DefaultRequestHeaders.Add("Accept", "application/json");
@@ -112,6 +128,7 @@ var cardLimits = builder.Configuration.GetSection(AudioYotoShelf.Core.Configurat
 builder.Services.AddSingleton(cardLimits);
 builder.Services.AddSingleton<ITrackPlanner, TrackPlanner>();
 builder.Services.AddSingleton<ICardCapacityCalculator, CardCapacityCalculator>();
+builder.Services.AddSingleton<IProcessRunner, SystemProcessRunner>();
 builder.Services.AddScoped<IChapterExtractor, FfmpegChapterExtractor>();
 builder.Services.AddScoped<GeminiIconGenerationService>();
 builder.Services.AddScoped<IIconGenerationService, RateLimitedIconService>();
@@ -119,6 +136,7 @@ builder.Services.AddScoped<ITransferOrchestrator, TransferOrchestrator>();
 builder.Services.AddScoped<IPlaylistService, PlaylistService>();
 builder.Services.AddScoped<IPlaylistTransferOrchestrator, PlaylistTransferOrchestrator>();
 builder.Services.AddSingleton<ICacheService, RedisCacheService>();
+builder.Services.AddSingleton<ISsoFlowStore, DistributedCacheSsoFlowStore>();
 builder.Services.AddTransferJobs();
 builder.Services.AddScoped<ITransferProgressNotifier, AudioYotoShelf.Api.Hubs.SignalRTransferProgressNotifier>();
 
@@ -259,6 +277,12 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AudioYotoShelfDbContext>();
     await db.Database.MigrateAsync();
+
+    if (configuredAbsUrl is not null)
+    {
+        var absLockLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        await AbsServerLock.RepointConnectionsAsync(db, configuredAbsUrl, absLockLogger);
+    }
 
     var ffmpeg = scope.ServiceProvider.GetRequiredService<IChapterExtractor>();
     var ffmpegAvailable = await ffmpeg.IsFfmpegAvailableAsync();

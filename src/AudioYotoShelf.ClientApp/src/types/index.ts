@@ -51,6 +51,19 @@ export interface UsagePoint {
   transfers: number
 }
 
+/** Either a username + password or an Audiobookshelf API key. */
+export interface AbsConnectRequest {
+  /** Omitted when the server has its Audiobookshelf URL configured. */
+  baseUrl?: string
+  username?: string
+  password?: string
+  apiKey?: string
+}
+
+export interface AbsConnectOptions {
+  isServerUrlLocked: boolean
+}
+
 export interface AbsConnectResponse {
   userConnectionId: string
   username: string
@@ -201,12 +214,24 @@ export interface TrackMappingResponse {
   iconUrl: string | null
 }
 
+/** Where one track is on its way to Yoto, as the server reports it while a transfer runs. */
+export type TrackPhase = 'Downloading' | 'Uploading' | 'Transcoding' | 'Uploaded' | 'Reused'
+
+/** The latest thing the server said about one track. `percent` is Yoto's own, while it transcodes. */
+export interface TrackLiveState {
+  phase: TrackPhase
+  percent: number | null
+}
+
 export interface TransferProgressUpdate {
   transferId: string
   status: TransferStatus
   progressPercent: number
   currentStep: string | null
   errorMessage: string | null
+  trackId?: string | null
+  trackPhase?: TrackPhase | null
+  trackPercent?: number | null
 }
 
 // --- Batch Transfer (Phase 2) ---
