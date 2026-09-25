@@ -1,3 +1,4 @@
+using AudioYotoShelf.Core;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.DTOs.Yoto;
@@ -24,6 +25,9 @@ public class TransferOrchestrator(
     TransferMetrics metrics,
     ILogger<TransferOrchestrator> logger) : ITransferOrchestrator
 {
+    // The ErrorMessage column is bounded; a longer message is cut rather than failing the save.
+    private const int MaxStoredErrorLength = 4000;
+
     private string TempDir => configuration.GetValue("Transfer:TempDirectory", "/app/temp")!;
 
     public async Task<TransferResponse> TransferBookAsync(
@@ -158,7 +162,7 @@ public class TransferOrchestrator(
             logger.LogError(ex, "Transfer failed: {TransferId}", transfer.Id);
             metrics.RecordFailed();
             transfer.Status = TransferStatus.Failed;
-            transfer.ErrorMessage = ex.Message.Length > 4000 ? ex.Message[..4000] : ex.Message;
+            transfer.ErrorMessage = ex.Message[..Math.Min(ex.Message.Length, MaxStoredErrorLength)];
             await db.SaveChangesAsync(CancellationToken.None);
             await NotifyAsync(transfer, StepLabel(TransferStatus.Failed), CancellationToken.None);
             throw;
@@ -379,10 +383,25 @@ public class TransferOrchestrator(
         CardTransfer transfer, CancellationToken ct)
     {
         var user = await db.UserConnections.FindAsync([transfer.UserConnectionId], ct)!;
+        TrackMapping mapping = null!;
+        TrackUpdate? lastReported = null;
+
+        // Says what is happening to the current track. A repeat of the last thing said is dropped,
+        // because every update is a live message to the browser.
+        void ReportTrack(TrackPhase phase, int? percent, string step)
+        {
+            var update = new TrackUpdate(mapping.Id, phase, percent);
+            if (update == lastReported) return;
+            lastReported = update;
+            _ = NotifyAsync(transfer, step, CancellationToken.None, update);
+        }
 
         for (int i = 0; i < mappings.Count; i++)
         {
-            var mapping = mappings[i];
+            // Cancel only sets a flag; without looking for it here a cancelled book keeps going
+            // through every remaining track (about three minutes each at Yoto).
+            await ThrowIfCancelledAsync(transfer, ct);
+            mapping = mappings[i];
 
             // Check for existing SHA256 deduplication.
             // Scoped to the same user connection: Yoto media (yoto:#sha) is account-scoped and
@@ -400,6 +419,7 @@ public class TransferOrchestrator(
                 logger.LogInformation("Reusing existing SHA256 for track {FileIno}", mapping.AbsFileIno);
                 mapping.YotoTranscodedSha256 = existingSha;
                 mapping.YotoTrackUrl = $"yoto:#{existingSha}";
+                ReportTrack(TrackPhase.Reused, null, $"Track {i + 1}/{mappings.Count} is already on Yoto");
                 continue;
             }
 
@@ -418,6 +438,7 @@ public class TransferOrchestrator(
             {
                 // Direct download from ABS — need to buffer to temp file for content-length
                 var tempPath = Path.Combine(TempDir, $"{transfer.Id}_track{i}.tmp");
+                ReportTrack(TrackPhase.Downloading, null, $"Downloading track {i + 1}/{mappings.Count} from Audiobookshelf…");
                 await DownloadToFileAsync(user!, transfer.AbsLibraryItemId, mapping.AbsFileIno, tempPath, ct);
                 audioStream = File.OpenRead(tempPath);
                 contentLength = new FileInfo(tempPath).Length;
@@ -428,27 +449,46 @@ public class TransferOrchestrator(
             {
                 var sha256 = await yotoService.UploadAndTranscodeAsync(
                     yotoAccessToken, audioStream, contentLength, contentType,
-                    new Progress<int>(p =>
+                    new InlineProgress<int>(p =>
                     {
                         var overallProgress = 20 + (int)((i + p / 100.0) / mappings.Count * 50);
                         transfer.ProgressPercent = Math.Min(overallProgress, 70);
-                        var step = p >= 60
-                            ? $"Transcoding track {i + 1}/{mappings.Count} on Yoto…"
-                            : $"Uploading track {i + 1}/{mappings.Count}…";
+                        var (phase, percent) = DescribeTrackProgress(p);
                         // Best-effort live update; no DB write from the progress callback.
-                        _ = NotifyAsync(transfer, step, CancellationToken.None);
+                        ReportTrack(phase, percent, DescribeUploadStep(p, i + 1, mappings.Count));
                     }),
                     ct);
 
                 mapping.YotoTranscodedSha256 = sha256;
                 mapping.YotoTrackUrl = $"yoto:#{sha256}";
                 await db.SaveChangesAsync(ct);
+                ReportTrack(TrackPhase.Uploaded, null, $"Track {i + 1}/{mappings.Count} is on Yoto");
             }
             finally
             {
                 await audioStream.DisposeAsync();
             }
         }
+    }
+
+    private readonly record struct TrackUpdate(Guid TrackId, TrackPhase Phase, int? Percent);
+
+    /// <summary>The stage a track is at, and Yoto's percentage once it is transcoding, from the track's 0-100 progress.</summary>
+    internal static (TrackPhase Phase, int? Percent) DescribeTrackProgress(int trackProgress) =>
+        trackProgress < YotoUploadProgress.TranscodeStart
+            ? (TrackPhase.Uploading, null)
+            : (TrackPhase.Transcoding, YotoUploadProgress.ToTranscodePercent(trackProgress));
+
+    /// <summary>What to tell the person about a track: the upload is quick, so most of the time it is Yoto's transcode.</summary>
+    internal static string DescribeUploadStep(int trackProgress, int trackNumber, int trackCount)
+    {
+        if (trackProgress < YotoUploadProgress.TranscodeStart)
+            return $"Uploading track {trackNumber}/{trackCount}…";
+
+        var transcoding = $"Transcoding track {trackNumber}/{trackCount} on Yoto…";
+        return trackProgress == YotoUploadProgress.TranscodeStart
+            ? transcoding
+            : $"{transcoding} {YotoUploadProgress.ToTranscodePercent(trackProgress)}%";
     }
 
     internal async Task<Dictionary<int, string>> GenerateIconsAsync(
@@ -628,20 +668,24 @@ public class TransferOrchestrator(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, itemId, fileIno, ct);
         await using var fileStream = File.Create(outputPath);
         await sourceStream.CopyToAsync(fileStream, ct);
-        await fileStream.FlushAsync(ct);
 
         var fileSize = fileStream.Length;
         logger.LogInformation("Downloaded {FileIno} to {Path} ({Size} bytes)",
             fileIno, outputPath, fileSize);
     }
 
-    private async Task UpdateStatus(
-        CardTransfer transfer, TransferStatus status, int progress, CancellationToken ct)
+    /// <summary>Re-reads the transfer from the database, because Cancel is a write made by another request.</summary>
+    private async Task ThrowIfCancelledAsync(CardTransfer transfer, CancellationToken ct)
     {
-        // Re-read from DB to detect if transfer was cancelled while we were working
         await db.Entry(transfer).ReloadAsync(ct);
         if (transfer.Status == TransferStatus.Cancelled)
             throw new OperationCanceledException("Transfer was cancelled");
+    }
+
+    private async Task UpdateStatus(
+        CardTransfer transfer, TransferStatus status, int progress, CancellationToken ct)
+    {
+        await ThrowIfCancelledAsync(transfer, ct);
 
         transfer.Status = status;
         transfer.ProgressPercent = progress;
@@ -650,12 +694,14 @@ public class TransferOrchestrator(
         await NotifyAsync(transfer, StepLabel(status), ct);
     }
 
-    private async Task NotifyAsync(CardTransfer transfer, string step, CancellationToken ct)
+    private async Task NotifyAsync(CardTransfer transfer, string step, CancellationToken ct, TrackUpdate? track = null)
     {
         try
         {
             await notifier.SendProgressAsync(
-                new TransferProgressUpdate(transfer.Id, transfer.Status, transfer.ProgressPercent, step, transfer.ErrorMessage),
+                new TransferProgressUpdate(
+                    transfer.Id, transfer.Status, transfer.ProgressPercent, step, transfer.ErrorMessage,
+                    track?.TrackId, track?.Phase, track?.Percent),
                 ct);
         }
         catch (Exception ex)
@@ -681,6 +727,7 @@ public class TransferOrchestrator(
     {
         try
         {
+            // Stryker disable once Statement : without the guard GetFiles throws and the catch below logs a warning; nothing else differs
             if (!Directory.Exists(TempDir)) return;
 
             var files = Directory.GetFiles(TempDir, $"{transferId}*");
