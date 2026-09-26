@@ -376,15 +376,48 @@ public class YotoService(
         string accessToken, byte[] iconData, string filename, CancellationToken ct = default)
     {
         using var client = CreateApiClient(accessToken);
-        using var formContent = new MultipartFormDataContent();
-        formContent.Add(new ByteArrayContent(iconData), "file", filename);
+
+        // The icon endpoint wants the raw image bytes as the request body, same shape as the cover
+        // endpoint below — not multipart. Confirmed live: a multipart "file" part (what this used to
+        // send) gets a 400 "A binary image file is required" even for a real, valid image; a raw
+        // body with Content-Type: image/png succeeds. Every icon upload had been failing silently
+        // since this feature was written (the caller catches the exception and leaves the chapter
+        // without an icon) — the icon pipeline always produces PNG.
+        using var content = new ByteArrayContent(iconData);
+        content.Headers.ContentType = new MediaTypeHeaderValue("image/png");
 
         var response = await client.PostAsync(
-            $"/media/displayIcons/user/me/upload?autoConvert=true&filename={Uri.EscapeDataString(filename)}", formContent, ct);
+            $"/media/displayIcons/user/me/upload?autoConvert=true&filename={Uri.EscapeDataString(filename)}", content, ct);
         response.EnsureSuccessStatusCode();
 
-        return await response.Content.ReadFromJsonAsync<YotoIconUploadResponse>(ct)
-            ?? throw new InvalidOperationException("Failed to upload custom icon");
+        // The response nests mediaId/url under "displayIcon" (confirmed live) — a flat
+        // { mediaId, url } deserialization target silently comes back null (no exception; a JSON
+        // string property simply has no runtime null-check), which then fails card creation with
+        // "icon16x16 must be in format \"yoto:#{mediaId}\" where mediaId is 43 characters" for
+        // every chapter, since "yoto:#" with nothing after it doesn't match.
+        //
+        // "url" is unreliable: confirmed live it can come back as "{}" (an empty object) rather
+        // than a string, presumably while autoConvert is still processing. Reading that with
+        // GetString() throws InvalidOperationException instead of returning null, which — unlike a
+        // genuinely missing mediaId — must not fail the upload: mediaId is the only thing card
+        // creation needs (icon16x16 = "yoto:#{mediaId}"), url is display-only.
+        var json = await response.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var node = root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty("displayIcon", out var wrapped) && wrapped.ValueKind == JsonValueKind.Object
+            ? wrapped
+            : root;
+
+        var mediaId = node.ValueKind == JsonValueKind.Object && node.TryGetProperty("mediaId", out var m) ? m.GetString() : null;
+        var url = node.ValueKind == JsonValueKind.Object
+            && node.TryGetProperty("url", out var u) && u.ValueKind == JsonValueKind.String
+            ? u.GetString()
+            : null;
+
+        return mediaId is not null
+            ? new YotoIconUploadResponse(mediaId, url)
+            : throw new InvalidOperationException("Failed to upload custom icon");
     }
 
     // --- Cover ---
