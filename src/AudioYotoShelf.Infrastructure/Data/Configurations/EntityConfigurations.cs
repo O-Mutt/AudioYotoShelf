@@ -18,6 +18,7 @@ public class UserConnectionConfiguration : IEntityTypeConfiguration<UserConnecti
         builder.Property(x => x.YotoAccessToken).HasMaxLength(4096);
         builder.Property(x => x.YotoRefreshToken).HasMaxLength(4096);
         builder.Property(x => x.YotoDeviceCode).HasMaxLength(512);
+        builder.Property(x => x.YotoPkceVerifier).HasMaxLength(128);
         builder.Property(x => x.DefaultLibraryId).HasMaxLength(256);
         builder.Property(x => x.IsAdmin).HasDefaultValue(false);
     }

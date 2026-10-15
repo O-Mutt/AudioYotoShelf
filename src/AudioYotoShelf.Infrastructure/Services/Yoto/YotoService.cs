@@ -48,8 +48,11 @@ public class YotoService(
 
     // --- OAuth Authorization Code Flow ---
 
-    public string GetAuthorizationUrl(string redirectUri, string state)
+    // Yoto's Auth0 tenant rejects an authorize request without PKCE ("The PKCE protocol extension is
+    // required"), so every flow carries an S256 challenge whether or not a client secret is configured.
+    public YotoAuthorizationStart StartAuthorization(string redirectUri, string state)
     {
+        var codeVerifier = Pkce.CreateVerifier();
         var query = System.Web.HttpUtility.ParseQueryString(string.Empty);
         query["response_type"] = "code";
         query["client_id"] = ClientId;
@@ -57,10 +60,13 @@ public class YotoService(
         query["scope"] = OAuthScopes;
         query["audience"] = YotoApiBase;
         query["state"] = state;
-        return $"{YotoAuthBase}/authorize?{query}";
+        query["code_challenge"] = Pkce.S256Challenge(codeVerifier);
+        query["code_challenge_method"] = "S256";
+        return new YotoAuthorizationStart($"{YotoAuthBase}/authorize?{query}", codeVerifier);
     }
 
-    public async Task<YotoTokenResponse> ExchangeAuthCodeAsync(string code, string redirectUri, CancellationToken ct = default)
+    public async Task<YotoTokenResponse> ExchangeAuthCodeAsync(
+        string code, string redirectUri, string codeVerifier, CancellationToken ct = default)
     {
         using var client = httpClientFactory.CreateClient("YotoAuth");
         client.BaseAddress = new Uri(YotoAuthBase);
@@ -71,6 +77,7 @@ public class YotoService(
             ["code"] = code,
             ["redirect_uri"] = redirectUri,
             ["client_id"] = ClientId,
+            ["code_verifier"] = codeVerifier,
         };
         if (!string.IsNullOrEmpty(ClientSecret))
             form["client_secret"] = ClientSecret;

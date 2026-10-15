@@ -9,8 +9,8 @@ namespace AudioYotoShelf.Core.Interfaces;
 public interface IYotoService
 {
     // OAuth Authorization Code Flow
-    string GetAuthorizationUrl(string redirectUri, string state);
-    Task<YotoTokenResponse> ExchangeAuthCodeAsync(string code, string redirectUri, CancellationToken ct = default);
+    YotoAuthorizationStart StartAuthorization(string redirectUri, string state);
+    Task<YotoTokenResponse> ExchangeAuthCodeAsync(string code, string redirectUri, string codeVerifier, CancellationToken ct = default);
     Task<YotoTokenResponse> RefreshTokenAsync(string refreshToken, CancellationToken ct = default);
 
     // Cards

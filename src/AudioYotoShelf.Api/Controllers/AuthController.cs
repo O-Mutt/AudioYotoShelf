@@ -322,14 +322,15 @@ public class AuthController(
         if (user is null) return NotFound();
 
         var nonce = Guid.NewGuid().ToString("N");
-        user.YotoDeviceCode = nonce; // reuse column for OAuth state nonce
-        await db.SaveChangesAsync(ct);
-
         var state = $"{userConnectionId}:{nonce}";
         var redirectUri = $"{Request.Scheme}://{Request.Host}/api/auth/yoto/callback";
-        var authUrl = yotoService.GetAuthorizationUrl(redirectUri, state);
+        var authorization = yotoService.StartAuthorization(redirectUri, state);
 
-        return Ok(new { authUrl });
+        user.YotoDeviceCode = nonce; // reuse column for OAuth state nonce
+        user.YotoPkceVerifier = authorization.CodeVerifier;
+        await db.SaveChangesAsync(ct);
+
+        return Ok(new { authUrl = authorization.AuthorizationUrl });
     }
 
     // Top-level redirect back from Yoto. Identity here comes from the single-use, unguessable
@@ -359,16 +360,17 @@ public class AuthController(
         var user = await db.UserConnections.FindAsync([userConnectionId], ct);
         if (user is null) return NotFound();
 
-        if (user.YotoDeviceCode != nonce)
+        if (user.YotoDeviceCode != nonce || user.YotoPkceVerifier is null)
             return BadRequest("State mismatch — possible CSRF attack");
 
         var redirectUri = $"{Request.Scheme}://{Request.Host}/api/auth/yoto/callback";
-        var tokenResponse = await yotoService.ExchangeAuthCodeAsync(code, redirectUri, ct);
+        var tokenResponse = await yotoService.ExchangeAuthCodeAsync(code, redirectUri, user.YotoPkceVerifier, ct);
 
         user.YotoAccessToken = tokenResponse.AccessToken;
         user.YotoRefreshToken = tokenResponse.RefreshToken;
         user.YotoTokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(tokenResponse.ExpiresIn);
         user.YotoDeviceCode = null;
+        user.YotoPkceVerifier = null;
         await db.SaveChangesAsync(ct);
 
         logger.LogInformation("User {Username} connected to Yoto via auth code flow", user.Username);

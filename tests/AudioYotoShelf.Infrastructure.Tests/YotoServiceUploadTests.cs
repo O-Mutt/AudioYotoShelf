@@ -61,7 +61,7 @@ public class YotoServiceUploadTests
     }
 
     [Fact]
-    public void GetAuthorizationUrl_UsesConfiguredAuthBase()
+    public void StartAuthorization_UsesConfiguredAuthBase()
     {
         // Lets E2E/tests point the OAuth flow at a mock Yoto server instead of login.yotoplay.com.
         var config = new ConfigurationBuilder()
@@ -73,7 +73,7 @@ public class YotoServiceUploadTests
             .Build();
         var sut = new YotoService(Mock.Of<IHttpClientFactory>(), config, Mock.Of<ILogger<YotoService>>());
 
-        var url = sut.GetAuthorizationUrl("http://app/callback", "state-1");
+        var url = sut.StartAuthorization("http://app/callback", "state-1").AuthorizationUrl;
 
         url.Should().StartWith("http://localhost:9999/authorize");
         url.Should().Contain("client_id=client-123");
@@ -82,7 +82,7 @@ public class YotoServiceUploadTests
     [Theory]
     [InlineData("openid")]
     [InlineData("profile")]
-    public void GetAuthorizationUrl_DoesNotAskForScopesYotoRejects(string rejectedScope)
+    public void StartAuthorization_DoesNotAskForScopesYotoRejects(string rejectedScope)
     {
         // Yoto answers access_denied when the client is not pre-approved for profile/openid.
         var config = new ConfigurationBuilder()
@@ -90,7 +90,7 @@ public class YotoServiceUploadTests
             .Build();
         var sut = new YotoService(Mock.Of<IHttpClientFactory>(), config, Mock.Of<ILogger<YotoService>>());
 
-        var url = sut.GetAuthorizationUrl("http://app/callback", "state-1");
+        var url = sut.StartAuthorization("http://app/callback", "state-1").AuthorizationUrl;
 
         var scopes = System.Web.HttpUtility.ParseQueryString(new Uri(url).Query)["scope"]!.Split(' ');
         scopes.Should().NotContain(rejectedScope);
@@ -101,7 +101,7 @@ public class YotoServiceUploadTests
     [InlineData("user:content:manage")] // upload audio, create/update/delete cards
     [InlineData("user:content:view")]   // list the person's own cards
     [InlineData("user:icons:manage")]   // upload custom icons
-    public void GetAuthorizationUrl_AsksYotoForTheScopeTheAppUses(string expectedScope)
+    public void StartAuthorization_AsksYotoForTheScopeTheAppUses(string expectedScope)
     {
         // Yoto grants only a default (user:account:view) to a client that does not ask, and then
         // refuses the upload with "User does not have required scope(s): 'user:content:manage'".
@@ -110,7 +110,7 @@ public class YotoServiceUploadTests
             .Build();
         var sut = new YotoService(Mock.Of<IHttpClientFactory>(), config, Mock.Of<ILogger<YotoService>>());
 
-        var url = sut.GetAuthorizationUrl("http://app/callback", "state-1");
+        var url = sut.StartAuthorization("http://app/callback", "state-1").AuthorizationUrl;
 
         var scopes = System.Web.HttpUtility.ParseQueryString(new Uri(url).Query)["scope"]!.Split(' ');
         scopes.Should().Contain(expectedScope);

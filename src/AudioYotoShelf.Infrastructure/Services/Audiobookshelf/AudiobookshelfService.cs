@@ -1,9 +1,6 @@
-using System.Buffers.Text;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Security.Cryptography;
-using System.Text;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.Interfaces;
 using Microsoft.Extensions.Logging;
@@ -19,7 +16,6 @@ public class AudiobookshelfService(
 
     // Its own client because it must not follow redirects, and the shared one should keep doing so.
     private const string SsoClientName = "AudiobookshelfSso";
-    private const int PkceVerifierBytes = 32;
     private const int StateBytes = 32;
     private const int MaxErrorBodyLength = 300;
 
@@ -54,10 +50,10 @@ public class AudiobookshelfService(
     public async Task<AbsSsoStart> StartSsoAsync(
         string baseUrl, string? publicBaseUrl, string redirectUri, CancellationToken ct = default)
     {
-        var codeVerifier = RandomUrlSafeToken(PkceVerifierBytes);
-        var state = RandomUrlSafeToken(StateBytes);
+        var codeVerifier = Pkce.CreateVerifier();
+        var state = Pkce.RandomUrlSafeToken(StateBytes);
         var query = $"response_type=code&redirect_uri={Uri.EscapeDataString(redirectUri)}" +
-                    $"&state={state}&code_challenge={S256Challenge(codeVerifier)}&code_challenge_method=S256";
+                    $"&state={state}&code_challenge={Pkce.S256Challenge(codeVerifier)}&code_challenge_method=S256";
 
         using var client = CreateSsoClient(baseUrl);
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/auth/openid?{query}");
@@ -107,12 +103,6 @@ public class AudiobookshelfService(
         request.Headers.Host = publicBaseUrl.Authority;
         request.Headers.Add("X-Forwarded-Proto", publicBaseUrl.Scheme);
     }
-
-    private static string RandomUrlSafeToken(int byteCount) =>
-        Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(byteCount));
-
-    private static string S256Challenge(string codeVerifier) =>
-        Base64Url.EncodeToString(SHA256.HashData(Encoding.ASCII.GetBytes(codeVerifier)));
 
     private static bool IsRedirect(HttpStatusCode status) =>
         status is HttpStatusCode.Redirect or HttpStatusCode.RedirectKeepVerb or HttpStatusCode.RedirectMethod
