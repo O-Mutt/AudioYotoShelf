@@ -947,23 +947,25 @@ public class AuthControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task AuthorizeYoto_StoresAFreshNonce_AndBindsItToTheUserInTheState()
+    public async Task AuthorizeYoto_StoresAFreshNonceAndTheVerifier_AndBindsTheNonceToTheUserInTheState()
     {
         var user = TestData.CreateUserConnection();
         _db.UserConnections.Add(user);
         await _db.SaveChangesAsync();
         string? capturedState = null;
         var yoto = new Mock<IYotoService>(MockBehavior.Strict);
-        yoto.Setup(y => y.GetAuthorizationUrl(YotoRedirectUri, It.IsAny<string>()))
+        yoto.Setup(y => y.StartAuthorization(YotoRedirectUri, It.IsAny<string>()))
             .Callback<string, string>((_, state) => capturedState = state)
-            .Returns("https://login.yoto.example/authorize?x=1");
+            .Returns(new YotoAuthorizationStart("https://login.yoto.example/authorize?x=1", "verifier-1"));
         var rig = CreateRig(Settings(), yoto.Object, PrincipalFor(user.Id));
         UseHost(rig.Controller);
 
         var result = await rig.Controller.AuthorizeYoto(CancellationToken.None);
 
-        var nonce = FreshDb().UserConnections.Single().YotoDeviceCode;
+        var saved = FreshDb().UserConnections.Single();
+        var nonce = saved.YotoDeviceCode;
         nonce.Should().MatchRegex("^[0-9a-f]{32}$");
+        saved.YotoPkceVerifier.Should().Be("verifier-1");
         capturedState.Should().Be($"{user.Id}:{nonce}");
         Json(result.Should().BeOfType<OkObjectResult>().Subject.Value)
             .GetProperty("authUrl").GetString().Should().Be("https://login.yoto.example/authorize?x=1");
@@ -1013,10 +1015,11 @@ public class AuthControllerTests : IDisposable
         var user = TestData.CreateUserConnection(yotoAccessToken: null, yotoRefreshToken: null);
         user.YotoTokenExpiresAt = null;
         user.YotoDeviceCode = "abc:def";   // a nonce may itself contain a colon
+        user.YotoPkceVerifier = "verifier-1";
         _db.UserConnections.Add(user);
         await _db.SaveChangesAsync();
         var yoto = new Mock<IYotoService>(MockBehavior.Strict);
-        yoto.Setup(y => y.ExchangeAuthCodeAsync("code-1", YotoRedirectUri, It.IsAny<CancellationToken>()))
+        yoto.Setup(y => y.ExchangeAuthCodeAsync("code-1", YotoRedirectUri, "verifier-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new YotoTokenResponse("access-1", "refresh-1", "Bearer", 3600));
         var rig = CreateRig(Settings(), yoto.Object);
         UseHost(rig.Controller);
@@ -1029,6 +1032,22 @@ public class AuthControllerTests : IDisposable
         saved.YotoRefreshToken.Should().Be("refresh-1");
         saved.YotoTokenExpiresAt.Should().BeCloseTo(DateTimeOffset.UtcNow.AddHours(1), TimeSpan.FromMinutes(1));
         saved.YotoDeviceCode.Should().BeNull();
+        saved.YotoPkceVerifier.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task YotoCallback_GoodNonceButNoVerifier_IsRejectedWithoutExchangingTheCode()
+    {
+        // A flow started before PKCE was stored has nothing to prove the code with; Yoto would refuse it anyway.
+        var user = TestData.CreateUserConnection();
+        user.YotoDeviceCode = "expected-nonce";
+        _db.UserConnections.Add(user);
+        await _db.SaveChangesAsync();
+        var rig = CreateRig(Settings(), new Mock<IYotoService>(MockBehavior.Strict).Object);
+
+        var result = await rig.Controller.YotoCallback("code-1", $"{user.Id}:expected-nonce", null, null, CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
     }
 
     // =========================================================================

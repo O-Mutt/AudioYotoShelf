@@ -31,6 +31,8 @@ public class UserConnection : BaseEntity
     public DateTimeOffset? YotoTokenExpiresAt { get; set; }
     /// <summary>Stores OAuth state nonce during authorization code flow.</summary>
     public string? YotoDeviceCode { get; set; }
+    /// <summary>PKCE code verifier for the Yoto authorization in flight; cleared once the code is exchanged.</summary>
+    public string? YotoPkceVerifier { get; set; }
 
     // Preferences
     public string? DefaultLibraryId { get; set; }

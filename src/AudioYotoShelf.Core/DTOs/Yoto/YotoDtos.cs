@@ -11,6 +11,10 @@ public record YotoTokenRequest(
     [property: JsonPropertyName("refresh_token")] string? RefreshToken
 );
 
+/// <summary>Where to send someone to authorize Yoto, and the PKCE secret the code exchange must present.</summary>
+/// <param name="CodeVerifier">Keep server-side until the callback; only its S256 hash is in the URL.</param>
+public record YotoAuthorizationStart(string AuthorizationUrl, string CodeVerifier);
+
 public record YotoTokenResponse(
     [property: JsonPropertyName("access_token")] string AccessToken,
     [property: JsonPropertyName("refresh_token")] string? RefreshToken,

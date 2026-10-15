@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Web;
@@ -34,33 +35,59 @@ public class YotoServiceTests
     // =========================================================================
 
     [Fact]
-    public void GetAuthorizationUrl_UsesTheRealYotoEndpointsByDefault()
+    public void StartAuthorization_UsesTheRealYotoEndpointsByDefault()
     {
-        var url = new Uri(CreateSut().GetAuthorizationUrl("https://app.example/callback", "state-1"));
+        var start = CreateSut().StartAuthorization("https://app.example/callback", "state-1");
+        var url = new Uri(start.AuthorizationUrl);
 
         url.GetLeftPart(UriPartial.Path).Should().Be($"{AuthBase}/authorize");
         var query = HttpUtility.ParseQueryString(url.Query);
-        query.AllKeys.Should().Equal("response_type", "client_id", "redirect_uri", "scope", "audience", "state");
+        query.AllKeys.Should().Equal(
+            "response_type", "client_id", "redirect_uri", "scope", "audience", "state", "code_challenge", "code_challenge_method");
         query["response_type"].Should().Be("code");
         query["client_id"].Should().Be("client-1");
         query["redirect_uri"].Should().Be("https://app.example/callback");
         query["scope"].Should().Be("offline_access user:content:manage user:content:view user:icons:manage");
         query["audience"].Should().Be(ApiBase);
         query["state"].Should().Be("state-1");
+        query["code_challenge_method"].Should().Be("S256");
     }
 
     [Fact]
-    public void GetAuthorizationUrl_UsesTheConfiguredApiBaseAsTheAudience()
+    public void StartAuthorization_SendsTheS256HashOfTheVerifierItReturns()
     {
-        var url = new Uri(CreateSut(apiBase: "http://localhost:8888").GetAuthorizationUrl("https://app/cb", "s"));
+        // Yoto's Auth0 tenant refuses the authorize request without PKCE.
+        var start = CreateSut().StartAuthorization("https://app/cb", "s");
+
+        start.CodeVerifier.Should().MatchRegex("^[A-Za-z0-9_-]{43}$");
+        var challenge = HttpUtility.ParseQueryString(new Uri(start.AuthorizationUrl).Query)["code_challenge"];
+        var expected = Convert.ToBase64String(SHA256.HashData(Encoding.ASCII.GetBytes(start.CodeVerifier)))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        challenge.Should().Be(expected);
+        start.AuthorizationUrl.Should().NotContain(start.CodeVerifier);
+    }
+
+    [Fact]
+    public void StartAuthorization_UsesAFreshVerifierEachTime()
+    {
+        var sut = CreateSut();
+
+        sut.StartAuthorization("https://app/cb", "s").CodeVerifier
+            .Should().NotBe(sut.StartAuthorization("https://app/cb", "s").CodeVerifier);
+    }
+
+    [Fact]
+    public void StartAuthorization_UsesTheConfiguredApiBaseAsTheAudience()
+    {
+        var url = new Uri(CreateSut(apiBase: "http://localhost:8888").StartAuthorization("https://app/cb", "s").AuthorizationUrl);
 
         HttpUtility.ParseQueryString(url.Query)["audience"].Should().Be("http://localhost:8888");
     }
 
     [Fact]
-    public void GetAuthorizationUrl_WithoutAClientId_ThrowsNamingTheSetting()
+    public void StartAuthorization_WithoutAClientId_ThrowsNamingTheSetting()
     {
-        var act = () => CreateSut(clientId: null).GetAuthorizationUrl("https://app/cb", "s");
+        var act = () => CreateSut(clientId: null).StartAuthorization("https://app/cb", "s");
 
         act.Should().Throw<InvalidOperationException>().WithMessage("Yoto:ClientId not configured");
     }
@@ -74,7 +101,7 @@ public class YotoServiceTests
     {
         _handler.Enqueue(HttpStatusCode.OK, """{"access_token":"at","refresh_token":"rt","token_type":"Bearer","expires_in":86400}""");
 
-        var result = await CreateSut(clientSecret: "shh").ExchangeAuthCodeAsync("code-1", "https://app/cb");
+        var result = await CreateSut(clientSecret: "shh").ExchangeAuthCodeAsync("code-1", "https://app/cb", "verifier-1");
 
         var request = _handler.Requests.Single();
         request.Method.Should().Be(HttpMethod.Post);
@@ -86,6 +113,7 @@ public class YotoServiceTests
             ["code"] = "code-1",
             ["redirect_uri"] = "https://app/cb",
             ["client_id"] = "client-1",
+            ["code_verifier"] = "verifier-1",
             ["client_secret"] = "shh",
         });
         _clientNames.Should().Equal("YotoAuth");
@@ -99,9 +127,10 @@ public class YotoServiceTests
     {
         _handler.Enqueue(HttpStatusCode.OK, TokenJson);
 
-        await CreateSut(clientSecret: clientSecret).ExchangeAuthCodeAsync("code-1", "https://app/cb");
+        await CreateSut(clientSecret: clientSecret).ExchangeAuthCodeAsync("code-1", "https://app/cb", "verifier-1");
 
-        _handler.Requests.Single().Form.Keys.Should().BeEquivalentTo("grant_type", "code", "redirect_uri", "client_id");
+        _handler.Requests.Single().Form.Keys.Should()
+            .BeEquivalentTo("grant_type", "code", "redirect_uri", "client_id", "code_verifier");
     }
 
     [Fact]
@@ -109,7 +138,7 @@ public class YotoServiceTests
     {
         _handler.Enqueue(HttpStatusCode.OK, TokenJson);
 
-        await CreateSut(authBase: "http://localhost:9999").ExchangeAuthCodeAsync("c", "r");
+        await CreateSut(authBase: "http://localhost:9999").ExchangeAuthCodeAsync("c", "r", "v");
 
         _handler.Requests.Single().Uri.Should().Be("http://localhost:9999/oauth/token");
     }
@@ -119,7 +148,7 @@ public class YotoServiceTests
     {
         _handler.Enqueue(HttpStatusCode.BadRequest, """{"error":"invalid_grant"}""");
 
-        var act = () => CreateSut().ExchangeAuthCodeAsync("bad", "https://app/cb");
+        var act = () => CreateSut().ExchangeAuthCodeAsync("bad", "https://app/cb", "v");
 
         await act.Should().ThrowAsync<HttpRequestException>();
     }
@@ -129,7 +158,7 @@ public class YotoServiceTests
     {
         _handler.Enqueue(HttpStatusCode.OK, "null");
 
-        var act = () => CreateSut().ExchangeAuthCodeAsync("c", "r");
+        var act = () => CreateSut().ExchangeAuthCodeAsync("c", "r", "v");
 
         await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("Failed to deserialize token response");
     }

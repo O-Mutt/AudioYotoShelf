@@ -18,7 +18,7 @@ namespace AudioYotoShelf.Infrastructure.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.12")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -449,6 +449,10 @@ namespace AudioYotoShelf.Infrastructure.Migrations
                     b.Property<string>("YotoDeviceCode")
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
+
+                    b.Property<string>("YotoPkceVerifier")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
 
                     b.Property<string>("YotoRefreshToken")
                         .HasMaxLength(4096)
