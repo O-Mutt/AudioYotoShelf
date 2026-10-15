@@ -21,6 +21,14 @@ public class YotoService(
 
     // Base URLs are configurable (Yoto:ApiBase / Yoto:AuthBase) so tests/E2E can point them at a
     // mock Yoto server; they default to the real Yoto endpoints in production.
+    // Yoto grants only a default (user:account:view) to a client that does not ask, and refuses
+    // uploads with "User does not have required scope(s): 'user:content:manage'". Ask for what the
+    // app calls: content (upload audio, create/update/delete cards, list the person's own),
+    // and icons (upload custom ones). Not profile/openid: Yoto rejects scopes the client is not
+    // pre-approved for with access_denied, and the app never uses the id_token.
+    private const string OAuthScopes =
+        "offline_access user:content:manage user:content:view user:icons:manage";
+
     private string YotoApiBase => configuration["Yoto:ApiBase"] ?? "https://api.yotoplay.com";
     private string YotoAuthBase => configuration["Yoto:AuthBase"] ?? "https://login.yotoplay.com";
 
@@ -44,9 +52,7 @@ public class YotoService(
         query["response_type"] = "code";
         query["client_id"] = ClientId;
         query["redirect_uri"] = redirectUri;
-        // Yoto rejects un-pre-approved scopes (profile/openid) with access_denied; we never use the
-        // id_token, and offline_access is all that's needed to get a refresh token.
-        query["scope"] = "offline_access";
+        query["scope"] = OAuthScopes;
         query["audience"] = YotoApiBase;
         query["state"] = state;
         return $"{YotoAuthBase}/authorize?{query}";
