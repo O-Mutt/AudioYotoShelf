@@ -26,6 +26,8 @@ public class AuthControllerTests : IDisposable
     private readonly DbContextOptions<AudioYotoShelfDbContext> _options;
     private readonly AudioYotoShelfDbContext _db;
     private readonly AuthController _sut;
+    private readonly Mock<ISsoFlowStore> _flows = new();
+    private readonly Mock<IAuthenticationService> _authentication = new();
 
     public AuthControllerTests()
     {
@@ -38,20 +40,32 @@ public class AuthControllerTests : IDisposable
             Mock.Of<IAudiobookshelfService>(),
             Mock.Of<IYotoService>(),
             _db,
+            _flows.Object,
             new ConfigurationBuilder().Build(),
             Mock.Of<ILogger<AuthController>>());
     }
 
-    private AuthController CreateSut(IAudiobookshelfService absService, string? configuredAbsUrl)
+    private AuthController CreateSut(
+        IAudiobookshelfService absService, string? configuredAbsUrl,
+        IDictionary<string, string?>? extraSettings = null)
     {
         var settings = new Dictionary<string, string?> { ["Audiobookshelf:Url"] = configuredAbsUrl };
+        foreach (var (key, value) in extraSettings ?? new Dictionary<string, string?>())
+            settings[key] = value;
+
         var sut = new AuthController(
             absService,
             Mock.Of<IYotoService>(),
             _db,
+            _flows.Object,
             new ConfigurationBuilder().AddInMemoryCollection(settings).Build(),
             Mock.Of<ILogger<AuthController>>());
-        sut.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+        var services = new ServiceCollection().AddSingleton(_authentication.Object).BuildServiceProvider();
+        var http = new DefaultHttpContext { RequestServices = services };
+        http.Request.Scheme = "https";
+        http.Request.Host = new HostString("yoto.example");
+        sut.ControllerContext = new ControllerContext { HttpContext = http };
         return sut;
     }
 
@@ -89,6 +103,301 @@ public class AuthControllerTests : IDisposable
             new AuthController.AbsConnectRequest(null, "user", "pass"), CancellationToken.None);
 
         result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    // =========================================================================
+    // SSO connect — Start: send the person to Audiobookshelf's sign-in
+    // =========================================================================
+
+    private const string AbsUrl = "http://audiobookshelf:80";
+    private const string PublicAbsUrl = "https://audiobooks.example";
+    private const string SsoCookieName = "ays_sso";
+
+    private static readonly IReadOnlyDictionary<string, string> AbsCookies =
+        new Dictionary<string, string> { ["connect.sid"] = "s%3Aabc", ["auth_method"] = "openid-mobile" };
+
+    private static Dictionary<string, string?> PublicUrlSetting =>
+        new() { ["Audiobookshelf:PublicUrl"] = PublicAbsUrl };
+
+    private static AbsSsoStart SsoStart() =>
+        new("https://auth.example/authorize?state=st-1", AbsCookies, "st-1", "verifier-1");
+
+    [Fact]
+    public async Task SsoStart_NoConfiguredServer_RejectedWithoutContactingAnyone()
+    {
+        var absService = new Mock<IAudiobookshelfService>(MockBehavior.Strict);
+        var sut = CreateSut(absService.Object, configuredAbsUrl: null);
+
+        var result = await sut.StartAbsSso(CancellationToken.None);
+
+        // Says what to set, since the person reading it is whoever runs the server.
+        result.Should().BeOfType<BadRequestObjectResult>().Which.Value.Should().BeOfType<string>()
+            .Which.Should().Contain("Audiobookshelf:Url");
+    }
+
+    [Fact]
+    public async Task SsoStart_AsksAbsForTheFlowUsingOurPublicCallback()
+    {
+        var absService = new Mock<IAudiobookshelfService>();
+        absService.Setup(a => a.StartSsoAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SsoStart());
+        var sut = CreateSut(absService.Object, AbsUrl, PublicUrlSetting);
+
+        await sut.StartAbsSso(CancellationToken.None);
+
+        absService.Verify(a => a.StartSsoAsync(
+            AbsUrl, PublicAbsUrl, "https://yoto.example/api/auth/abs/sso/callback", It.IsAny<CancellationToken>()));
+    }
+
+    [Fact]
+    public async Task SsoStart_RedirectsTheBrowserToTheAuthorizationUrl()
+    {
+        var absService = new Mock<IAudiobookshelfService>();
+        absService.Setup(a => a.StartSsoAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SsoStart());
+        var sut = CreateSut(absService.Object, AbsUrl);
+
+        var result = await sut.StartAbsSso(CancellationToken.None);
+
+        result.Should().BeOfType<RedirectResult>().Which.Url.Should().Be("https://auth.example/authorize?state=st-1");
+    }
+
+    [Fact]
+    public async Task SsoStart_BindsTheFlowToThisBrowserWithAnHttpOnlyCookie()
+    {
+        PendingSsoFlow? saved = null;
+        _flows.Setup(f => f.SaveAsync("st-1", It.IsAny<PendingSsoFlow>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<string, PendingSsoFlow, TimeSpan, CancellationToken>((_, flow, _, _) => saved = flow);
+        var absService = new Mock<IAudiobookshelfService>();
+        absService.Setup(a => a.StartSsoAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SsoStart());
+        var sut = CreateSut(absService.Object, AbsUrl);
+
+        await sut.StartAbsSso(CancellationToken.None);
+
+        var setCookie = sut.Response.Headers.SetCookie.ToString();
+        saved.Should().NotBeNull();
+        saved!.CodeVerifier.Should().Be("verifier-1");
+        saved.AbsCookies.Should().Equal(AbsCookies);
+        setCookie.Should().Contain($"{SsoCookieName}={Uri.EscapeDataString(saved.BrowserNonce)}");
+        setCookie.Should().Contain("httponly").And.Contain("secure");
+        // Lax, not Strict: the browser arrives back from Authentik on a cross-site navigation.
+        setCookie.Should().Contain("samesite=lax");
+    }
+
+    [Fact]
+    public async Task SsoStart_AbsRefuses_SendsThePersonBackToSetupWithAReason()
+    {
+        var absService = new Mock<IAudiobookshelfService>();
+        absService.Setup(a => a.StartSsoAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Invalid redirect_uri"));
+        var sut = CreateSut(absService.Object, AbsUrl);
+
+        var result = await sut.StartAbsSso(CancellationToken.None);
+
+        result.Should().BeOfType<RedirectResult>().Which.Url.Should().Be("/setup?sso=unavailable");
+        _flows.Verify(f => f.SaveAsync(It.IsAny<string>(), It.IsAny<PendingSsoFlow>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // =========================================================================
+    // SSO connect — Callback: trade the code for the person's own tokens
+    // =========================================================================
+
+    private static AbsLoginResponse SsoLogin(string username = "alice") => new(
+        new AbsUser("abs-u1", username, "user", "legacy", true, null, ["lib-1"],
+            AccessToken: "access-jwt", RefreshToken: "refresh-token"),
+        "lib-1");
+
+    private void FlowExistsFor(string nonce = "browser-nonce") =>
+        _flows.Setup(f => f.TakeAsync("st-1", nonce, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PendingSsoFlow("verifier-1", AbsCookies, nonce));
+
+    private static void ArriveWithSsoCookie(AuthController sut, string nonce = "browser-nonce") =>
+        sut.Request.Headers.Cookie = $"{SsoCookieName}={Uri.EscapeDataString(nonce)}";
+
+    private Mock<IAudiobookshelfService> AbsThatCompletesSso(AbsLoginResponse login)
+    {
+        var absService = new Mock<IAudiobookshelfService>();
+        absService.Setup(a => a.CompleteSsoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<string>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(login);
+        return absService;
+    }
+
+    [Theory]
+    [InlineData(null, "st-1")]
+    [InlineData("", "st-1")]
+    [InlineData("code-1", null)]
+    [InlineData("code-1", "")]
+    public async Task SsoCallback_MissingCodeOrState_Rejected(string? code, string? state)
+    {
+        var absService = new Mock<IAudiobookshelfService>(MockBehavior.Strict);
+        var sut = CreateSut(absService.Object, AbsUrl);
+
+        var result = await sut.AbsSsoCallback(code, state, CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>().Which.Value.Should().Be("Missing code or state");
+    }
+
+    [Fact]
+    public async Task SsoCallback_UnknownOrExpiredState_SendsThePersonToStartAgain_WithoutCallingAbs()
+    {
+        // Also what a double-click or a refresh looks like: the state was already used.
+        var absService = new Mock<IAudiobookshelfService>(MockBehavior.Strict);
+        var sut = CreateSut(absService.Object, AbsUrl);
+        ArriveWithSsoCookie(sut);
+
+        var result = await sut.AbsSsoCallback("code-1", "st-unknown", CancellationToken.None);
+
+        result.Should().BeOfType<RedirectResult>().Which.Url.Should().Be("/setup?sso=expired");
+    }
+
+    [Fact]
+    public async Task SsoCallback_OffersTheStoreTheBrowsersCookieSoAnotherBrowserCannotFinishTheFlow()
+    {
+        var absService = new Mock<IAudiobookshelfService>(MockBehavior.Strict);
+        var sut = CreateSut(absService.Object, AbsUrl);
+        ArriveWithSsoCookie(sut, "victim-browser");
+
+        await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
+
+        _flows.Verify(f => f.TakeAsync("st-1", "victim-browser", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SsoCallback_NoCookieFromThisBrowser_TreatedAsExpired()
+    {
+        var absService = new Mock<IAudiobookshelfService>(MockBehavior.Strict);
+        var sut = CreateSut(absService.Object, AbsUrl);
+
+        var result = await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
+
+        result.Should().BeOfType<RedirectResult>().Which.Url.Should().Be("/setup?sso=expired");
+    }
+
+    [Fact]
+    public async Task SsoCallback_Success_StoresThePersonsOwnTokens()
+    {
+        FlowExistsFor();
+        var absService = AbsThatCompletesSso(SsoLogin());
+        var sut = CreateSut(absService.Object, AbsUrl);
+        ArriveWithSsoCookie(sut);
+
+        await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
+
+        var stored = await _db.UserConnections.SingleAsync(u => u.Username == "alice");
+        stored.AudiobookshelfToken.Should().Be("access-jwt");
+        stored.AudiobookshelfRefreshToken.Should().Be("refresh-token");
+        stored.AudiobookshelfUrl.Should().Be(AbsUrl);
+        stored.DefaultLibraryId.Should().Be("lib-1");
+    }
+
+    [Fact]
+    public async Task SsoCallback_Success_HandsAbsTheCodeVerifierAndCookiesFromTheStartOfTheFlow()
+    {
+        FlowExistsFor();
+        var absService = AbsThatCompletesSso(SsoLogin());
+        var sut = CreateSut(absService.Object, AbsUrl);
+        ArriveWithSsoCookie(sut);
+
+        await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
+
+        absService.Verify(a => a.CompleteSsoAsync(AbsUrl, "code-1", "st-1", "verifier-1", AbsCookies, It.IsAny<CancellationToken>()));
+    }
+
+    [Fact]
+    public async Task SsoCallback_Success_IssuesASessionAndReturnsToSetup()
+    {
+        FlowExistsFor();
+        var sut = CreateSut(AbsThatCompletesSso(SsoLogin()).Object, AbsUrl);
+        ArriveWithSsoCookie(sut);
+
+        var result = await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
+
+        result.Should().BeOfType<RedirectResult>().Which.Url.Should().Be("/setup");
+        _authentication.Verify(a => a.SignInAsync(
+            It.IsAny<HttpContext>(), It.IsAny<string>(),
+            It.Is<ClaimsPrincipal>(p => p.Identity!.Name == "alice"), It.IsAny<AuthenticationProperties>()));
+    }
+
+    [Fact]
+    public async Task SsoCallback_Success_RemovesTheBrowserBindingCookie()
+    {
+        FlowExistsFor();
+        var sut = CreateSut(AbsThatCompletesSso(SsoLogin()).Object, AbsUrl);
+        ArriveWithSsoCookie(sut);
+
+        await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
+
+        // The path matters: a cookie is only removed when deleted at the path it was set at.
+        sut.Response.Headers.SetCookie.ToString().Should().Contain($"{SsoCookieName}=;").And.Contain("path=/api/auth/abs/sso");
+    }
+
+    [Fact]
+    public async Task SsoCallback_ReconnectingAnExistingPerson_UpdatesTheirRowRatherThanAddingASecond()
+    {
+        _db.UserConnections.Add(TestData.CreateUserConnection(username: "alice"));
+        await _db.SaveChangesAsync();
+        FlowExistsFor();
+        var sut = CreateSut(AbsThatCompletesSso(SsoLogin()).Object, AbsUrl);
+        ArriveWithSsoCookie(sut);
+
+        await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
+
+        (await _db.UserConnections.CountAsync(u => u.Username == "alice")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task SsoCallback_AbsRejectsTheCode_DoesNotStoreAHalfConnection()
+    {
+        FlowExistsFor();
+        var absService = new Mock<IAudiobookshelfService>();
+        absService.Setup(a => a.CompleteSsoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<string>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("No session"));
+        var sut = CreateSut(absService.Object, AbsUrl);
+        ArriveWithSsoCookie(sut);
+
+        var result = await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
+
+        result.Should().BeOfType<RedirectResult>().Which.Url.Should().Be("/setup?sso=unavailable");
+        (await _db.UserConnections.CountAsync()).Should().Be(0);
+        _authentication.Verify(a => a.SignInAsync(
+            It.IsAny<HttpContext>(), It.IsAny<string>(), It.IsAny<ClaimsPrincipal>(), It.IsAny<AuthenticationProperties>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(AbsUrl, true)]
+    [InlineData("http://some-other-abs:80", false)]
+    public async Task SsoCallback_AdminRightsOnlyFromTheTrustedAdminServer(string adminAbsUrl, bool expectedAdmin)
+    {
+        FlowExistsFor();
+        var settings = new Dictionary<string, string?>
+        {
+            ["Admin:AudiobookshelfUrl"] = adminAbsUrl,
+            ["Admin:Usernames"] = "alice",
+        };
+        var sut = CreateSut(AbsThatCompletesSso(SsoLogin()).Object, AbsUrl, settings);
+        ArriveWithSsoCookie(sut);
+
+        await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
+
+        (await _db.UserConnections.SingleAsync()).IsAdmin.Should().Be(expectedAdmin);
+        _authentication.Verify(a => a.SignInAsync(
+            It.IsAny<HttpContext>(), It.IsAny<string>(),
+            It.Is<ClaimsPrincipal>(p => p.IsInRole("Admin") == expectedAdmin), It.IsAny<AuthenticationProperties>()));
+    }
+
+    [Fact]
+    public async Task SsoCallback_NoConfiguredServer_Rejected()
+    {
+        var absService = new Mock<IAudiobookshelfService>(MockBehavior.Strict);
+        var sut = CreateSut(absService.Object, configuredAbsUrl: null);
+
+        var result = await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>().Which.Value.Should().BeOfType<string>()
+            .Which.Should().Contain("Audiobookshelf:Url");
     }
 
     // =========================================================================
@@ -191,7 +500,7 @@ public class AuthControllerTests : IDisposable
     // Mutation-testing additions — the connect flow, admin grants, sessions and token/OAuth state
     // =========================================================================
 
-    private const string AbsUrl = "http://abs.home";
+    private const string ConnectAbsUrl = "http://abs.home";
     private const string ApiKey = "key-123";
 
     /// <summary>Everything a connect test needs to see: the controller, what was signed in, and the ABS mock.</summary>
@@ -222,6 +531,7 @@ public class AuthControllerTests : IDisposable
             abs.Object,
             yoto ?? Mock.Of<IYotoService>(),
             _db,
+            _flows.Object,
             new ConfigurationBuilder().AddInMemoryCollection(settings).Build(),
             Mock.Of<ILogger<AuthController>>())
         {
@@ -239,7 +549,7 @@ public class AuthControllerTests : IDisposable
     }
 
     private static Dictionary<string, string?> Settings(
-        string? configuredUrl = AbsUrl, string? adminUrl = null, string? adminUsers = null, string? envAdminUsers = null) =>
+        string? configuredUrl = ConnectAbsUrl, string? adminUrl = null, string? adminUsers = null, string? envAdminUsers = null) =>
         new()
         {
             ["Audiobookshelf:Url"] = configuredUrl,
@@ -264,12 +574,12 @@ public class AuthControllerTests : IDisposable
     // ---- which server a request may reach ----
 
     [Theory]
-    [InlineData(AbsUrl, null, AbsUrl)]                       // none supplied: use the configured server
-    [InlineData(AbsUrl, "", AbsUrl)]
-    [InlineData(AbsUrl, "   ", AbsUrl)]
-    [InlineData(AbsUrl, AbsUrl, AbsUrl)]
-    [InlineData(AbsUrl, "HTTP://ABS.HOME/", AbsUrl)]         // case and trailing slash do not matter
-    [InlineData("http://abs.home/", null, AbsUrl)]           // configured value is normalised too
+    [InlineData(ConnectAbsUrl, null, ConnectAbsUrl)]                       // none supplied: use the configured server
+    [InlineData(ConnectAbsUrl, "", ConnectAbsUrl)]
+    [InlineData(ConnectAbsUrl, "   ", ConnectAbsUrl)]
+    [InlineData(ConnectAbsUrl, ConnectAbsUrl, ConnectAbsUrl)]
+    [InlineData(ConnectAbsUrl, "HTTP://ABS.HOME/", ConnectAbsUrl)]         // case and trailing slash do not matter
+    [InlineData("http://abs.home/", null, ConnectAbsUrl)]           // configured value is normalised too
     [InlineData("  ", "http://other.example/", "http://other.example")]   // blank config = not locked
     [InlineData(null, "http://other.example/", "http://other.example")]
     public async Task Connect_ResolvesTheServerToContact(string? configured, string? requested, string expectedBaseUrl)
@@ -320,7 +630,7 @@ public class AuthControllerTests : IDisposable
         _db.UserConnections.Add(existing);
         await _db.SaveChangesAsync();
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(token: "should-not-be-used", refreshToken: "should-not-be-used"));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(token: "should-not-be-used", refreshToken: "should-not-be-used"));
 
         await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
@@ -333,7 +643,7 @@ public class AuthControllerTests : IDisposable
     public async Task Connect_WithPassword_StoresTheSessionTokenFromTheLogin()
     {
         var rig = CreateRig(Settings());
-        rig.Abs.Setup(s => s.LoginAsync(AbsUrl, "alice", "secret", It.IsAny<CancellationToken>()))
+        rig.Abs.Setup(s => s.LoginAsync(ConnectAbsUrl, "alice", "secret", It.IsAny<CancellationToken>()))
             .ReturnsAsync(LoginResponse(token: "session-token", refreshToken: "refresh-1"));
 
         await rig.Controller.ConnectToAudiobookshelf(
@@ -350,12 +660,12 @@ public class AuthControllerTests : IDisposable
     public async Task Connect_NewUser_IsCreatedWithTheirServerAndDefaultLibrary()
     {
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(username: "alice", defaultLibraryId: "lib-9"));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(username: "alice", defaultLibraryId: "lib-9"));
 
         await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
         var saved = FreshDb().UserConnections.Single();
-        (saved.Username, saved.AudiobookshelfUrl, saved.DefaultLibraryId).Should().Be(("alice", AbsUrl, "lib-9"));
+        (saved.Username, saved.AudiobookshelfUrl, saved.DefaultLibraryId).Should().Be(("alice", ConnectAbsUrl, "lib-9"));
     }
 
     [Fact]
@@ -366,12 +676,12 @@ public class AuthControllerTests : IDisposable
         _db.UserConnections.Add(existing);
         await _db.SaveChangesAsync();
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(username: "alice", defaultLibraryId: "lib-new"));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(username: "alice", defaultLibraryId: "lib-new"));
 
         await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
         var saved = FreshDb().UserConnections.Single();
-        (saved.Id, saved.AudiobookshelfUrl, saved.DefaultLibraryId).Should().Be((existing.Id, AbsUrl, "lib-new"));
+        (saved.Id, saved.AudiobookshelfUrl, saved.DefaultLibraryId).Should().Be((existing.Id, ConnectAbsUrl, "lib-new"));
     }
 
     [Fact]
@@ -382,7 +692,7 @@ public class AuthControllerTests : IDisposable
         _db.UserConnections.Add(existing);
         await _db.SaveChangesAsync();
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(username: "alice", defaultLibraryId: null));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(username: "alice", defaultLibraryId: null));
 
         await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
@@ -396,7 +706,7 @@ public class AuthControllerTests : IDisposable
         _db.UserConnections.Add(bob);
         await _db.SaveChangesAsync();
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(username: "alice"));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(username: "alice"));
 
         await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
@@ -412,7 +722,7 @@ public class AuthControllerTests : IDisposable
         _db.UserConnections.Add(yotoUser);
         await _db.SaveChangesAsync();
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(username: "alice", defaultLibraryId: "lib-1"));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(username: "alice", defaultLibraryId: "lib-1"));
 
         var result = await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
@@ -432,7 +742,7 @@ public class AuthControllerTests : IDisposable
     public async Task Connect_NewUser_IsReportedAsNotConnectedToYoto()
     {
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse());
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse());
 
         var result = await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
@@ -446,7 +756,7 @@ public class AuthControllerTests : IDisposable
     public async Task Connect_IssuesACookieSessionForThatUser_WithoutTheAdminRole()
     {
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(username: "alice"));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(username: "alice"));
 
         await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
@@ -551,7 +861,7 @@ public class AuthControllerTests : IDisposable
         string? refreshToken = null, DateTimeOffset? tokenExpiry = null)
     {
         var user = TestData.CreateUserConnection(
-            username: "alice", absUrl: AbsUrl, absToken: "tok", absRefreshToken: refreshToken, absTokenExpiry: tokenExpiry);
+            username: "alice", absUrl: ConnectAbsUrl, absToken: "tok", absRefreshToken: refreshToken, absTokenExpiry: tokenExpiry);
         user.AudiobookshelfTokenValidatedAt = DateTimeOffset.UtcNow.AddDays(-1);
         _db.UserConnections.Add(user);
         await _db.SaveChangesAsync();
@@ -571,7 +881,7 @@ public class AuthControllerTests : IDisposable
     {
         var user = await AddAbsUser();
         var rig = CreateRig(Settings(), user: PrincipalFor(user.Id));
-        rig.Abs.Setup(s => s.ValidateTokenAsync(AbsUrl, "tok", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        rig.Abs.Setup(s => s.ValidateTokenAsync(ConnectAbsUrl, "tok", It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         var result = await rig.Controller.ValidateAbsToken(CancellationToken.None);
 
@@ -586,7 +896,7 @@ public class AuthControllerTests : IDisposable
         var user = await AddAbsUser();
         var before = user.AudiobookshelfTokenValidatedAt;
         var rig = CreateRig(Settings(), user: PrincipalFor(user.Id));
-        rig.Abs.Setup(s => s.ValidateTokenAsync(AbsUrl, "tok", It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        rig.Abs.Setup(s => s.ValidateTokenAsync(ConnectAbsUrl, "tok", It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
         var result = await rig.Controller.ValidateAbsToken(CancellationToken.None);
 
@@ -599,7 +909,7 @@ public class AuthControllerTests : IDisposable
     {
         var user = await AddAbsUser(refreshToken: "refresh", tokenExpiry: DateTimeOffset.UtcNow.AddMinutes(-1));
         var rig = CreateRig(Settings(), user: PrincipalFor(user.Id));
-        rig.Abs.Setup(s => s.RefreshTokenAsync(AbsUrl, "refresh", It.IsAny<CancellationToken>()))
+        rig.Abs.Setup(s => s.RefreshTokenAsync(ConnectAbsUrl, "refresh", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("revoked"));
 
         var result = await rig.Controller.ValidateAbsToken(CancellationToken.None);
