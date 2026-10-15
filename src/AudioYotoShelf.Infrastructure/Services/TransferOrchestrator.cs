@@ -4,6 +4,7 @@ using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
+using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Infrastructure.Data;
 using AudioYotoShelf.Infrastructure.Observability;
 using Microsoft.EntityFrameworkCore;
@@ -25,6 +26,12 @@ public class TransferOrchestrator(
     ILogger<TransferOrchestrator> logger) : ITransferOrchestrator
 {
     private string TempDir => configuration.GetValue("Transfer:TempDirectory", "/app/temp")!;
+
+    // Scopes temp files to this run so an overlapping run of the same transfer (e.g. a Hangfire
+    // re-dispatch) can't delete or overwrite files this run is still reading.
+    private readonly string _runId = Guid.NewGuid().ToString("N");
+
+    private string TempFilePrefix(Guid transferId) => $"{transferId}_{_runId}";
 
     public async Task<TransferResponse> TransferBookAsync(
         Guid userConnectionId, CreateTransferRequest request, Guid? transferId = null, CancellationToken ct = default)
@@ -301,9 +308,7 @@ public class TransferOrchestrator(
             // Multi-file book: each audio file = one track
             foreach (var audioFile in media.AudioFiles.OrderBy(f => f.Index))
             {
-                var chapterTitle = media.Chapters.Length > audioFile.Index
-                    ? media.Chapters[audioFile.Index].Title
-                    : audioFile.Metadata.Filename;
+                var chapterTitle = ChapterTitleResolver.ForFile(media.Chapters, audioFile);
 
                 var mapping = new TrackMapping
                 {
@@ -326,7 +331,7 @@ public class TransferOrchestrator(
             var singleFile = media.AudioFiles[0];
 
             // Download the single file to temp
-            var tempInputPath = Path.Combine(TempDir, $"{transfer.Id}_input{Path.GetExtension(singleFile.Metadata.Filename)}");
+            var tempInputPath = Path.Combine(TempDir, $"{TempFilePrefix(transfer.Id)}_input{Path.GetExtension(singleFile.Metadata.Filename)}");
             await DownloadToFileAsync(user, item.Id, singleFile.Ino, tempInputPath, ct);
 
             for (int i = 0; i < media.Chapters.Length; i++)
@@ -417,7 +422,7 @@ public class TransferOrchestrator(
             else
             {
                 // Direct download from ABS — need to buffer to temp file for content-length
-                var tempPath = Path.Combine(TempDir, $"{transfer.Id}_track{i}.tmp");
+                var tempPath = Path.Combine(TempDir, $"{TempFilePrefix(transfer.Id)}_track{i}.tmp");
                 await DownloadToFileAsync(user!, transfer.AbsLibraryItemId, mapping.AbsFileIno, tempPath, ct);
                 audioStream = File.OpenRead(tempPath);
                 contentLength = new FileInfo(tempPath).Length;
@@ -683,7 +688,7 @@ public class TransferOrchestrator(
         {
             if (!Directory.Exists(TempDir)) return;
 
-            var files = Directory.GetFiles(TempDir, $"{transferId}*");
+            var files = Directory.GetFiles(TempDir, $"{TempFilePrefix(transferId)}*");
             foreach (var file in files)
             {
                 File.Delete(file);
