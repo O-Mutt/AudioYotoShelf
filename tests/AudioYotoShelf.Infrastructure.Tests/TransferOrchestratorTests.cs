@@ -193,6 +193,41 @@ public partial class TransferOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task TransferBookAsync_Cleanup_LeavesOverlappingRunsTempFilesAlone()
+    {
+        var user = await SeedUserAsync();
+        var transferId = Guid.NewGuid();
+        _db.CardTransfers.Add(new CardTransfer
+        {
+            Id = transferId,
+            UserConnectionId = user.Id,
+            AbsLibraryItemId = "item-123",
+            BookTitle = "In flight elsewhere",
+            AgeSuggestionReason = "n/a",
+            Status = TransferStatus.Failed
+        });
+        await _db.SaveChangesAsync();
+
+        _absService.Setup(s => s.GetLibraryItemAsync(
+                It.IsAny<string>(), It.IsAny<string>(), "item-123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestData.CreateAbsLibraryItem());
+
+        // Simulates a concurrent run of the same transfer (Hangfire re-dispatch) mid-download.
+        var otherRunFile = Path.Combine(Path.GetTempPath(), $"{transferId}_{Guid.NewGuid():N}_input.m4b");
+        await File.WriteAllBytesAsync(otherRunFile, new byte[10]);
+        try
+        {
+            await _sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest(), transferId);
+
+            File.Exists(otherRunFile).Should().BeTrue();
+        }
+        finally
+        {
+            File.Delete(otherRunFile);
+        }
+    }
+
+    [Fact]
     public async Task TransferBookAsync_WithAgeOverride_StoresOverrideValues()
     {
         var user = await SeedUserAsync();
@@ -314,11 +349,13 @@ public partial class TransferOrchestratorTests : IDisposable
     [Fact]
     public async Task TransferBookAsync_GeneratesIconForEachChapter()
     {
+        // Audiobookshelf's AudioFile.Index is 1-based (confirmed live against a real book) —
+        // file 1 is the first file, and lines up with chapters[0].
         var user = await SeedUserAsync();
         var audioFiles = new[]
         {
-            TestData.CreateAbsAudioFile(0, "ino-1"),
-            TestData.CreateAbsAudioFile(1, "ino-2")
+            TestData.CreateAbsAudioFile(1, "ino-1"),
+            TestData.CreateAbsAudioFile(2, "ino-2")
         };
         var chapters = new[]
         {
@@ -658,7 +695,7 @@ public partial class TransferOrchestratorTests : IDisposable
     {
         var user = await SeedUserAsync();
         ServeItem("book-a", TestData.CreateAbsMedia(
-            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1"), TestData.CreateAbsAudioFile(1, "ino-2")],
+            audioFiles: [TestData.CreateAbsAudioFile(1, "ino-1"), TestData.CreateAbsAudioFile(2, "ino-2")],
             chapters: [TestData.CreateAbsChapter(0, "Same", 0, 300), TestData.CreateAbsChapter(1, "Same", 300, 600)]));
 
         await TransferAsync(user, "book-a");
@@ -678,7 +715,7 @@ public partial class TransferOrchestratorTests : IDisposable
     {
         var user = await SeedUserAsync();
         ServeItem("book-a", TestData.CreateAbsMedia(
-            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1"), TestData.CreateAbsAudioFile(1, "ino-2")],
+            audioFiles: [TestData.CreateAbsAudioFile(1, "ino-1"), TestData.CreateAbsAudioFile(2, "ino-2")],
             chapters: [TestData.CreateAbsChapter(0, "Same", 0, 300), TestData.CreateAbsChapter(1, "Same", 300, 600)]));
 
         await TransferAsync(user, "book-a");

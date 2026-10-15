@@ -25,6 +25,7 @@ const route = useRoute()
 const connectionStore = useConnectionStore()
 
 const ssoNotice = computed(() => SSO_NOTICES.get(String(route.query.sso ?? '')) ?? null)
+const yotoError = typeof route.query.yotoError === 'string' ? route.query.yotoError : null
 
 // ABS form
 const isServerUrlLocked = ref(false)
@@ -247,6 +248,9 @@ function goToLibrary() {
         >
           Authorize with Yoto
         </button>
+        <p v-if="yotoError" class="mt-2 text-sm text-red-600">
+          {{ yotoError }}
+        </p>
       </div>
     </div>
 

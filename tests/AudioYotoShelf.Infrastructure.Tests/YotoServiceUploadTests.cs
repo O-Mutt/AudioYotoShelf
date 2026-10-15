@@ -82,6 +82,21 @@ public class YotoServiceUploadTests
     [Theory]
     [InlineData("openid")]
     [InlineData("profile")]
+    public void GetAuthorizationUrl_DoesNotAskForScopesYotoRejects(string rejectedScope)
+    {
+        // Yoto answers access_denied when the client is not pre-approved for profile/openid.
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Yoto:ClientId"] = "client-123" })
+            .Build();
+        var sut = new YotoService(Mock.Of<IHttpClientFactory>(), config, Mock.Of<ILogger<YotoService>>());
+
+        var url = sut.GetAuthorizationUrl("http://app/callback", "state-1");
+
+        var scopes = System.Web.HttpUtility.ParseQueryString(new Uri(url).Query)["scope"]!.Split(' ');
+        scopes.Should().NotContain(rejectedScope);
+    }
+
+    [Theory]
     [InlineData("offline_access")]
     [InlineData("user:content:manage")] // upload audio, create/update/delete cards
     [InlineData("user:content:view")]   // list the person's own cards
