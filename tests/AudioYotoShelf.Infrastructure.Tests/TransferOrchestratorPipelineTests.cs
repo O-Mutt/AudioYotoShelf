@@ -106,9 +106,9 @@ public partial class TransferOrchestratorTests
             var media = TestData.CreateAbsMedia(
                 audioFiles: Files((0, "ino-1", 600, 9_000)),
                 chapters: [TestData.CreateAbsChapter(0, "One", 0, 250), TestData.CreateAbsChapter(1, "Two", 250, 600)]);
-            _absService.Setup(s => s.DownloadAudioFileAsync(
+            _absService.Setup(s => s.DownloadAudioFileWithMetadataAsync(
                     It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(() => new MemoryStream([1, 2, 3, 4]));
+                .ReturnsAsync(() => (new MemoryStream([1, 2, 3, 4]) as Stream, 4L, "audio/mp4"));
             var seenInputs = new List<(string Path, string Hex, double Start, double End)>();
             _chapterExtractor.Setup(c => c.ExtractChapterAsync(
                     It.IsAny<string>(), It.IsAny<double>(), It.IsAny<double>(), "m4a", It.IsAny<CancellationToken>()))
@@ -121,7 +121,7 @@ public partial class TransferOrchestratorTests
             var (mappings, chapterPaths) = await sut.BuildTrackMappingsAsync(
                 TestData.CreateUserConnection(), TestData.CreateAbsLibraryItem("book-9", media), transfer, CancellationToken.None);
 
-            _absService.Verify(s => s.DownloadAudioFileAsync(
+            _absService.Verify(s => s.DownloadAudioFileWithMetadataAsync(
                 It.IsAny<string>(), It.IsAny<string>(), "book-9", "ino-1", It.IsAny<CancellationToken>()), Times.Once);
             seenInputs.Select(s => (s.Hex, s.Start, s.End)).Should().Equal(
                 ("01020304", 0.0, 250.0),
@@ -186,7 +186,7 @@ public partial class TransferOrchestratorTests
                     progress!.Report(reports.Dequeue());
                     seenProgress.Add(transfer.ProgressPercent);
                 }
-                return "sha-x";
+                return new YotoTranscodeResult("sha-x", null, null, null);
             });
         var original = SynchronizationContext.Current;
         SynchronizationContext.SetSynchronizationContext(new InlineSynchronizationContext());
@@ -223,7 +223,7 @@ public partial class TransferOrchestratorTests
             {
                 progress!.Report(250);   // a runaway value: the cap must hold
                 seen = transfer.ProgressPercent;
-                return "sha-x";
+                return new YotoTranscodeResult("sha-x", null, null, null);
             });
         var original = SynchronizationContext.Current;
         SynchronizationContext.SetSynchronizationContext(new InlineSynchronizationContext());
@@ -253,27 +253,29 @@ public partial class TransferOrchestratorTests
             .ReturnsAsync((string _, Stream stream, long length, string type, IProgress<int>? _, CancellationToken _) =>
             {
                 sent = (length, type, stream);
-                return "sha-chapter";
+                return new YotoTranscodeResult("sha-chapter", null, null, null);
             });
 
         await _sut.UploadTracksAsync("token", [mapping], new Dictionary<int, string> { [0] = _tempChapterFile }, transfer, CancellationToken.None);
 
         (sent!.Value.Length, sent.Value.Type).Should().Be((100L, "audio/mp4"));
         sent.Value.Stream.CanRead.Should().BeFalse("the stream is disposed once the upload returns");
-        _absService.Verify(s => s.DownloadAudioFileAsync(
+        _absService.Verify(s => s.DownloadAudioFileWithMetadataAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task UploadTracks_WholeFileTrack_IsDownloadedFirstAndUploadedAsMpeg_SavingTheShaAndUrl()
+    public async Task UploadTracks_WholeFileTrack_IsDownloadedFirstAndUploadedAsTheContentTypeAudiobookshelfServed_SavingTheShaAndUrl()
     {
+        // Yoto's transcoder is told what the bytes are, not shown them — declaring an ogg/opus file as
+        // mp3 (as the code used to, unconditionally) made Yoto decode it wrong and play ~1s per track.
         var (user, transfer) = await SeedTransferAsync();
         var mapping = Mapping(transfer.Id, "ino-9", 0);
         _db.TrackMappings.Add(mapping);
         await _db.SaveChangesAsync();
-        _absService.Setup(s => s.DownloadAudioFileAsync(
+        _absService.Setup(s => s.DownloadAudioFileWithMetadataAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => new MemoryStream(new byte[250]));
+            .ReturnsAsync(() => (new MemoryStream(new byte[250]) as Stream, 250L, "audio/ogg"));
         (long Length, string Type)? sent = null;
         _yotoService.Setup(s => s.UploadAndTranscodeAsync(
                 It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
@@ -281,7 +283,7 @@ public partial class TransferOrchestratorTests
             .ReturnsAsync((string _, Stream _, long length, string type, IProgress<int>? _, CancellationToken _) =>
             {
                 sent = (length, type);
-                return "sha-whole";
+                return new YotoTranscodeResult("sha-whole", null, null, null);
             });
 
         try
@@ -293,11 +295,70 @@ public partial class TransferOrchestratorTests
             File.Delete(Path.Combine(Path.GetTempPath(), $"{transfer.Id}_track0.tmp"));
         }
 
-        sent.Should().Be((250L, "audio/mpeg"));
-        _absService.Verify(s => s.DownloadAudioFileAsync(
+        sent.Should().Be((250L, "audio/ogg"));
+        _absService.Verify(s => s.DownloadAudioFileWithMetadataAsync(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, transfer.AbsLibraryItemId, "ino-9", It.IsAny<CancellationToken>()), Times.Once);
         var stored = (await StoredMappingsAsync(transfer.Id)).Single();
         (stored.YotoTranscodedSha256, stored.YotoTrackUrl).Should().Be(("sha-whole", "yoto:#sha-whole"));
+    }
+
+    [Fact]
+    public async Task UploadTracks_FreshUpload_StoresWhatYotoActuallyTranscodedTo()
+    {
+        var (_, transfer) = await SeedTransferAsync();
+        var mapping = Mapping(transfer.Id, "ino-fresh", 0);
+        _db.TrackMappings.Add(mapping);
+        await _db.SaveChangesAsync();
+        _yotoService.Setup(s => s.UploadAndTranscodeAsync(
+                It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
+                It.IsAny<IProgress<int>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new YotoTranscodeResult("sha-fresh", "opus", 1970.4, 16_898_819));
+
+        try
+        {
+            await _sut.UploadTracksAsync("token", [mapping], new Dictionary<int, string>(), transfer, CancellationToken.None);
+        }
+        finally
+        {
+            File.Delete(Path.Combine(Path.GetTempPath(), $"{transfer.Id}_track0.tmp"));
+        }
+
+        var stored = (await StoredMappingsAsync(transfer.Id)).Single();
+        (stored.TranscodedFormat, stored.TranscodedDuration, stored.TranscodedFileSize)
+            .Should().Be(("opus", 1970.4, 16_898_819L));
+    }
+
+    [Fact]
+    public async Task UploadTracks_ReusedTrack_CopiesTheRealFormatFromTheExistingUpload()
+    {
+        // Not just the SHA: a reused track must also carry what Yoto really transcoded the audio to,
+        // or the card falls back to "aac" and breaks playback exactly as a fresh upload would.
+        var user = await SeedUserAsync();
+        var earlierTransfer = TestData.CreateCardTransfer(user.Id);
+        _db.CardTransfers.Add(earlierTransfer);
+        var earlierMapping = Mapping(earlierTransfer.Id, "ino-shared", 0);
+        earlierMapping.YotoTranscodedSha256 = "sha-shared";
+        earlierMapping.YotoTrackUrl = "yoto:#sha-shared";
+        earlierMapping.TranscodedFormat = "opus";
+        earlierMapping.TranscodedDuration = 1970.4;
+        earlierMapping.TranscodedFileSize = 16_898_819;
+        _db.TrackMappings.Add(earlierMapping);
+        var transfer = TestData.CreateCardTransfer(user.Id);
+        _db.CardTransfers.Add(transfer);
+        var mapping = Mapping(transfer.Id, "ino-shared", 0);
+        _db.TrackMappings.Add(mapping);
+        await _db.SaveChangesAsync();
+        await _sut.UploadTracksAsync("token", [mapping], new Dictionary<int, string>(), transfer, CancellationToken.None);
+        // The reused-track branch sets the mapping's properties but, like the pre-existing SHA/URL
+        // reuse it extends, does not save — it relies on TransferBookAsync's later save. Match that.
+        await _db.SaveChangesAsync();
+
+        var stored = (await StoredMappingsAsync(transfer.Id)).Single();
+        (stored.YotoTranscodedSha256, stored.TranscodedFormat, stored.TranscodedDuration, stored.TranscodedFileSize)
+            .Should().Be(("sha-shared", "opus", 1970.4, 16_898_819L));
+        _yotoService.Verify(s => s.UploadAndTranscodeAsync(
+            It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
+            It.IsAny<IProgress<int>?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // --- GenerateIconsAsync
@@ -414,6 +475,20 @@ public partial class TransferOrchestratorTests
         var second = content.Chapters[1].Tracks.Single();
         (second.Key, second.TrackUrl, second.Duration, second.FileSize, second.Display!.Icon16X16)
             .Should().Be(("0201", "yoto:#sha", 55.5, 4_444L, "yoto:#icon-1"));
+    }
+
+    [Fact]
+    public async Task CreateYotoCard_ATrackTranscodedToSomethingOtherThanAac_DeclaresWhatItReallyIs()
+    {
+        // A declared Format that doesn't match what Yoto actually made fails on the device after a
+        // couple of seconds — measured live: an opus track declared "aac" played ~1s then skipped.
+        var transfer = TestData.CreateCardTransfer();
+        var opusTrack = CardMapping(0);
+        opusTrack.TranscodedFormat = "opus";
+
+        var (content, _, _, _) = await BuildCardAsync(transfer, TestData.CreateAbsMetadata(), [opusTrack]);
+
+        content.Chapters.Single().Tracks.Single().Format.Should().Be("opus");
     }
 
     [Fact]

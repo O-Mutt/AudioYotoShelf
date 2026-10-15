@@ -1,4 +1,5 @@
 using AudioYotoShelf.Core.DTOs.Transfer;
+using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
@@ -38,9 +39,9 @@ public class TransferTrackStateTests : IDisposable
             Mock.Of<IAgeSuggestionService>(), Mock.Of<IChapterExtractor>(), _notifier, configuration,
             new TransferMetrics(), Mock.Of<ILogger<TransferOrchestrator>>());
 
-        _abs.Setup(a => a.DownloadAudioFileAsync(
+        _abs.Setup(a => a.DownloadAudioFileWithMetadataAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => new MemoryStream([1, 2, 3]));
+            .ReturnsAsync(() => (new MemoryStream([1, 2, 3]) as Stream, 3L, "audio/mpeg"));
     }
 
     public void Dispose()
@@ -58,7 +59,7 @@ public class TransferTrackStateTests : IDisposable
             {
                 foreach (var p in trackProgress) progress?.Report(p);
             })
-            .ReturnsAsync("sha-from-yoto");
+            .ReturnsAsync(new YotoTranscodeResult("sha-from-yoto", null, null, null));
 
     private async Task<(CardTransfer Transfer, List<TrackMapping> Tracks)> SeedTransferAsync(int trackCount)
     {
@@ -160,7 +161,7 @@ public class TransferTrackStateTests : IDisposable
         _yoto.Setup(y => y.UploadAndTranscodeAsync(
                 Token, It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
                 It.IsAny<IProgress<int>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => ++calls == 2 ? throw new HttpRequestException("403") : "sha");
+            .ReturnsAsync(() => ++calls == 2 ? throw new HttpRequestException("403") : new YotoTranscodeResult("sha", null, null, null));
 
         var act = () => UploadAsync(transfer, tracks);
 

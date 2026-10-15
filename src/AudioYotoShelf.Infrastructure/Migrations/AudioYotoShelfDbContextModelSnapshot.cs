@@ -18,7 +18,7 @@ namespace AudioYotoShelf.Infrastructure.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.0")
+                .HasAnnotation("ProductVersion", "10.0.12")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -357,6 +357,10 @@ namespace AudioYotoShelf.Infrastructure.Migrations
 
                     b.Property<long?>("TranscodedFileSize")
                         .HasColumnType("bigint");
+
+                    b.Property<string>("TranscodedFormat")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");

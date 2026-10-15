@@ -331,12 +331,12 @@ public partial class TransferOrchestratorTests
             var stored = await ReadTransferAsync(transferId);
             seen.Add((during, stored.Status, stored.ProgressPercent));
         }
-        _absService.Setup(s => s.DownloadAudioFileAsync(
+        _absService.Setup(s => s.DownloadAudioFileWithMetadataAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
                 await Snapshot("download");
-                return new MemoryStream(new byte[100]);
+                return (new MemoryStream(new byte[100]) as Stream, 100L, "audio/mpeg");
             });
         _yotoService.Setup(s => s.UploadAndTranscodeAsync(
                 It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
@@ -344,7 +344,7 @@ public partial class TransferOrchestratorTests
             .Returns(async () =>
             {
                 await Snapshot("upload");
-                return "sha";
+                return new YotoTranscodeResult("sha", null, null, null);
             });
         _iconService.Setup(s => s.GenerateChapterIconAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
