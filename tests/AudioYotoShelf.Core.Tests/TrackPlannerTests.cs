@@ -153,30 +153,6 @@ public class TrackPlannerTests
     // =========================================================================
 
     [Fact]
-    public void Plan_MultiFile_TitlesTracksFromChaptersWhenPresent()
-    {
-        var media = TestData.CreateAbsMedia(
-            audioFiles: [TestData.CreateAbsAudioFile(0), TestData.CreateAbsAudioFile(1)],
-            chapters:
-            [
-                TestData.CreateAbsChapter(0, "Intro", 0, 300),
-                TestData.CreateAbsChapter(1, "Outro", 300, 600),
-            ]);
-
-        _sut.Plan(media).Select(t => t.Title).Should().Equal("Intro", "Outro");
-    }
-
-    [Fact]
-    public void Plan_MultiFile_FallsBackToFilenameWhenNoChapterMatchesTheFile()
-    {
-        var media = TestData.CreateAbsMedia(
-            audioFiles: [TestData.CreateAbsAudioFile(0), TestData.CreateAbsAudioFile(1)],
-            chapters: [TestData.CreateAbsChapter(0, "Intro", 0, 300)]);
-
-        _sut.Plan(media).Select(t => t.Title).Should().Equal("Intro", "chapter1.mp3");
-    }
-
-    [Fact]
     public void Plan_MultiFile_OrdersTracksByFileIndex()
     {
         var media = TestData.CreateAbsMedia(

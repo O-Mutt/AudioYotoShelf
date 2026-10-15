@@ -645,7 +645,7 @@ public class AuthControllerTests : IDisposable
     {
         var rig = CreateRig(Settings(), new Mock<IYotoService>(MockBehavior.Strict).Object);
 
-        var result = await rig.Controller.YotoCallback("code-1", state, CancellationToken.None);
+        var result = await rig.Controller.YotoCallback("code-1", state, null, null, CancellationToken.None);
 
         result.Should().BeOfType<BadRequestObjectResult>().Which.Value.Should().Be("Invalid state parameter");
     }
@@ -655,7 +655,7 @@ public class AuthControllerTests : IDisposable
     {
         var rig = CreateRig(Settings(), new Mock<IYotoService>(MockBehavior.Strict).Object);
 
-        var result = await rig.Controller.YotoCallback("code-1", $"{Guid.NewGuid()}:nonce", CancellationToken.None);
+        var result = await rig.Controller.YotoCallback("code-1", $"{Guid.NewGuid()}:nonce", null, null, CancellationToken.None);
 
         result.Should().BeOfType<NotFoundResult>();
     }
@@ -669,7 +669,7 @@ public class AuthControllerTests : IDisposable
         await _db.SaveChangesAsync();
         var rig = CreateRig(Settings(), new Mock<IYotoService>(MockBehavior.Strict).Object);
 
-        var result = await rig.Controller.YotoCallback("code-1", $"{user.Id}:forged-nonce", CancellationToken.None);
+        var result = await rig.Controller.YotoCallback("code-1", $"{user.Id}:forged-nonce", null, null, CancellationToken.None);
 
         result.Should().BeOfType<BadRequestObjectResult>().Which.Value
             .Should().Be("State mismatch — possible CSRF attack");
@@ -690,7 +690,7 @@ public class AuthControllerTests : IDisposable
         var rig = CreateRig(Settings(), yoto.Object);
         UseHost(rig.Controller);
 
-        var result = await rig.Controller.YotoCallback("code-1", $"{user.Id}:abc:def", CancellationToken.None);
+        var result = await rig.Controller.YotoCallback("code-1", $"{user.Id}:abc:def", null, null, CancellationToken.None);
 
         result.Should().BeOfType<RedirectResult>().Which.Url.Should().Be("/setup");
         var saved = FreshDb().UserConnections.Single();
