@@ -10,8 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 
 namespace AudioYotoShelf.Infrastructure.Tests;
 
@@ -41,7 +40,7 @@ public class GeminiIconGenerationBehaviourTests
 
     private static Harness Create(Func<HttpResponseMessage>? respond = null, Dictionary<string, string?>? settings = null)
     {
-        var handler = new RecordingHandler(respond ?? (() => ImageResponse(Png(32, 32, (_, _) => new Rgba32(200, 50, 50, 255)))));
+        var handler = new RecordingHandler(respond ?? (() => ImageResponse(Png(32, 32, (_, _) => new SKColor(200, 50, 50, 255)))));
         var factory = new Mock<IHttpClientFactory>();
         factory.Setup(f => f.CreateClient("Gemini")).Returns(() => new HttpClient(handler));
 
@@ -62,23 +61,25 @@ public class GeminiIconGenerationBehaviourTests
         """{"candidates":[{"content":{"parts":[{"text":"here you go"},{"inlineData":{"mimeType":"image/png","data":""" +
         $"\"{Convert.ToBase64String(png)}\"" + "}}]}}]}");
 
-    private static byte[] Png(int width, int height, Func<int, int, Rgba32> pixelAt)
+    // Unpremul throughout: the service's black check works on true RGB, and premul would turn
+    // translucent black into a different stored value than the one under test.
+    private static byte[] Png(int width, int height, Func<int, int, SKColor> pixelAt)
     {
-        using var image = new Image<Rgba32>(width, height);
-        image.ProcessPixelRows(accessor =>
+        using var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+        for (var y = 0; y < height; y++)
         {
-            for (var y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (var x = 0; x < row.Length; x++) row[x] = pixelAt(x, y);
-            }
-        });
-        using var stream = new MemoryStream();
-        image.SaveAsPng(stream);
-        return stream.ToArray();
+            for (var x = 0; x < width; x++) bitmap.SetPixel(x, y, pixelAt(x, y));
+        }
+        using var data = bitmap.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
     }
 
-    private static Image<Rgba32> Decode(byte[] png) => Image.Load<Rgba32>(png);
+    private static SKBitmap Decode(byte[] png)
+    {
+        using var codec = SKCodec.Create(new MemoryStream(png))!;
+        var info = new SKImageInfo(codec.Info.Width, codec.Info.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul);
+        return SKBitmap.Decode(codec, info);
+    }
 
     // =========================================================================
     // Privacy: no API key => nothing leaves the process
@@ -171,7 +172,7 @@ public class GeminiIconGenerationBehaviourTests
 
         using var image = Decode(icon);
         (image.Width, image.Height).Should().Be((16, 16));
-        image[0, 0].Should().Be(new Rgba32(200, 50, 50, 255));
+        image.GetPixel(0, 0).Should().Be(new SKColor(200, 50, 50, 255));
     }
 
     [Fact]
@@ -232,32 +233,32 @@ public class GeminiIconGenerationBehaviourTests
     public async Task ConvertCoverToIcon_StretchesANonSquareCoverTo16x16()
     {
         var h = Create();
-        using var cover = new MemoryStream(Png(32, 8, (_, _) => new Rgba32(10, 20, 30, 255)));
+        using var cover = new MemoryStream(Png(32, 8, (_, _) => new SKColor(10, 20, 30, 255)));
 
         var icon = await h.Sut.ConvertCoverToIconAsync(cover);
 
         using var image = Decode(icon);
         (image.Width, image.Height).Should().Be((16, 16));
-        image[15, 15].Should().Be(new Rgba32(10, 20, 30, 255));
+        image.GetPixel(15, 15).Should().Be(new SKColor(10, 20, 30, 255));
     }
 
     [Fact]
     public async Task ConvertCoverToIcon_LightensOnlyOpaqueEnoughPureBlackPixels()
     {
         // Column index picks the colour; every row is the same, so a skipped row is caught too.
-        var columns = new Dictionary<int, (Rgba32 Source, Rgba32 Expected)>
+        var columns = new Dictionary<int, (SKColor Source, SKColor Expected)>
         {
-            [0] = (new Rgba32(0, 0, 0, 255), new Rgba32(8, 8, 8, 255)),       // pure black -> very dark grey
-            [1] = (new Rgba32(0, 0, 0, 0), new Rgba32(0, 0, 0, 0)),           // fully transparent: left alone
-            [2] = (new Rgba32(0, 0, 0, 128), new Rgba32(8, 8, 8, 128)),       // translucent black keeps its alpha
-            [3] = (new Rgba32(1, 0, 0, 255), new Rgba32(1, 0, 0, 255)),
-            [4] = (new Rgba32(0, 1, 0, 255), new Rgba32(0, 1, 0, 255)),
-            [5] = (new Rgba32(0, 0, 1, 255), new Rgba32(0, 0, 1, 255)),
-            [6] = (new Rgba32(0, 200, 200, 255), new Rgba32(0, 200, 200, 255)),
-            [7] = (new Rgba32(200, 0, 200, 255), new Rgba32(200, 0, 200, 255)),
-            [8] = (new Rgba32(200, 200, 0, 255), new Rgba32(200, 200, 0, 255)),
+            [0] = (new SKColor(0, 0, 0, 255), new SKColor(8, 8, 8, 255)),       // pure black -> very dark grey
+            [1] = (new SKColor(0, 0, 0, 0), new SKColor(0, 0, 0, 0)),           // fully transparent: left alone
+            [2] = (new SKColor(0, 0, 0, 128), new SKColor(8, 8, 8, 128)),       // translucent black keeps its alpha
+            [3] = (new SKColor(1, 0, 0, 255), new SKColor(1, 0, 0, 255)),
+            [4] = (new SKColor(0, 1, 0, 255), new SKColor(0, 1, 0, 255)),
+            [5] = (new SKColor(0, 0, 1, 255), new SKColor(0, 0, 1, 255)),
+            [6] = (new SKColor(0, 200, 200, 255), new SKColor(0, 200, 200, 255)),
+            [7] = (new SKColor(200, 0, 200, 255), new SKColor(200, 0, 200, 255)),
+            [8] = (new SKColor(200, 200, 0, 255), new SKColor(200, 200, 0, 255)),
         };
-        var fallback = new Rgba32(200, 50, 50, 255);
+        var fallback = new SKColor(200, 50, 50, 255);
         var h = Create();
         using var cover = new MemoryStream(Png(16, 16, (x, _) => columns.TryGetValue(x, out var c) ? c.Source : fallback));
 
@@ -269,7 +270,7 @@ public class GeminiIconGenerationBehaviourTests
             for (var x = 0; x < 16; x++)
             {
                 var expected = columns.TryGetValue(x, out var c) ? c.Expected : fallback;
-                image[x, y].Should().Be(expected, $"pixel ({x},{y})");
+                image.GetPixel(x, y).Should().Be(expected, $"pixel ({x},{y})");
             }
         }
     }

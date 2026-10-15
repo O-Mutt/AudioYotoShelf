@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { authApi } from '@/services/api'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { AbsConnectRequest } from '@/types'
 
 type AbsSignInMethod = 'password' | 'apiKey'
 
+const route = useRoute()
 const router = useRouter()
 const connectionStore = useConnectionStore()
+
+const yotoError = typeof route.query.yotoError === 'string' ? route.query.yotoError : null
 
 // ABS form
 const isServerUrlLocked = ref(false)
@@ -199,6 +202,9 @@ function goToLibrary() {
         >
           Authorize with Yoto
         </button>
+        <p v-if="yotoError" class="mt-2 text-sm text-red-600">
+          {{ yotoError }}
+        </p>
       </div>
     </div>
 
