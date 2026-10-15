@@ -44,7 +44,9 @@ public class YotoService(
         query["response_type"] = "code";
         query["client_id"] = ClientId;
         query["redirect_uri"] = redirectUri;
-        query["scope"] = "profile offline_access openid";
+        // Yoto rejects un-pre-approved scopes (profile/openid) with access_denied; we never use the
+        // id_token, and offline_access is all that's needed to get a refresh token.
+        query["scope"] = "offline_access";
         query["audience"] = YotoApiBase;
         query["state"] = state;
         return $"{YotoAuthBase}/authorize?{query}";
