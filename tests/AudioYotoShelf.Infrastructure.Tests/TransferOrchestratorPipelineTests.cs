@@ -50,7 +50,7 @@ public partial class TransferOrchestratorTests
     {
         var (user, transfer) = await SeedTransferAsync();
         var media = TestData.CreateAbsMedia(
-            audioFiles: Files((1, "ino-b", 200, 2_000), (0, "ino-a", 100, 1_000)),
+            audioFiles: Files((2, "ino-b", 200, 2_000), (1, "ino-a", 100, 1_000)),
             chapters: [TestData.CreateAbsChapter(0, "Intro", 0, 100)]);
 
         var (mappings, chapterPaths) = await _sut.BuildTrackMappingsAsync(
@@ -60,8 +60,8 @@ public partial class TransferOrchestratorTests
         var stored = await StoredMappingsAsync(transfer.Id);
         stored.Select(m => (m.AbsFileIno, m.ChapterTitle, m.ChapterIndex, m.StartTime, m.EndTime, m.FileSizeBytes))
             .Should().Equal(
-                ("ino-a", "Intro", 0, 0.0, 100.0, 1_000L),
-                ("ino-b", "chapter1.mp3", 1, 0.0, 200.0, 2_000L));   // no chapter for file 1: falls back to its filename
+                ("ino-a", "Intro", 1, 0.0, 100.0, 1_000L),
+                ("ino-b", "chapter2.mp3", 2, 0.0, 200.0, 2_000L));   // no chapter for file 2: falls back to its filename
         mappings.Select(m => m.AbsFileIno).Should().Equal("ino-a", "ino-b");
     }
 
@@ -123,10 +123,12 @@ public partial class TransferOrchestratorTests
 
             _absService.Verify(s => s.DownloadAudioFileAsync(
                 It.IsAny<string>(), It.IsAny<string>(), "book-9", "ino-1", It.IsAny<CancellationToken>()), Times.Once);
-            var expectedInput = Path.Combine(tempDir, "not-yet-created", $"{transfer.Id}_input.mp3");
-            seenInputs.Should().Equal(
-                (expectedInput, "01020304", 0.0, 250.0),
-                (expectedInput, "01020304", 250.0, 600.0));
+            seenInputs.Select(s => (s.Hex, s.Start, s.End)).Should().Equal(
+                ("01020304", 0.0, 250.0),
+                ("01020304", 250.0, 600.0));
+            seenInputs.Select(s => s.Path).Distinct().Should().ContainSingle()
+                .Which.Should().StartWith(Path.Combine(tempDir, "not-yet-created", $"{transfer.Id}_"))
+                .And.EndWith("_input.mp3");
             chapterPaths.Should().Equal(new Dictionary<int, string> { [0] = _tempChapterFile, [1] = _tempChapterFile });
             (await StoredMappingsAsync(transfer.Id))
                 .Select(m => (m.AbsFileIno, m.ChapterTitle, m.ChapterIndex, m.StartTime, m.EndTime, m.FileSizeBytes))

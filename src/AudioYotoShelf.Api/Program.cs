@@ -69,8 +69,11 @@ builder.Services.AddHangfire(config => config
         .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
         .UseSimpleAssemblyNameTypeSerializer()
         .UseRecommendedSerializerSettings()
-        .UsePostgreSqlStorage(options =>
-                options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("Postgres"))));
+        .UsePostgreSqlStorage(
+            options => options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("Postgres")),
+            // Transfers routinely exceed the fixed 30-minute invisibility timeout; without sliding,
+            // Hangfire re-dispatches the still-running job and the two runs clobber each other.
+            new PostgreSqlStorageOptions { UseSlidingInvisibilityTimeout = true }));
 builder.Services.AddHangfireServer(options =>
 {
     options.WorkerCount = 2;
