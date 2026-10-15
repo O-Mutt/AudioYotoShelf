@@ -25,6 +25,9 @@ public class TransferOrchestrator(
     TransferMetrics metrics,
     ILogger<TransferOrchestrator> logger) : ITransferOrchestrator
 {
+    // The ErrorMessage column is bounded; a longer message is cut rather than failing the save.
+    private const int MaxStoredErrorLength = 4000;
+
     private string TempDir => configuration.GetValue("Transfer:TempDirectory", "/app/temp")!;
 
     // Scopes temp files to this run so an overlapping run of the same transfer (e.g. a Hangfire
@@ -165,7 +168,7 @@ public class TransferOrchestrator(
             logger.LogError(ex, "Transfer failed: {TransferId}", transfer.Id);
             metrics.RecordFailed();
             transfer.Status = TransferStatus.Failed;
-            transfer.ErrorMessage = ex.Message.Length > 4000 ? ex.Message[..4000] : ex.Message;
+            transfer.ErrorMessage = ex.Message[..Math.Min(ex.Message.Length, MaxStoredErrorLength)];
             await db.SaveChangesAsync(CancellationToken.None);
             await NotifyAsync(transfer, StepLabel(TransferStatus.Failed), CancellationToken.None);
             throw;
@@ -633,7 +636,6 @@ public class TransferOrchestrator(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, itemId, fileIno, ct);
         await using var fileStream = File.Create(outputPath);
         await sourceStream.CopyToAsync(fileStream, ct);
-        await fileStream.FlushAsync(ct);
 
         var fileSize = fileStream.Length;
         logger.LogInformation("Downloaded {FileIno} to {Path} ({Size} bytes)",
@@ -686,6 +688,7 @@ public class TransferOrchestrator(
     {
         try
         {
+            // Stryker disable once Statement : without the guard GetFiles throws and the catch below logs a warning; nothing else differs
             if (!Directory.Exists(TempDir)) return;
 
             var files = Directory.GetFiles(TempDir, $"{TempFilePrefix(transferId)}*");
