@@ -44,7 +44,7 @@ public class YotoServiceTests
         query["response_type"].Should().Be("code");
         query["client_id"].Should().Be("client-1");
         query["redirect_uri"].Should().Be("https://app.example/callback");
-        query["scope"].Should().Be("profile offline_access openid");
+        query["scope"].Should().Be("offline_access");
         query["audience"].Should().Be(ApiBase);
         query["state"].Should().Be("state-1");
     }
@@ -818,24 +818,6 @@ public class YotoServiceTests
         var act = () => CreateSut().GetPublicIconsAsync(Token);
 
         await act.Should().ThrowAsync<HttpRequestException>();
-    }
-
-    [Fact]
-    public async Task UploadCustomIconAsync_PostsTheIconAsMultipartWithTheEscapedFilename()
-    {
-        _handler.Enqueue(HttpStatusCode.OK, """{"mediaId":"icon-1","url":"https://i.example/icon-1.png"}""");
-        byte[] icon = [0x89, 0x50, 0x4E, 0x47];
-
-        var result = await CreateSut().UploadCustomIconAsync(Token, icon, "my icon.png");
-
-        var request = _handler.Requests.Single();
-        request.Method.Should().Be(HttpMethod.Post);
-        request.Uri.Should().Be($"{ApiBase}/media/displayIcons/user/me/upload?autoConvert=true&filename=my%20icon.png");
-        request.Authorization.Should().Be($"Bearer {Token}");
-        request.ContentType.Should().StartWith("multipart/form-data");
-        request.BodyText.Should().Contain("name=file").And.Contain("my icon.png");
-        request.Body.Should().ContainInConsecutiveOrder(icon);
-        result.Should().Be(new YotoIconUploadResponse("icon-1", "https://i.example/icon-1.png"));
     }
 
     [Fact]

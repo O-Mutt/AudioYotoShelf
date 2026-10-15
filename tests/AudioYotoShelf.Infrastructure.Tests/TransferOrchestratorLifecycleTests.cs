@@ -537,7 +537,7 @@ public partial class TransferOrchestratorTests
     // --- Clean-up of temp files
 
     [Fact]
-    public async Task TransferBookAsync_RemovesItsOwnTempFilesButNotAnotherTransfersAfterwards()
+    public async Task TransferBookAsync_RemovesItsOwnTempFilesButNotAnotherRunsAfterwards()
     {
         var tempDir = Directory.CreateTempSubdirectory("ays-cleanup-").FullName;
         try
@@ -548,15 +548,15 @@ public partial class TransferOrchestratorTests
             var user = await SeedUserAsync();
             ServeItemWith(TestData.CreateAbsLibraryItem());
             var transferId = Guid.NewGuid();
-            var mine = Path.Combine(tempDir, $"{transferId}_leftover.tmp");
-            var theirs = Path.Combine(tempDir, $"{Guid.NewGuid()}_leftover.tmp");
-            File.WriteAllText(mine, "x");
-            File.WriteAllText(theirs, "x");
+            // Temp files are scoped to a run, so an earlier run of the same transfer is "another run" too.
+            var sameTransferOtherRun = Path.Combine(tempDir, $"{transferId}_{Guid.NewGuid():N}_input.mp3");
+            var otherTransfer = Path.Combine(tempDir, $"{Guid.NewGuid()}_leftover.tmp");
+            File.WriteAllText(sameTransferOtherRun, "x");
+            File.WriteAllText(otherTransfer, "x");
 
             await sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest(), transferId);
 
-            File.Exists(mine).Should().BeFalse();
-            File.Exists(theirs).Should().BeTrue();
+            Directory.GetFiles(tempDir).Should().BeEquivalentTo(sameTransferOtherRun, otherTransfer);
         }
         finally
         {
