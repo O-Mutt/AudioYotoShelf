@@ -6,9 +6,7 @@ using AudioYotoShelf.Core.Interfaces;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace AudioYotoShelf.Infrastructure.Services.IconGeneration;
 
@@ -138,35 +136,30 @@ public class GeminiIconGenerationService(
     /// </summary>
     private static byte[] ResizeTo16X16(byte[] imageBytes)
     {
-        using var image = Image.Load<Rgba32>(imageBytes);
+        // SKBitmap.Decode(byte[]) throws ArgumentNullException on unrecognised data; probe the codec first.
+        using var data = SKData.CreateCopy(imageBytes);
+        using var codec = SKCodec.Create(data)
+            ?? throw new InvalidOperationException("Image data is corrupt or in an unsupported format");
+        using var source = SKBitmap.Decode(codec)
+            ?? throw new InvalidOperationException("Image data is corrupt or in an unsupported format");
 
-        image.Mutate(ctx => ctx.Resize(new ResizeOptions
-        {
-            Size = new Size(16, 16),
-            Sampler = KnownResamplers.NearestNeighbor,
-            Mode = ResizeMode.Stretch
-        }));
+        // Unpremul so the black check below sees true RGB, not alpha-multiplied values.
+        var info = new SKImageInfo(16, 16, SKColorType.Rgba8888, SKAlphaType.Unpremul);
+        using var resized = source.Resize(info, new SKSamplingOptions(SKFilterMode.Nearest))
+            ?? throw new InvalidOperationException("Failed to resize image");
 
         // Replace pure black pixels with very dark gray (Yoto LED consideration)
-        image.ProcessPixelRows(accessor =>
+        var pixels = resized.Pixels;
+        for (var i = 0; i < pixels.Length; i++)
         {
-            for (int y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    ref var pixel = ref row[x];
-                    if (pixel.R == 0 && pixel.G == 0 && pixel.B == 0 && pixel.A > 0)
-                    {
-                        pixel = new Rgba32(8, 8, 8, pixel.A);
-                    }
-                }
-            }
-        });
+            var p = pixels[i];
+            if (p.Red == 0 && p.Green == 0 && p.Blue == 0 && p.Alpha > 0)
+                pixels[i] = new SKColor(8, 8, 8, p.Alpha);
+        }
+        resized.Pixels = pixels;
 
-        using var output = new MemoryStream();
-        image.SaveAsPng(output);
-        return output.ToArray();
+        using var png = resized.Encode(SKEncodedImageFormat.Png, 100);
+        return png.ToArray();
     }
 }
 
