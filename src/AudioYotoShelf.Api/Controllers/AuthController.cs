@@ -167,8 +167,18 @@ public class AuthController(
     [AllowAnonymous]
     [HttpGet("yoto/callback")]
     public async Task<IActionResult> YotoCallback(
-        [FromQuery] string code, [FromQuery] string state, CancellationToken ct)
+        [FromQuery] string? code, [FromQuery] string? state,
+        [FromQuery] string? error, [FromQuery(Name = "error_description")] string? errorDescription,
+        CancellationToken ct)
     {
+        // Yoto redirects back with error/error_description instead of a code when it refuses the grant.
+        if (!string.IsNullOrEmpty(error) || string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
+        {
+            logger.LogWarning("Yoto authorization failed: {Error} {Description}", error, errorDescription);
+            var message = errorDescription ?? error ?? "Yoto did not return an authorization code";
+            return Redirect($"/setup?yotoError={Uri.EscapeDataString(message)}");
+        }
+
         // Parse state = "{userConnectionId}:{nonce}"
         var parts = state.Split(':', 2);
         if (parts.Length != 2 || !Guid.TryParse(parts[0], out var userConnectionId))
