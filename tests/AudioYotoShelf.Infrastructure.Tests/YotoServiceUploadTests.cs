@@ -77,6 +77,7 @@ public class YotoServiceUploadTests
 
         url.Should().StartWith("http://localhost:9999/authorize");
         url.Should().Contain("client_id=client-123");
+        url.Should().Contain("scope=offline_access&");
     }
 
     private static TestableYotoService CreateSut(HttpMessageHandler handler)

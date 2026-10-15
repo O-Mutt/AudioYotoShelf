@@ -6,7 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
-using SixLabors.ImageSharp;
+using SkiaSharp;
 
 namespace AudioYotoShelf.Infrastructure.Tests;
 
@@ -116,28 +116,34 @@ public class GeminiIconGenerationServiceTests
         result[3].Should().Be(0x47); // 'G'
     }
 
-    /// <summary>
-    /// Creates a minimal valid PNG file with the given dimensions.
-    /// Uses ImageSharp to ensure correctness.
-    /// </summary>
-    private static byte[] CreateMinimalPng(int width, int height)
+    [Fact]
+    public async Task ConvertCoverToIconAsync_ResizesTo16x16AndReplacesPureBlack()
     {
-        using var image = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(width, height);
-        // Fill with a non-black color
-        image.ProcessPixelRows(accessor =>
-        {
-            for (int y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    row[x] = new SixLabors.ImageSharp.PixelFormats.Rgba32(200, 50, 50, 255);
-                }
-            }
-        });
+        using var stream = new MemoryStream(CreateMinimalPng(4, 4, SKColors.Black));
 
-        using var ms = new MemoryStream();
-        image.SaveAsPng(ms);
-        return ms.ToArray();
+        var result = await _sut.ConvertCoverToIconAsync(stream);
+
+        using var icon = SKBitmap.Decode(result);
+        icon.Width.Should().Be(16);
+        icon.Height.Should().Be(16);
+        icon.Pixels.Should().OnlyContain(p => p == new SKColor(8, 8, 8, 255));
+    }
+
+    [Fact]
+    public async Task ConvertCoverToIconAsync_InvalidImage_Throws()
+    {
+        using var stream = new MemoryStream([1, 2, 3, 4]);
+
+        var act = () => _sut.ConvertCoverToIconAsync(stream);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    private static byte[] CreateMinimalPng(int width, int height, SKColor? fill = null)
+    {
+        using var bitmap = new SKBitmap(width, height);
+        bitmap.Erase(fill ?? new SKColor(200, 50, 50, 255));
+        using var png = bitmap.Encode(SKEncodedImageFormat.Png, 100);
+        return png.ToArray();
     }
 }
