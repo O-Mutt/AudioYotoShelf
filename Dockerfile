@@ -3,7 +3,7 @@
 # runtime stage's apt-get runs as the target architecture.
 
 # Stage 1: Build Vue 3 SPA (output is architecture-independent)
-FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-build
+FROM --platform=$BUILDPLATFORM node:26-alpine AS frontend-build
 WORKDIR /app/client
 COPY src/AudioYotoShelf.ClientApp/package*.json ./
 RUN npm clean-install
