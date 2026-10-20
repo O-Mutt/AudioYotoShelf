@@ -22,7 +22,17 @@ Images are built for `linux/amd64` and `linux/arm64`. The same images are publis
 
 The app needs PostgreSQL and Redis. The repository's
 [`docker-compose.yml`](https://github.com/O-Mutt/AudioYotoShelf/blob/main/docker-compose.yml) runs all
-three; against servers you already run:
+three:
+
+```bash
+mkdir audioyotoshelf && cd audioyotoshelf
+curl -fsSLO https://raw.githubusercontent.com/O-Mutt/AudioYotoShelf/main/docker-compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/O-Mutt/AudioYotoShelf/main/.env.example
+${EDITOR:-nano} .env
+docker compose up -d
+```
+
+Against PostgreSQL and Redis servers you already run:
 
 ```bash
 docker run -d --name audioyotoshelf -p 8080:8080 \
@@ -31,7 +41,7 @@ docker run -d --name audioyotoshelf -p 8080:8080 \
   -e REDIS_CONNECTION_STRING=cache.internal:6379 \
   -e AUDIOBOOKSHELF_URL=https://abs.example.com \
   -v audioyotoshelf-keys:/home/app/.aspnet/DataProtection-Keys \
-  ghcr.io/o-mutt/audioyotoshelf:latest   # or this Docker Hub repository
+  mutmatt/audioyotoshelf:latest
 ```
 
 Keep the `DataProtection-Keys` volume, or every container update signs everyone out.
