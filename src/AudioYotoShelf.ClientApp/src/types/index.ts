@@ -11,6 +11,7 @@ export interface ConnectionStatus {
   defaultMinAge: number
   defaultMaxAge: number
   isAdmin: boolean
+  hangfireDashboardEnabled: boolean
 }
 
 // --- Admin analytics ---

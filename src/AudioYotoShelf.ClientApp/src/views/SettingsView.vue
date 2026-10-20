@@ -114,7 +114,7 @@ function logout() {
       </p>
       <div class="mt-3 text-xs text-gray-400 space-y-1">
         <p>Version 0.1.0</p>
-        <p>
+        <p v-if="connectionStore.status?.hangfireDashboardEnabled">
           <a href="/hangfire" target="_blank" class="text-yoto-blue hover:underline">
             Hangfire Dashboard (Background Jobs)
           </a>

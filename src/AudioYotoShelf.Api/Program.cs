@@ -1,3 +1,5 @@
+using System.Reflection;
+using AudioYotoShelf.Api.Configuration;
 using AudioYotoShelf.Api.Health;
 using AudioYotoShelf.Api.Hubs;
 using AudioYotoShelf.Api.Middleware;
@@ -25,6 +27,10 @@ using OpenTelemetry.Resources;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Flat container variables (YOTO_CLIENT_ID, DB_PASSWORD, …) mapped onto the configuration keys below.
+// Added before anything reads configuration so every section sees them.
+var appliedEnvironmentAliases = builder.Configuration.AddEnvironmentAliases();
 
 // --- Serilog ---
 builder.Host.UseSerilog((context, loggerConfig) =>
@@ -250,12 +256,15 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// NOTE: the Hangfire dashboard is left unauthenticated as before (it has no UI login). It can expose
-// job arguments — restrict it at the network layer or add a dashboard auth filter as a follow-up.
-app.MapHangfireDashboard("/hangfire", new DashboardOptions
+// The Hangfire dashboard has no login of its own and can expose job arguments, so it is opt-in
+// (Hangfire:DashboardEnabled / HANGFIRE_DASHBOARD_ENABLED). When enabled, restrict it at the network layer.
+if (app.Configuration.GetValue(HangfireDashboard.EnabledConfigKey, false))
 {
-    DashboardTitle = "AudioYotoShelf Jobs"
-}).AllowAnonymous();
+    app.MapHangfireDashboard(HangfireDashboard.Path, new DashboardOptions
+    {
+        DashboardTitle = "AudioYotoShelf Jobs"
+    }).AllowAnonymous();
+}
 
 app.MapControllers();
 app.MapHub<TransferHub>("/hubs/transfer");
@@ -292,7 +301,15 @@ using (var scope = app.Services.CreateScope())
     Log.Information("FFmpeg available: {Available}", ffmpegAvailable);
 }
 
-Log.Information("AudioYotoShelf started. Environment: {Environment}", app.Environment.EnvironmentName);
+if (appliedEnvironmentAliases.Count > 0)
+    Log.Information("Configuration read from environment variables: {Variables}", string.Join(", ", appliedEnvironmentAliases));
+
+// Not fatal: the UI and health endpoints should stay reachable so the missing setting can be diagnosed.
+if (string.IsNullOrWhiteSpace(app.Configuration["Yoto:ClientId"]))
+    Log.Warning("Yoto:ClientId (YOTO_CLIENT_ID) is not set; connecting a Yoto account will fail until it is");
+
+var version = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+Log.Information("AudioYotoShelf {Version} started. Environment: {Environment}", version, app.Environment.EnvironmentName);
 await app.RunAsync();
 
 // Required for integration test WebApplicationFactory
