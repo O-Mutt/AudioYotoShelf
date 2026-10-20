@@ -28,6 +28,7 @@ function status(overrides: Partial<ConnectionStatus> = {}): ConnectionStatus {
     defaultMinAge: 5,
     defaultMaxAge: 10,
     isAdmin: false,
+    hangfireDashboardEnabled: false,
     ...overrides,
   }
 }

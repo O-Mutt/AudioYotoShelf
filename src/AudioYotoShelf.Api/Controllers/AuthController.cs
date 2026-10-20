@@ -1,6 +1,7 @@
 using System.Buffers.Text;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using AudioYotoShelf.Api.Configuration;
 using AudioYotoShelf.Core.Configuration;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.Entities;
@@ -190,7 +191,7 @@ public class AuthController(
         var adminAbsUrl = configuration["Admin:AudiobookshelfUrl"];
         var fromAdminServer = !string.IsNullOrWhiteSpace(adminAbsUrl) &&
             AudiobookshelfServer.IsSameServer(baseUrl, adminAbsUrl);
-        var adminUsernames = (configuration["Admin:Usernames"] ?? configuration["ADMIN_USERNAMES"] ?? "")
+        var adminUsernames = (configuration["Admin:Usernames"] ?? "")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         // The allow-list is authoritative on the trusted server: being removed from it revokes admin at the next
         // trusted login. A login anywhere else leaves the stored flag alone, so a forged BaseUrl can neither
@@ -417,7 +418,7 @@ public class AuthController(
 
     // isAdmin reflects the current session's actual privilege (the cookie's Admin role), not just
     // the persisted flag — the two only differ for a session that isn't from the trusted server.
-    private static object MapConnectionStatus(UserConnection user, bool isAdmin) => new
+    private object MapConnectionStatus(UserConnection user, bool isAdmin) => new
     {
         user.Id,
         user.Username,
@@ -428,6 +429,8 @@ public class AuthController(
         user.DefaultLibraryId,
         user.DefaultMinAge,
         user.DefaultMaxAge,
-        IsAdmin = isAdmin
+        IsAdmin = isAdmin,
+        // Lets the SPA hide its link to the dashboard when the dashboard is not mapped.
+        HangfireDashboardEnabled = configuration.GetValue(HangfireDashboard.EnabledConfigKey, false)
     };
 }

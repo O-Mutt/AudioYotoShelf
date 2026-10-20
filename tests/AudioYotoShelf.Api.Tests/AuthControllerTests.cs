@@ -549,13 +549,12 @@ public class AuthControllerTests : IDisposable
     }
 
     private static Dictionary<string, string?> Settings(
-        string? configuredUrl = ConnectAbsUrl, string? adminUrl = null, string? adminUsers = null, string? envAdminUsers = null) =>
+        string? configuredUrl = ConnectAbsUrl, string? adminUrl = null, string? adminUsers = null) =>
         new()
         {
             ["Audiobookshelf:Url"] = configuredUrl,
             ["Admin:AudiobookshelfUrl"] = adminUrl,
             ["Admin:Usernames"] = adminUsers,
-            ["ADMIN_USERNAMES"] = envAdminUsers,
         };
 
     private static AbsLoginResponse LoginResponse(
@@ -772,25 +771,23 @@ public class AuthControllerTests : IDisposable
     // ---- admin: only an allow-listed user, signing in to the TRUSTED admin server ----
 
     [Theory]
-    [InlineData("http://admin.home", "alice", "alice", null, true)]                       // the happy path
-    [InlineData("http://admin.home/", "alice", "alice", null, true)]                      // trailing slash on the setting
-    [InlineData("http://ADMIN.home", "alice", "alice", null, true)]                       // server compared case-insensitively
-    [InlineData("http://admin.home", "ALICE", "alice", null, true)]                       // username compared case-insensitively
-    [InlineData("http://admin.home", "alice", "bob, alice ,carol", null, true)]           // list is trimmed
-    [InlineData("http://admin.home", "alice", "bob,,alice", null, true)]                  // empty entries ignored
-    [InlineData("http://admin.home", "alice", null, "alice", true)]                       // ADMIN_USERNAMES fallback
-    [InlineData("http://admin.home", "alice", "bob", "alice", false)]                     // Admin:Usernames wins over the fallback
-    [InlineData("http://admin.home", "alice", "bob", null, false)]                        // not on the list
-    [InlineData("http://admin.home", "alice", "", null, false)]                           // empty list
-    [InlineData("http://admin.home", "alice", null, null, false)]                         // no list at all
-    [InlineData(null, "alice", "alice", null, false)]                                     // no trusted server configured
-    [InlineData("  ", "alice", "alice", null, false)]                                     // blank trusted server
-    [InlineData("http://other.home", "alice", "alice", null, false)]                      // listed, but signing in elsewhere
+    [InlineData("http://admin.home", "alice", "alice", true)]              // the happy path
+    [InlineData("http://admin.home/", "alice", "alice", true)]             // trailing slash on the setting
+    [InlineData("http://ADMIN.home", "alice", "alice", true)]              // server compared case-insensitively
+    [InlineData("http://admin.home", "ALICE", "alice", true)]              // username compared case-insensitively
+    [InlineData("http://admin.home", "alice", "bob, alice ,carol", true)]  // list is trimmed
+    [InlineData("http://admin.home", "alice", "bob,,alice", true)]         // empty entries ignored
+    [InlineData("http://admin.home", "alice", "bob", false)]               // not on the list
+    [InlineData("http://admin.home", "alice", "", false)]                  // empty list
+    [InlineData("http://admin.home", "alice", null, false)]                // no list at all
+    [InlineData(null, "alice", "alice", false)]                            // no trusted server configured
+    [InlineData("  ", "alice", "alice", false)]                            // blank trusted server
+    [InlineData("http://other.home", "alice", "alice", false)]             // listed, but signing in elsewhere
     public async Task Connect_GrantsAdminOnlyToAListedUserOnTheTrustedServer(
-        string? adminUrl, string username, string? adminUsers, string? envAdminUsers, bool expectAdmin)
+        string? adminUrl, string username, string? adminUsers, bool expectAdmin)
     {
         // No locked server, so the request URL decides where the login goes: the trusted one above.
-        var rig = CreateRig(Settings(configuredUrl: null, adminUrl: adminUrl, adminUsers: adminUsers, envAdminUsers: envAdminUsers));
+        var rig = CreateRig(Settings(configuredUrl: null, adminUrl: adminUrl, adminUsers: adminUsers));
         rig.Abs.Setup(s => s.AuthorizeApiKeyAsync("http://admin.home", ApiKey, It.IsAny<CancellationToken>()))
             .ReturnsAsync(LoginResponse(username: username));
 
@@ -1084,5 +1081,24 @@ public class AuthControllerTests : IDisposable
 
         Json(status.Should().BeOfType<OkObjectResult>().Subject.Value).GetProperty("IsAdmin").GetBoolean().Should().Be(sessionIsAdmin);
         Json(updated.Should().BeOfType<OkObjectResult>().Subject.Value).GetProperty("IsAdmin").GetBoolean().Should().Be(sessionIsAdmin);
+    }
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("false", false)]
+    [InlineData(null, false)]   // off unless switched on
+    public async Task Status_ReportsWhetherTheHangfireDashboardIsEnabled(string? setting, bool expected)
+    {
+        var user = TestData.CreateUserConnection();
+        _db.UserConnections.Add(user);
+        await _db.SaveChangesAsync();
+        var settings = Settings();
+        settings["Hangfire:DashboardEnabled"] = setting;
+        var rig = CreateRig(settings, user: PrincipalFor(user.Id));
+
+        var status = await rig.Controller.GetConnectionStatus(CancellationToken.None);
+
+        Json(status.Should().BeOfType<OkObjectResult>().Subject.Value)
+            .GetProperty("HangfireDashboardEnabled").GetBoolean().Should().Be(expected);
     }
 }

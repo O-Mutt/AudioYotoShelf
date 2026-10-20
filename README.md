@@ -1,6 +1,7 @@
 # AudioYotoShelf
 
 [![CI](https://github.com/O-Mutt/AudioYotoShelf/actions/workflows/ci.yml/badge.svg)](https://github.com/O-Mutt/AudioYotoShelf/actions/workflows/ci.yml)
+[![Docker](https://github.com/O-Mutt/AudioYotoShelf/actions/workflows/docker.yml/badge.svg)](https://github.com/O-Mutt/AudioYotoShelf/actions/workflows/docker.yml)
 [![codecov](https://codecov.io/gh/O-Mutt/AudioYotoShelf/graph/badge.svg)](https://codecov.io/gh/O-Mutt/AudioYotoShelf)
 ![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white)
 ![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white)
@@ -114,36 +115,105 @@ http-only session cookie, so your identity is never carried in the URL or writte
 
 ### Environment variables
 
-Set in `.env` (copied from [`.env.example`](.env.example)). Used by [`docker-compose.yml`](docker-compose.yml):
+The app reads these directly, so they work the same in `docker run -e …`, in Compose, and in a
+local `.env` (copied from [`.env.example`](.env.example)). Each also has an ASP.NET form
+(`Yoto__ClientId`, `ConnectionStrings__Postgres`, …); when both are set, the ASP.NET form wins.
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `YOTO_CLIENT_ID` | yes | — | Yoto OAuth app client ID |
-| `YOTO_CLIENT_SECRET` | yes | — | Yoto OAuth app client secret |
-| `GEMINI_API_KEY` | no | — | Google AI Studio key for icon generation |
-| `DB_PASSWORD` | recommended | `changeme` | PostgreSQL password |
-| `BRIDGE_PORT` | no | `8080` | Host port the app listens on |
-| `AUDIOBOOKSHELF_URL` | recommended | — | The only ABS server users may connect to; hides the URL field on the setup screen. Checked at startup, and any connection stored against another server is repointed to it |
-| `AUDIOBOOKSHELF_PUBLIC_URL` | for SSO, if `AUDIOBOOKSHELF_URL` is an internal name | — | The address browsers reach ABS at (for example `https://abs.example.com`). Audiobookshelf builds the identity provider's return address from the host it was called on, so an internal container name would send the browser somewhere it cannot go. Not needed when `AUDIOBOOKSHELF_URL` is already the public address |
-| `ADMIN_AUDIOBOOKSHELF_URL` | no | — | Trusted ABS server URL that can grant admin (see [Admin analytics](#admin-analytics)) |
-| `ADMIN_USERNAMES` | no | — | Comma-separated ABS usernames granted admin when they sign in via the trusted server |
+**Required**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `YOTO_CLIENT_ID` | — | Yoto OAuth app client ID. The app starts without it (and logs a warning), but connecting Yoto fails |
+| `DB_PASSWORD` | — | PostgreSQL password (see the database variables below) |
+
+**Integrations**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `YOTO_CLIENT_SECRET` | — | Yoto OAuth app client secret, sent on token calls when set |
+| `GEMINI_API_KEY` | — | Google AI Studio key for icon generation. Without it, pick icons from Yoto's public library |
+| `GEMINI_MODEL` | `gemini-3.1-flash-image` | Gemini model used for icons |
+| `AUDIOBOOKSHELF_URL` | — | Recommended. The only ABS server users may connect to; hides the URL field on the setup screen. Checked at startup, and any connection stored against another server is repointed to it |
+| `AUDIOBOOKSHELF_PUBLIC_URL` | — | For SSO when `AUDIOBOOKSHELF_URL` is an internal name: the address browsers reach ABS at (for example `https://abs.example.com`). Audiobookshelf builds the identity provider's return address from the host it was called on, so an internal container name would send the browser somewhere it cannot go |
+| `ADMIN_AUDIOBOOKSHELF_URL` | — | Trusted ABS server URL that can grant admin (see [Admin analytics](#admin-analytics)) |
+| `ADMIN_USERNAMES` | — | Comma-separated ABS usernames granted admin when they sign in via the trusted server |
+
+**Database and cache**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_HOST` | `postgres` | PostgreSQL host |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_NAME` | `audioyotoshelf` | Database name |
+| `DB_USER` | `bridge` | Database user |
+| `DB_CONNECTION_STRING` | — | A full Npgsql connection string instead of the `DB_*` parts above |
+| `REDIS_CONNECTION_STRING` | `redis:6379` in the container | StackExchange.Redis format, e.g. `redis:6379,password=secret` |
+
+**Hosting and operations**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ASPNETCORE_FORWARDEDHEADERS_ENABLED` | `false` | Set `true` behind a reverse proxy that terminates HTTPS, so the Yoto and SSO callback URLs are built as `https://`. The proxy must pass the original `Host` header (Caddy and Traefik do; nginx needs `proxy_set_header Host $host`). Leave `false` with nothing in front: it trusts `X-Forwarded-*` from any client |
+| `HANGFIRE_DASHBOARD_ENABLED` | `false` | Serve the Hangfire job dashboard at `/hangfire` (see [Monitoring](#monitoring--observability)) |
+| `LOG_LEVEL` | `Information` | `Verbose`, `Debug`, `Information`, `Warning` or `Error` |
+| `SEQ_URL` | — | Also ship logs to a [Seq](https://datalust.co/seq) server |
+| `TRANSFER_TEMP_DIR` | `/app/temp` | Scratch space for downloaded and split audio; must be writable by the container user |
+| `BRIDGE_PORT` | `8080` | Compose only: the host port the app is published on |
+| `AYS_TAG` | `latest` | Compose only: the published image tag to pull |
+
+**Secrets from files.** `YOTO_CLIENT_SECRET`, `GEMINI_API_KEY`, `DB_PASSWORD`, `DB_CONNECTION_STRING`
+and `REDIS_CONNECTION_STRING` also accept a `_FILE` variant naming a file to read the value from
+(Docker/Compose secrets, Kubernetes secret mounts), e.g. `DB_PASSWORD_FILE=/run/secrets/db_password`.
+Setting both forms of one variable is a startup error.
+
+Advanced settings have only the ASP.NET form: `Yoto__ApiBase`, `Yoto__AuthBase`, and
+`Yoto__CardLimits__{MaxTracks,MaxTrackBytes,MaxTrackDurationSeconds,MaxTotalBytes,MaxTotalDurationSeconds}`.
 
 ### Setup
 
+The image is published to `ghcr.io/o-mutt/audioyotoshelf` for `linux/amd64` and `linux/arm64`.
+
+| Tag | Tracks |
+|-----|--------|
+| `latest` | The newest release |
+| `0.1.0`, `0.1`, `0` | A release line; pin one of these for predictable updates |
+| `edge` | Every merge to `main` (unreleased) |
+| `sha-<commit>` | One exact build |
+
+**With Compose** (bundles PostgreSQL and Redis):
+
 ```bash
-# Clone the repo
 git clone https://github.com/O-Mutt/AudioYotoShelf.git
 cd AudioYotoShelf
 
 # Create environment file and fill in the values above
 cp .env.example .env
 
-# Build and run
+# Pull the published image and run (or `docker compose up -d --build` to build from source)
+docker compose pull
 docker compose up -d
 
 # Open in browser
 open http://localhost:8080
 ```
+
+To update, `./restart.sh --pull` (or `./restart.sh` to rebuild from your checkout).
+
+**With `docker run`**, against PostgreSQL and Redis you already run:
+
+```bash
+docker run -d --name audioyotoshelf -p 8080:8080 \
+  -e YOTO_CLIENT_ID=… -e YOTO_CLIENT_SECRET=… \
+  -e DB_HOST=db.internal -e DB_PASSWORD=… \
+  -e REDIS_CONNECTION_STRING=cache.internal:6379 \
+  -e AUDIOBOOKSHELF_URL=https://abs.example.com \
+  -v audioyotoshelf-keys:/home/app/.aspnet/DataProtection-Keys \
+  ghcr.io/o-mutt/audioyotoshelf:latest
+```
+
+Keep the `DataProtection-Keys` volume: it holds the keys that sign session cookies, and without it
+every container update signs everyone out. The container runs as a non-root user (UID 1654), so a
+bind mount used for it or for `/app/temp` must be writable by that UID.
 
 ### First Run
 
@@ -215,13 +285,18 @@ The `IsAdmin` flag is persisted per user, so you can also grant or revoke it dir
 | `GET /health/live` | Liveness — the process is up (no dependency checks) |
 | `GET /health/ready` | Readiness — PostgreSQL + Redis reachable (FFmpeg reported as degraded, not failing) |
 | `GET /metrics` | Prometheus scrape: HTTP rate/latency/errors, outbound ABS/Yoto/Gemini calls, .NET runtime, and `ays.transfers.completed` / `ays.transfers.failed` counters |
-| `GET /hangfire` | Hangfire background-job dashboard |
+| `GET /hangfire` | Hangfire background-job dashboard — only when `HANGFIRE_DASHBOARD_ENABLED=true` |
 
-Logs are written to the console (structured, via Serilog); set `Serilog__SeqUrl` to also ship them
+Logs are written to the console (structured, via Serilog); set `SEQ_URL` to also ship them
 to a [Seq](https://datalust.co/seq) server.
 
-> **Restrict `/metrics` and `/hangfire` at the network/proxy layer.** They expose operational data
-> (not user data) and are intentionally unauthenticated so scrapers and operators can reach them.
+The Hangfire dashboard is off by default because it has no login of its own. When enabled, Hangfire
+itself still only answers requests from inside the container (its default local-requests filter);
+reach it with `docker exec` or a port-forward rather than exposing it.
+
+> **Restrict `/metrics` (and `/hangfire`, if enabled) at the network/proxy layer.** They expose
+> operational data (not user data) and are intentionally unauthenticated so scrapers and operators
+> can reach them.
 
 ## Development
 
