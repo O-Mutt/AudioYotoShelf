@@ -171,7 +171,10 @@ Advanced settings have only the ASP.NET form: `Yoto__ApiBase`, `Yoto__AuthBase`,
 
 ### Setup
 
-The image is published to `ghcr.io/o-mutt/audioyotoshelf` for `linux/amd64` and `linux/arm64`.
+The image is published for `linux/amd64` and `linux/arm64` to two registries with identical tags:
+
+- `ghcr.io/o-mutt/audioyotoshelf` (GitHub Container Registry, used by `docker-compose.yml`)
+- `mutmatt/audioyotoshelf` ([Docker Hub](https://hub.docker.com/r/mutmatt/audioyotoshelf))
 
 | Tag | Tracks |
 |-----|--------|
@@ -180,16 +183,16 @@ The image is published to `ghcr.io/o-mutt/audioyotoshelf` for `linux/amd64` and 
 | `edge` | Every merge to `main` (unreleased) |
 | `sha-<commit>` | One exact build |
 
-**With Compose** (bundles PostgreSQL and Redis):
+**With Compose** (bundles PostgreSQL and Redis). Only two files are needed:
 
 ```bash
-git clone https://github.com/O-Mutt/AudioYotoShelf.git
-cd AudioYotoShelf
+mkdir audioyotoshelf && cd audioyotoshelf
+curl -fsSLO https://raw.githubusercontent.com/O-Mutt/AudioYotoShelf/main/docker-compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/O-Mutt/AudioYotoShelf/main/.env.example
 
-# Create environment file and fill in the values above
-cp .env.example .env
+# Fill in the values above
+${EDITOR:-nano} .env
 
-# Pull the published image and run (or `docker compose up -d --build` to build from source)
 docker compose pull
 docker compose up -d
 
@@ -197,7 +200,11 @@ docker compose up -d
 open http://localhost:8080
 ```
 
-To update, `./restart.sh --pull` (or `./restart.sh` to rebuild from your checkout).
+To update, `docker compose pull && docker compose up -d`. Set `AYS_TAG` in `.env` to pin a release
+(`0.1`) or follow `edge`.
+
+To build from source instead, clone the repository and run `docker compose up -d --build`. In a
+checkout, `./restart.sh` rebuilds and restarts, and `./restart.sh --pull` pulls the published image.
 
 **With `docker run`**, against PostgreSQL and Redis you already run:
 
@@ -351,8 +358,12 @@ pct set <CTID> -features keyctl=1,nesting=1
 # Inside LXC: install Docker
 curl -fsSL https://get.docker.com | sh
 
-# Deploy
-cd /opt/audioyotoshelf
+# Inside LXC: deploy
+mkdir -p /opt/audioyotoshelf && cd /opt/audioyotoshelf
+curl -fsSLO https://raw.githubusercontent.com/O-Mutt/AudioYotoShelf/main/docker-compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/O-Mutt/AudioYotoShelf/main/.env.example
+nano .env    # fill in the values from "Environment variables"
+docker compose pull
 docker compose up -d
 ```
 
