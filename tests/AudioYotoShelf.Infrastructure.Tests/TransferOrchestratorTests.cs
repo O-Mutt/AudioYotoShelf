@@ -707,7 +707,7 @@ public partial class TransferOrchestratorTests : IDisposable
     private List<YotoCardContent> CardsSentToYoto() =>
         _yotoService.Invocations
             .Where(i => i.Method.Name == nameof(IYotoService.CreateOrUpdateCardAsync))
-            .Select(i => (YotoCardContent)i.Arguments[1])
+            .Select(i => (YotoCardContent)i.Arguments[1]!)
             .ToList();
 
     [Fact]
