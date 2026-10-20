@@ -1,24 +1,32 @@
 services:
   bridge:
+    # Pulls the published image; `docker compose build` (or ./restart.sh) builds it from this checkout
+    # instead. Pin a release with AYS_TAG=0.1.0, or follow main with AYS_TAG=edge.
+    image: ghcr.io/o-mutt/audioyotoshelf:${AYS_TAG:-latest}
     build: .
     container_name: audioyotoshelf
     restart: unless-stopped
     ports:
       - "${BRIDGE_PORT:-8080}:8080"
+    # Flat variables read by the app itself (see "Environment variables" in the README). Postgres and
+    # Redis are found at their service names below, so DB_PASSWORD is the only database setting needed.
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__Postgres=Host=postgres;Database=audioyotoshelf;Username=bridge;Password=${DB_PASSWORD:-changeme}
-      - ConnectionStrings__Redis=redis:6379
-      - Yoto__ClientId=${YOTO_CLIENT_ID}
-      - Yoto__ClientSecret=${YOTO_CLIENT_SECRET}
-      - Gemini__ApiKey=${GEMINI_API_KEY}
-      - Audiobookshelf__Url=${AUDIOBOOKSHELF_URL:-}
-      - Audiobookshelf__PublicUrl=${AUDIOBOOKSHELF_PUBLIC_URL:-}
-      - Admin__AudiobookshelfUrl=${ADMIN_AUDIOBOOKSHELF_URL:-}
-      - Admin__Usernames=${ADMIN_USERNAMES:-}
-      - Transfer__TempDirectory=/app/temp
+      - DB_PASSWORD=${DB_PASSWORD:-changeme}
+      - YOTO_CLIENT_ID=${YOTO_CLIENT_ID}
+      - YOTO_CLIENT_SECRET=${YOTO_CLIENT_SECRET}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - AUDIOBOOKSHELF_URL=${AUDIOBOOKSHELF_URL:-}
+      - AUDIOBOOKSHELF_PUBLIC_URL=${AUDIOBOOKSHELF_PUBLIC_URL:-}
+      - ADMIN_AUDIOBOOKSHELF_URL=${ADMIN_AUDIOBOOKSHELF_URL:-}
+      - ADMIN_USERNAMES=${ADMIN_USERNAMES:-}
+      - ASPNETCORE_FORWARDEDHEADERS_ENABLED=${ASPNETCORE_FORWARDEDHEADERS_ENABLED:-false}
+      - HANGFIRE_DASHBOARD_ENABLED=${HANGFIRE_DASHBOARD_ENABLED:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-Information}
+      - SEQ_URL=${SEQ_URL:-}
     volumes:
       - tempdata:/app/temp
+      # Session-cookie keys: without this, recreating the container signs everyone out.
+      - keys:/home/app/.aspnet/DataProtection-Keys
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,6 +72,7 @@ volumes:
   pgdata:
   redisdata:
   tempdata:
+  keys:
 
 networks:
   bridge-net:

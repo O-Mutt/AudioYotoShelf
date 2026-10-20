@@ -1,6 +1,6 @@
 # Spec: container image pipeline (GHCR + Docker Hub)
 
-**Status:** Draft — for review before implementation
+**Status:** Implemented (decisions in §8)
 **Scope:** a GitHub Actions workflow that builds the AudioYotoShelf image and publishes it to GitHub
 Container Registry and Docker Hub, plus the image and app changes needed so the published image can
 be configured entirely from `docker run -e …` / Compose `environment:` at container start.
@@ -90,16 +90,23 @@ never log in or push.
 |------|------|----------|---------|
 | `GITHUB_TOKEN` | built-in | — | Log in to `ghcr.io` |
 | `DOCKERHUB_USERNAME` | secret | for Docker Hub | Docker Hub account that owns the token |
-| `DOCKERHUB_TOKEN` | secret | for Docker Hub | Docker Hub access token (Read & Write scope), **not** the account password |
-| `DOCKERHUB_REPOSITORY` | repo variable | for Docker Hub | e.g. `omutt/audioyotoshelf` |
+| `DOCKERHUB_TOKEN` | secret | for Docker Hub | Docker Hub personal access token, **not** the account password. *Read, Write, Delete* scope: the description sync needs more than Read & Write |
+| `DOCKERHUB_REPOSITORY` | repo variable | for Docker Hub | `<namespace>/audioyotoshelf` |
 
-If `DOCKERHUB_TOKEN` is unset, the workflow publishes to GHCR only (the Docker Hub login and image
-name are added conditionally), so the pipeline works before the Docker Hub account is set up.
+If `DOCKERHUB_REPOSITORY` is unset, the workflow publishes to GHCR only (the Docker Hub login, image
+name and description sync are all conditional on it), so the pipeline works before the Docker Hub
+account is set up. Setting the variable without the secrets fails the login step loudly.
 
 GHCR packages created by Actions start **private**. After the first publish, set the package to
 public once under *Package settings → Change visibility* and link it to the repo.
 
 ### 3.4 Job outline
+
+*As implemented in `.github/workflows/docker.yml`, with current action majors (build-push v7,
+metadata v6, login/buildx/qemu v4, attest-build-provenance v4, dockerhub-description v5). PR builds
+are a separate `pr` job; non-tag builds pass `VERSION=0.0.0-edge` because the metadata version
+output (`edge`) is not a valid assembly version; and `edge` comes from `type=edge`. The outline below
+is the original sketch.*
 
 ```yaml
 jobs:
@@ -243,6 +250,10 @@ the startup log line and `/api/health`.
   doesn't mark the container unhealthy:
   `CMD curl -fsS "http://localhost:${ASPNETCORE_HTTP_PORTS:-8080}/health/live" || exit 1`.
 - `VOLUME ["/app/temp"]` so the scratch audio area is never written into the container layer.
+- `VOLUME ["/home/app/.aspnet/DataProtection-Keys"]`, created owned by the app user. *Found during
+  implementation:* ASP.NET keeps the key ring that encrypts the `ays_session` cookie there, so
+  without a volume every recreated container (every image update) signs everyone out. Compose
+  mounts a `keys` named volume on it.
 - No `ENTRYPOINT` shell wrapper: env handling lives in the app (§5.2), so the process stays PID 1
   and receives `SIGTERM` directly for graceful Hangfire shutdown.
 
@@ -271,7 +282,7 @@ are unaffected).
 | `DB_USER` | — | `bridge` | |
 | `DB_PASSWORD` | — | — | Required whenever the connection string is composed |
 | `DB_CONNECTION_STRING` | `ConnectionStrings__Postgres` | — | Full Npgsql connection string; when set, the `DB_*` parts are ignored |
-| `REDIS_CONNECTION_STRING` | `ConnectionStrings__Redis` | `redis:6379` | StackExchange.Redis format, e.g. `redis:6379,password=secret` |
+| `REDIS_CONNECTION_STRING` | `ConnectionStrings__Redis` | `redis:6379` in a container | StackExchange.Redis format, e.g. `redis:6379,password=secret`. The default applies only when `DOTNET_RUNNING_IN_CONTAINER=true` (set by the .NET base image), so `dotnet run` keeps appsettings' `localhost:6379` |
 
 Defaults match the service names in `docker-compose.yml`, so the stock Compose file needs only
 `DB_PASSWORD`. The connection string is built with `NpgsqlConnectionStringBuilder`, so a password
@@ -298,6 +309,7 @@ containing `;` or `=` is escaped correctly (the current Compose string interpola
 | `ASPNETCORE_ENVIRONMENT` | (built-in .NET) | `Production` | |
 | `LOG_LEVEL` | `Serilog__MinimumLevel__Default` | `Information` | `Verbose`/`Debug`/`Information`/`Warning`/`Error` |
 | `SEQ_URL` | `Serilog__SeqUrl` | — | Also ship logs to Seq |
+| `HANGFIRE_DASHBOARD_ENABLED` | `Hangfire__DashboardEnabled` | `false` | Maps `/hangfire`. The status API reports it so the Settings page hides its link when off |
 | `TRANSFER_TEMP_DIR` | `Transfer__TempDirectory` | `/app/temp` | Scratch space for downloaded/split audio; must be writable by the container user. Keep `TMPDIR` pointing at the same volume. |
 
 **Advanced (native keys only, documented but no alias)**
@@ -309,14 +321,14 @@ don't need friendly names.
 **Secrets from files.** Each secret also accepts a `_FILE` variant that names a file to read the
 value from, for Docker/Compose/Swarm secrets and Kubernetes secret mounts: `YOTO_CLIENT_SECRET_FILE`,
 `DB_PASSWORD_FILE`, `DB_CONNECTION_STRING_FILE`, `REDIS_CONNECTION_STRING_FILE`, `GEMINI_API_KEY_FILE`.
-Setting both `X` and `X_FILE` is a startup error. Trailing newlines are trimmed.
+Setting both `X` and `X_FILE` is a startup error. Trailing newlines are trimmed. A blank value
+(Compose passes `NAME=` from an `.env` line as an empty string) counts as unset.
 
 **Not exposed (cleanup):** `appsettings.json` defines `Gemini:MaxDailyRequests`,
 `Transfer:MaxConcurrentTransfers`, `Transfer:TranscodePollIntervalMs` and
 `Transfer:TranscodePollMaxAttempts`, but nothing reads them (the daily cap is the `DailyLimit`
 constant, the Hangfire worker count is hard-coded to 2, and transcode polling uses constants in
-`YotoService`). Either wire them up or delete them as part of this work; they must not be documented
-as settings while they do nothing. Wiring `Transfer:MaxConcurrentTransfers` to the Hangfire
+`YotoService`). They are deleted as part of this work. Wiring `Transfer:MaxConcurrentTransfers` to the Hangfire
 `WorkerCount` (as `TRANSFER_WORKERS`) is a reasonable follow-up.
 
 ### 5.2 Implementation: env alias configuration source
@@ -375,12 +387,15 @@ crash — users must be able to reach the UI and health endpoints to diagnose).
 4. Tag `v0.1.0` (or whatever the first version should be) to produce `latest`, then update the README
    quick start to pull instead of build.
 
-## 8. Open questions
+## 8. Decisions
 
-1. **Docker Hub namespace** — which account/org owns `<namespace>/audioyotoshelf`?
-2. **arm64** — keep it in v1? It costs little with the cross-build in §4.1; dropping it simplifies
-   nothing material.
-3. **First version number** — `v0.1.0`, or `v1.0.0` now that the feature set is in daily use?
-4. **Hangfire dashboard** — `/hangfire` is anonymous and can expose job arguments. That is tolerable
-   for a self-built LAN deploy; a public image lowers the bar to exposing it. Ship a
-   `HANGFIRE_DASHBOARD_ENABLED` switch (default on, or off?) with this work, or as a follow-up?
+1. **Docker Hub namespace** — the personal account. Docker Hub namespaces allow only lowercase
+   letters and digits (no hyphen), so it is set as the `DOCKERHUB_REPOSITORY` variable (e.g.
+   `omutt/audioyotoshelf`) rather than hard-coded.
+2. **arm64** — kept. The cross-build in §4.1 was verified to emit aarch64 binaries, including
+   SkiaSharp's native library.
+3. **First version** — `v0.1.0`.
+4. **Hangfire dashboard** — shipped as `HANGFIRE_DASHBOARD_ENABLED`, **off by default**. *Found during
+   implementation:* Hangfire's default `LocalRequestsOnlyAuthorizationFilter` already answered only
+   requests from inside the container (a published port gets 401), so the dashboard was never
+   reachable remotely; the switch now also takes the route away entirely by default.
