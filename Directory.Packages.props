@@ -51,12 +51,12 @@
   <ItemGroup Label="ImageProcessing">
     <!-- SkiaSharp (MIT) replaced ImageSharp: 3.x has unpatched GHSAs and 4.x needs a license key.
          NoDependencies native assets avoid needing fontconfig in the runtime image. -->
-    <PackageVersion Include="SkiaSharp" Version="4.153.1" />
-    <PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.153.1" />
+    <PackageVersion Include="SkiaSharp" Version="4.154.0" />
+    <PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.154.0" />
   </ItemGroup>
 
   <ItemGroup Label="Google">
-    <PackageVersion Include="Google.GenAI" Version="1.27.0" />
+    <PackageVersion Include="Google.GenAI" Version="1.28.0" />
   </ItemGroup>
 
   <ItemGroup Label="Testing">
