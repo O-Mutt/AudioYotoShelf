@@ -15,8 +15,8 @@
 
   <ItemGroup Label="Observability">
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.1" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.20.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.2" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.20.2" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.20.1" />
     <!-- The Prometheus ASP.NET exporter only ships as prerelease (upstream has kept it in beta). -->
     <PackageVersion Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.15.3-beta.1" />
@@ -51,12 +51,12 @@
   <ItemGroup Label="ImageProcessing">
     <!-- SkiaSharp (MIT) replaced ImageSharp: 3.x has unpatched GHSAs and 4.x needs a license key.
          NoDependencies native assets avoid needing fontconfig in the runtime image. -->
-    <PackageVersion Include="SkiaSharp" Version="4.153.1" />
-    <PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.153.1" />
+    <PackageVersion Include="SkiaSharp" Version="4.155.0" />
+    <PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.155.0" />
   </ItemGroup>
 
   <ItemGroup Label="Google">
-    <PackageVersion Include="Google.GenAI" Version="1.27.0" />
+    <PackageVersion Include="Google.GenAI" Version="2.0.0" />
   </ItemGroup>
 
   <ItemGroup Label="Testing">
