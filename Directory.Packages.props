@@ -15,8 +15,8 @@
 
   <ItemGroup Label="Observability">
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.1" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.20.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.2" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.20.2" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.20.1" />
     <!-- The Prometheus ASP.NET exporter only ships as prerelease (upstream has kept it in beta). -->
     <PackageVersion Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.15.3-beta.1" />
@@ -56,7 +56,7 @@
   </ItemGroup>
 
   <ItemGroup Label="Google">
-    <PackageVersion Include="Google.GenAI" Version="1.27.0" />
+    <PackageVersion Include="Google.GenAI" Version="2.0.0" />
   </ItemGroup>
 
   <ItemGroup Label="Testing">
