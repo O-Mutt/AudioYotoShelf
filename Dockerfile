@@ -39,7 +39,7 @@ RUN dotnet publish src/AudioYotoShelf.Api/AudioYotoShelf.Api.csproj \
     -p:InformationalVersion=${VERSION}+${GIT_SHA}
 
 # Stage 3: Runtime with FFmpeg
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS runtime
 
 LABEL org.opencontainers.image.title="AudioYotoShelf" \
       org.opencontainers.image.description="Bridge your Audiobookshelf library to Yoto MYO cards" \
