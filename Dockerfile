@@ -12,7 +12,7 @@ COPY src/AudioYotoShelf.ClientApp/ ./
 RUN npm run build
 
 # Stage 2: Build .NET 10
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS backend-build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0 AS backend-build
 ARG TARGETARCH
 WORKDIR /src
 
