@@ -5,10 +5,7 @@ import { useConnectionStore } from './connectionStore'
 import type { AbsLibrary, AbsLibraryItem, AbsSeriesItem, BookDetailResponse } from '@/types'
 
 export type SortField =
-  | 'media.metadata.title'
-  | 'media.metadata.authorName'
-  | 'media.duration'
-  | 'addedAt'
+  'media.metadata.title' | 'media.metadata.authorName' | 'media.duration' | 'addedAt'
 
 export const SORT_OPTIONS: { label: string; value: SortField }[] = [
   { label: 'Title', value: 'media.metadata.title' },
