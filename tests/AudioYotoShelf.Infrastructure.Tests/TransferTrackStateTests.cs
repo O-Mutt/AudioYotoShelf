@@ -1,8 +1,10 @@
+using AudioYotoShelf.Core.Configuration;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
+using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Core.Tests.Helpers;
 using AudioYotoShelf.Infrastructure.Observability;
 using AudioYotoShelf.Infrastructure.Services;
@@ -36,7 +38,8 @@ public class TransferTrackStateTests : IDisposable
             .Build();
         _sut = new TransferOrchestrator(
             _dbFixture.DbContext, _abs.Object, _yoto.Object, Mock.Of<IIconGenerationService>(),
-            Mock.Of<IAgeSuggestionService>(), Mock.Of<IChapterExtractor>(), _notifier, configuration,
+            Mock.Of<IAgeSuggestionService>(), Mock.Of<IChapterExtractor>(),
+            new TrackPlanner(new YotoCardLimits()), new CardCapacityCalculator(new YotoCardLimits()), _notifier, configuration,
             new TransferMetrics(), Mock.Of<ILogger<TransferOrchestrator>>());
 
         _abs.Setup(a => a.DownloadAudioFileWithMetadataAsync(

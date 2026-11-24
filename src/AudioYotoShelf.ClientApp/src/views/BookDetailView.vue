@@ -6,7 +6,7 @@ import { useSignalR } from '@/composables/useSignalR'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { transferApi } from '@/services/api'
-import { errorMessage } from '@/utils/errors'
+import { errorMessage, statusCode } from '@/utils/errors'
 import type { TransferProgressUpdate } from '@/types'
 
 const props = defineProps<{ itemId: string }>()
@@ -21,6 +21,7 @@ const overrideMinAge = ref<number | null>(null)
 const overrideMaxAge = ref<number | null>(null)
 const isTransferring = ref(false)
 const activeTransferId = ref<string | null>(null)
+const transferRefusal = ref<string | null>(null)
 
 const book = computed(() => libraryStore.currentBookDetail)
 const metadata = computed(() => book.value?.item?.media?.metadata)
@@ -88,6 +89,7 @@ async function startTransfer() {
   if (!ok) return
 
   isTransferring.value = true
+  transferRefusal.value = null
 
   try {
     const { data } = await transferApi.transferBook({
@@ -104,7 +106,10 @@ async function startTransfer() {
       await joinTransfer(activeTransferId.value)
     }
   } catch (err: unknown) {
-    toast.error(`Transfer failed: ${errorMessage(err)}`)
+    // A 409 says why the book was refused and what to do instead (e.g. split it from the series
+    // page); a toast would disappear before that is read.
+    if (statusCode(err) === 409) transferRefusal.value = errorMessage(err)
+    else toast.error(`Transfer failed: ${errorMessage(err)}`)
   } finally {
     isTransferring.value = false
   }
@@ -297,6 +302,15 @@ async function startTransfer() {
         {{ liveProgress.currentStep ?? `${liveProgress.progressPercent}% complete` }}
       </p>
     </div>
+
+    <p
+      v-if="transferRefusal"
+      role="alert"
+      data-test="transfer-refusal"
+      class="text-sm text-red-700 bg-red-50 rounded-lg p-3"
+    >
+      {{ transferRefusal }}
+    </p>
 
     <!-- Transfer button -->
     <div class="sticky bottom-4">

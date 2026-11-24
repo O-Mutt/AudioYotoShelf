@@ -82,6 +82,9 @@ public class TransfersController(
         if (hasActive)
             return Conflict(new { Message = "A transfer is already in progress for this book" });
 
+        if (await CheckCapacityAsync(userConnectionId, request.AbsLibraryItemId, ct) is { } refusal)
+            return Conflict(new { refusal.Message, refusal.Capacity });
+
         var transferId = Guid.NewGuid();
         var jobId = backgroundJobs.Enqueue<ITransferJobService>(
             svc => svc.ExecuteBookTransferAsync(userConnectionId, request, transferId, CancellationToken.None));
@@ -105,7 +108,14 @@ public class TransfersController(
             request.AbsSeriesId, jobId);
 
         await notifier.NotifyListChangedAsync(ct);
-        return Accepted(new { JobId = jobId, Message = "Series transfer queued" });
+        // Each book is checked against the card limits by the job, not here: that needs every book's full
+        // media from Audiobookshelf, and the books that fit are sent either way.
+        return Accepted(new
+        {
+            JobId = jobId,
+            Message = "Series transfer queued. A book larger than one Yoto card is not sent; " +
+                      "it shows on the Transfers page as failed, with the reason."
+        });
     }
 
     /// <summary>
@@ -202,6 +212,24 @@ public class TransfersController(
 
         logger.LogInformation("Cleared {Count} completed transfers for user {UserId}", completed.Count, userConnectionId);
         return Ok(new { Cleared = completed.Count });
+    }
+
+    /// <summary>
+    /// Why the book can't go on one card, or null when it fits or could not be checked. A failed check
+    /// still queues the transfer: the job checks again before downloading, and records the failure if
+    /// Audiobookshelf is unreachable there too.
+    /// </summary>
+    private async Task<CapacityRefusal?> CheckCapacityAsync(Guid userConnectionId, string itemId, CancellationToken ct)
+    {
+        try
+        {
+            return await orchestrator.CheckBookCapacityAsync(userConnectionId, itemId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Could not check card capacity for {ItemId} before queueing", itemId);
+            return null;
+        }
     }
 
     /// <summary>True when the transfer exists and belongs to the authenticated connection.</summary>

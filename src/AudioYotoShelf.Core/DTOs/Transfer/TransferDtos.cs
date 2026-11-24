@@ -1,3 +1,4 @@
+using AudioYotoShelf.Core.DTOs.Playlist;
 using AudioYotoShelf.Core.Enums;
 
 namespace AudioYotoShelf.Core.DTOs.Transfer;
@@ -82,6 +83,9 @@ public record TrackMappingResponse(
     bool IsUploaded,
     string? IconUrl
 );
+
+/// <summary>Why a book can't go to Yoto as one card: the message to show, and the projected usage behind it.</summary>
+public record CapacityRefusal(string Message, CapacitySummary Capacity);
 
 // --- Progress ---
 

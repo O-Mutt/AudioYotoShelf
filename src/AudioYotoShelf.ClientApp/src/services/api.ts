@@ -144,7 +144,7 @@ export const transferApi = {
     overrideMinAge?: number
     overrideMaxAge?: number
   }) {
-    return api.post('/transfers/series', request)
+    return api.post<{ jobId: string; message: string }>('/transfers/series', request)
   },
 
   // Phase 2: Batch transfer

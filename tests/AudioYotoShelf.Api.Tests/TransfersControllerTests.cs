@@ -1,4 +1,5 @@
 using AudioYotoShelf.Api.Controllers;
+using AudioYotoShelf.Core.DTOs.Playlist;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
@@ -144,6 +145,35 @@ public class TransfersControllerTests : IDisposable
         result.Should().BeOfType<AcceptedResult>();
     }
 
+    [Fact]
+    public async Task TransferBook_LargerThanOneCard_Returns409WithTheReasonAndQueuesNothing()
+    {
+        var capacity = new CapacitySummary(
+            40, 100, 20 * 3600, null, 900L * 1024 * 1024, 500L * 1024 * 1024,
+            WithinLimits: false, ExceedsTracks: false, ExceedsDuration: false, ExceedsBytes: true,
+            FirstOverflowItemId: "item-1", Messages: ["Estimated size 900MB exceeds the limit of 500MB."]);
+        var refusal = new CapacityRefusal("\"Big Book\" is larger than one Yoto card, so it was not sent.", capacity);
+        _orchestrator.Setup(o => o.CheckBookCapacityAsync(It.IsAny<Guid>(), "item-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(refusal);
+
+        var result = await _sut.AsUser(Guid.NewGuid()).TransferBook(new CreateTransferRequest("item-1"), CancellationToken.None);
+
+        result.Should().BeOfType<ConflictObjectResult>()
+            .Which.Value.Should().BeEquivalentTo(new { refusal.Message, Capacity = capacity });
+        _backgroundJobs.VerifyNothingEnqueued();
+    }
+
+    [Fact]
+    public async Task TransferBook_CapacityCheckCannotReachAudiobookshelf_StillQueuesForTheJobToCheck()
+    {
+        _orchestrator.Setup(o => o.CheckBookCapacityAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Audiobookshelf is down"));
+
+        var result = await _sut.AsUser(Guid.NewGuid()).TransferBook(new CreateTransferRequest("item-1"), CancellationToken.None);
+
+        result.Should().BeOfType<AcceptedResult>();
+    }
+
     // =========================================================================
     // POST series transfer
     // =========================================================================
@@ -155,6 +185,17 @@ public class TransfersControllerTests : IDisposable
         var result = await _sut.AsUser(Guid.NewGuid()).TransferSeries(request, CancellationToken.None);
 
         result.Should().BeOfType<AcceptedResult>();
+    }
+
+    [Fact]
+    public async Task TransferSeries_TellsThePersonWhereABookTooLargeForOneCardIsReported()
+    {
+        var request = new CreateSeriesTransferRequest("ser-1", "lib-1");
+        var result = await _sut.AsUser(Guid.NewGuid()).TransferSeries(request, CancellationToken.None);
+
+        var body = result.Should().BeOfType<AcceptedResult>().Subject.Value!;
+        body.GetType().GetProperty("Message")!.GetValue(body).Should().BeOfType<string>()
+            .Which.Should().Contain("larger than one Yoto card").And.Contain("Transfers page");
     }
 
     // =========================================================================

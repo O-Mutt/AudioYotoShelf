@@ -112,6 +112,18 @@ public class CardCapacityCalculatorTests
     }
 
     [Fact]
+    public void Calculate_WithoutSplitting_CountsEachSourceTrackOnce()
+    {
+        // 60 tracks of 90 min / 200 MB: split, each becomes 2 pieces and the card is over 100 tracks.
+        var book = Book("b1", Tracks(60, 1.5 * Hour, 200L * 1024 * 1024));
+
+        _sut.Calculate([book]).Projected.Tracks.Should().Be(120);
+        var unsplit = _sut.Calculate([book], splitTracks: false);
+        unsplit.Projected.Tracks.Should().Be(60);
+        unsplit.ExceedsTracks.Should().BeFalse();
+    }
+
+    [Fact]
     public void Calculate_TooManyTracks_FlagsTracksOnly()
     {
         var result = _sut.Calculate([Book("b1", Tracks(101, 60, 1_000_000))]);

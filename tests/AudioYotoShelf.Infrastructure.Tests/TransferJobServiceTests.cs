@@ -1,3 +1,4 @@
+using AudioYotoShelf.Core.DTOs.Playlist;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
@@ -92,6 +93,58 @@ public class TransferJobServiceTests
         var act = () => _sut.ExecuteBookTransferAsync(Guid.NewGuid(), TestData.CreateTransferRequest(), null, CancellationToken.None);
 
         await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    // =========================================================================
+    // A book over the card limits is a final answer: retrying the job refuses it again.
+    // =========================================================================
+
+    private static CardCapacityExceededException TooBig() => new(new CapacityRefusal(
+        "\"Big Book\" is larger than one Yoto card, so it was not sent.",
+        new CapacitySummary(40, 100, 72000, null, 900L << 20, 500L << 20, false, false, false, true, "item-1", [])));
+
+    [Fact]
+    public async Task ExecuteBookTransferAsync_BookLargerThanOneCard_EndsWithoutErrorSoItIsNotRetried()
+    {
+        _orchestrator.Setup(o => o.TransferBookAsync(
+                It.IsAny<Guid>(), It.IsAny<CreateTransferRequest>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(TooBig());
+
+        var act = () => _sut.ExecuteBookTransferAsync(Guid.NewGuid(), TestData.CreateTransferRequest(), null, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ExecuteRetryTransferAsync_BookLargerThanOneCard_EndsWithoutErrorSoItIsNotRetried()
+    {
+        _orchestrator.Setup(o => o.RetryTransferAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(TooBig());
+
+        var act = () => _sut.ExecuteRetryTransferAsync(Guid.NewGuid(), CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ExecuteSeriesTransferAsync_ABookNotSent_IsAnnouncedAsFailedWithItsReason()
+    {
+        var notSent = new TransferResponse(
+            Guid.NewGuid(), "book-2", "Big Book", "Author", "Series", 2,
+            TransferStatus.Failed, 0, "\"Big Book\" is larger than one Yoto card, so it was not sent.",
+            new AgeRangeResponse(5, 10, "Test", AgeRangeSource.Default, null, null, 5, 10),
+            null, DateTimeOffset.UtcNow, null, []);
+        _orchestrator.Setup(o => o.TransferSeriesAsync(
+                It.IsAny<Guid>(), It.IsAny<CreateSeriesTransferRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([notSent]);
+
+        await _sut.ExecuteSeriesTransferAsync(Guid.NewGuid(), TestData.CreateSeriesTransferRequest(), CancellationToken.None);
+
+        _notifier.Verify(n => n.SendProgressAsync(
+            It.Is<TransferProgressUpdate>(u =>
+                u.TransferId == notSent.Id && u.Status == TransferStatus.Failed &&
+                u.CurrentStep == "Not sent" && u.ErrorMessage == notSent.ErrorMessage),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // =========================================================================

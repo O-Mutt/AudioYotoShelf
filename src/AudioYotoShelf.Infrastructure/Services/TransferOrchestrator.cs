@@ -21,6 +21,8 @@ public class TransferOrchestrator(
     IIconGenerationService iconService,
     IAgeSuggestionService ageService,
     IChapterExtractor chapterExtractor,
+    ITrackPlanner planner,
+    ICardCapacityCalculator calculator,
     ITransferProgressNotifier notifier,
     IConfiguration configuration,
     TransferMetrics metrics,
@@ -114,6 +116,11 @@ public class TransferOrchestrator(
             transfer.AgeSuggestionSource = ageSuggestion.Source;
             await db.SaveChangesAsync(ct);
 
+            // The book endpoint checks this before queueing; checked again here because the book may
+            // have changed in Audiobookshelf since, and series, batch and retry transfers reach this unchecked.
+            if (BookCapacity.Check(item, planner, calculator) is { } refusal)
+                throw new CardCapacityExceededException(refusal);
+
             await UpdateStatus(transfer, TransferStatus.DownloadingAudio, 5, ct);
             var (trackMappings, chapterPaths) = await BuildTrackMappingsAsync(user, item, transfer, ct);
             extractedChapterFiles = chapterPaths.Values;
@@ -201,6 +208,7 @@ public class TransferOrchestrator(
 
         foreach (var book in orderedBooks)
         {
+            var transferId = Guid.NewGuid();
             try
             {
                 var bookRequest = new CreateTransferRequest(
@@ -209,8 +217,16 @@ public class TransferOrchestrator(
                     OverrideMinAge: request.OverrideMinAge,
                     OverrideMaxAge: request.OverrideMaxAge
                 );
-                var result = await TransferBookAsync(userConnectionId, bookRequest, ct: ct);
+                var result = await TransferBookAsync(userConnectionId, bookRequest, transferId, ct);
                 results.Add(result);
+            }
+            catch (CardCapacityExceededException)
+            {
+                // The book was not sent, which is an outcome to report alongside the books that were,
+                // not an error to drop: its failed transfer carries the reason.
+                logger.LogWarning("Book {BookId} in series {SeriesName} is larger than one card; not sent",
+                    book.Id, seriesDetail.Name);
+                results.Add(await GetTransferStatusAsync(transferId, ct));
             }
             catch (Exception ex)
             {
@@ -220,6 +236,20 @@ public class TransferOrchestrator(
         }
 
         return results.ToArray();
+    }
+
+    public async Task<CapacityRefusal?> CheckBookCapacityAsync(
+        Guid userConnectionId, string absLibraryItemId, CancellationToken ct = default)
+    {
+        var user = await db.UserConnections.FindAsync([userConnectionId], ct)
+            ?? throw new InvalidOperationException("User connection not found");
+        if (!user.HasValidAbsConnection)
+            throw new InvalidOperationException("No valid Audiobookshelf connection");
+
+        await AbsTokens.EnsureValidAsync(db, absService, user, logger, ct);
+        var item = await absService.GetLibraryItemAsync(
+            user.AudiobookshelfUrl, user.AudiobookshelfToken!, absLibraryItemId, ct);
+        return BookCapacity.Check(item, planner, calculator);
     }
 
     public async Task<TransferResponse> RetryTransferAsync(Guid transferId, CancellationToken ct = default)

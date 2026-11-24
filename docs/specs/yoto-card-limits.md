@@ -1,6 +1,7 @@
 # Spec: Yoto MYO card limits
 
-**Status:** Implemented ([#113](https://github.com/O-Mutt/AudioYotoShelf/issues/113))
+**Status:** Implemented ([#113](https://github.com/O-Mutt/AudioYotoShelf/issues/113),
+[#117](https://github.com/O-Mutt/AudioYotoShelf/issues/117))
 **Scope:** the limits `CardCapacityCalculator` checks before building a Make Your Own (MYO) card,
 and why they differ from Yoto's published numbers.
 
@@ -84,10 +85,35 @@ download or ffmpeg run are not cleaned up yet
 ([#131](https://github.com/O-Mutt/AudioYotoShelf/issues/131),
 [#132](https://github.com/O-Mutt/AudioYotoShelf/issues/132)).
 
+### Single-book transfers
+
+A book sent on its own (the book page, "One card per book" on a series page, a batch, or a retry)
+gets the same check as a playlist, built from the tracks that transfer uploads: one per audio file,
+one per chapter of a single-file book, or the whole file. It does not split tracks to the
+per-track limits, so the check counts each of those tracks once (`splitTracks: false`), where a
+playlist counts the pieces it will split into. The card total is the same estimate as for a
+playlist.
+
+A book over the limits is never downloaded:
+
+- **Book page:** `POST /api/transfers/book` answers 409 with `message` and `capacity` (the same
+  summary a playlist's 409 carries), and queues nothing. The message names the limit the book is
+  over and, for a book in a series, says the card plan on that series page can split it across
+  cards. If Audiobookshelf cannot be reached for this check, the transfer is queued and the job
+  checks instead.
+- **In the job:** `TransferOrchestrator.TransferBookAsync` checks again after reading the book from
+  Audiobookshelf, because the book may have changed since it was queued and series, batch and
+  retry transfers are not checked before queueing. An oversized book's transfer is marked Failed
+  with the same message, and Hangfire does not retry it.
+- **"One card per book":** the books that fit are sent. A book that does not is reported among
+  the series results as a Failed transfer with the message, shown on the Transfers page and as a
+  live "Not sent" update. The request itself only says that such books are reported there:
+  checking each book before queueing would mean reading every book in the series from
+  Audiobookshelf first.
+
 ## 4. Open questions
 
 - Whether a card over 500 MB plays end to end (Goblet of Fire, 566 MB), and whether any larger
   total is refused. Until both are known the app keeps 500 MB.
-- Whether Yoto enforces the 60-minute per-track limit.
-- Single-book transfers (`TransferOrchestrator.TransferBookAsync`) do not run the capacity check at
-  all; only playlist transfers do ([#117](https://github.com/O-Mutt/AudioYotoShelf/issues/117)).
+- Whether Yoto enforces the 60-minute per-track limit. A single-book transfer uploads a chapter
+  longer than that as one track.
