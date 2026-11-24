@@ -80,10 +80,13 @@ size**; a multi-file book uploaded file by file peaks at 1×, or 2× when files 
 
 Two folders take this: downloads go to `Transfer:TempDirectory`, and ffmpeg's merged, chapter and
 split files go to the system temp folder (`TMPDIR`). The Docker image sets `TMPDIR=/app/temp`, so
-both land on the same volume there; outside the image, size both. Partial files left by a failed
-download or ffmpeg run are not cleaned up yet
-([#131](https://github.com/O-Mutt/AudioYotoShelf/issues/131),
-[#132](https://github.com/O-Mutt/AudioYotoShelf/issues/132)).
+both land on the same volume there; outside the image, size both. A download that fails or is
+cancelled partway is deleted with the rest of its transfer's temp files
+([#131](https://github.com/O-Mutt/AudioYotoShelf/issues/131)), and an ffmpeg run that fails or is
+cancelled deletes its own partial output
+([#132](https://github.com/O-Mutt/AudioYotoShelf/issues/132)). A hard stop of the process
+(container restart, out-of-memory kill, `SIGKILL`) still leaves whatever temp files the running
+transfer had, because nothing sweeps the temp folders at startup.
 
 ### Single-book transfers
 

@@ -446,6 +446,118 @@ public class FfmpegChapterExtractorTests : IDisposable
     }
 
     // =========================================================================
+    // Partial output after a failed or cancelled run
+    // =========================================================================
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExtractChapterAsync_FfmpegStopsPartway_DeletesItsPartialOutput(bool cancelled)
+    {
+        string? output = null;
+        _runner.OnRun = args => CreateFile(output = QuotedPaths(args).Last());
+        FfmpegStopsPartway(cancelled);
+
+        var act = () => _sut.ExtractChapterAsync(NewInputFile(), 0, 60, "m4a");
+
+        await ShouldThrowTheOriginalError(act, cancelled);
+        output.Should().NotBeNull();
+        File.Exists(output).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConcatenateAsync_FfmpegStopsPartway_DeletesItsPartialOutputAndTheListFile(bool cancelled)
+    {
+        string? listPath = null;
+        string? output = null;
+        _runner.OnRun = args =>
+        {
+            listPath = QuotedPaths(args)[0];
+            CreateFile(output = QuotedPaths(args)[1]);
+        };
+        FfmpegStopsPartway(cancelled);
+
+        var act = () => _sut.ConcatenateAsync([NewInputFile(), NewInputFile()]);
+
+        await ShouldThrowTheOriginalError(act, cancelled);
+        output.Should().NotBeNull();
+        File.Exists(output).Should().BeFalse();
+        File.Exists(listPath).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SplitAsync_FfmpegStopsPartway_DeletesEverySegmentOfThisRunOnly(bool cancelled)
+    {
+        string[] ownSegments = [];
+        var otherRunsSegment = Path.Combine(Path.GetTempPath(), $"segment_{Guid.NewGuid():N}_000.m4a");
+        _runner.OnRun = args =>
+        {
+            var pattern = QuotedPaths(args)[1];
+            ownSegments = [pattern.Replace("%03d", "000"), pattern.Replace("%03d", "001")];
+            foreach (var segment in ownSegments) CreateFile(segment);
+            CreateFile(otherRunsSegment);
+        };
+        FfmpegStopsPartway(cancelled);
+
+        var act = () => _sut.SplitAsync(NewInputFile(), 60);
+
+        await ShouldThrowTheOriginalError(act, cancelled);
+        ownSegments.Should().HaveCount(2).And.OnlyContain(segment => !File.Exists(segment));
+        File.Exists(otherRunsSegment).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExtractChapterAsync_PartialOutputCannotBeDeleted_StillThrowsFfmpegsErrorAndWarns()
+    {
+        var logger = new Mock<ILogger<FfmpegChapterExtractor>>();
+        var sut = new FfmpegChapterExtractor(logger.Object, _runner);
+        string? output = null;
+        // A directory at the output path makes File.Delete throw.
+        _runner.OnRun = args => Directory.CreateDirectory(output = QuotedPaths(args).Last());
+        FfmpegStopsPartway(cancelled: false);
+
+        try
+        {
+            var act = () => sut.ExtractChapterAsync(NewInputFile(), 0, 60, "m4a");
+
+            await ShouldThrowTheOriginalError(act, cancelled: false);
+            logger.Verify(l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) => state!.ToString()!.Contains(output!)),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+        }
+        finally
+        {
+            if (output is not null && Directory.Exists(output)) Directory.Delete(output);
+        }
+    }
+
+    private const string FfmpegError = "No space left on device";
+
+    private void FfmpegStopsPartway(bool cancelled)
+    {
+        if (cancelled)
+            _runner.Failure = new OperationCanceledException();
+        else
+            _runner.Result = new ProcessResult(1, FfmpegError);
+    }
+
+    private static async Task ShouldThrowTheOriginalError(Func<Task> act, bool cancelled)
+    {
+        if (cancelled)
+            await act.Should().ThrowExactlyAsync<OperationCanceledException>();
+        else
+            (await act.Should().ThrowExactlyAsync<InvalidOperationException>()).Which.Message
+                .Should().EndWith($" failed: {FfmpegError}");
+    }
+
+    // =========================================================================
     // IsFfmpegAvailableAsync
     // =========================================================================
 
@@ -526,9 +638,10 @@ public class FfmpegChapterExtractorTests : IDisposable
             string fileName, string arguments, bool captureStandardError, CancellationToken ct)
         {
             Calls.Add(new Call(fileName, arguments, captureStandardError, ct));
+            // OnRun first: a real ffmpeg has usually written part of its output before it fails or is cancelled.
+            OnRun?.Invoke(arguments);
             if (Failure is not null) return Task.FromException<ProcessResult>(Failure);
 
-            OnRun?.Invoke(arguments);
             return Task.FromResult(Result);
         }
     }
