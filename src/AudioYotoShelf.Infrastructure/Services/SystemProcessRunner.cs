@@ -8,7 +8,7 @@ public sealed class SystemProcessRunner : IProcessRunner
     public async Task<ProcessResult> RunAsync(
         string fileName, string arguments, bool captureStandardError, CancellationToken ct)
     {
-        var process = new Process
+        using var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
@@ -23,9 +23,28 @@ public sealed class SystemProcessRunner : IProcessRunner
 
         process.Start();
 
-        var stderr = captureStandardError ? await process.StandardError.ReadToEndAsync(ct) : "";
-        await process.WaitForExitAsync(ct);
+        try
+        {
+            var stderr = captureStandardError ? await process.StandardError.ReadToEndAsync(ct) : "";
+            await process.WaitForExitAsync(ct);
 
-        return new ProcessResult(process.ExitCode, stderr);
+            return new ProcessResult(process.ExitCode, stderr);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancelling the wait does not stop the process. Left running, ffmpeg would keep writing
+            // output (or new segments) after the caller has deleted what it saw.
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // It exited between the cancellation and the kill.
+            }
+
+            await process.WaitForExitAsync(CancellationToken.None);
+            throw;
+        }
     }
 }

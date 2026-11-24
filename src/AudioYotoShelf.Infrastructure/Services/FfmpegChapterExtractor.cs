@@ -25,7 +25,7 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger, IPro
         var args = FormattableString.Invariant(
             $"-i \"{inputFilePath}\" -ss {startSeconds:F3} -to {endSeconds:F3} -c copy -y \"{outputPath}\"");
 
-        await RunFfmpegAsync(args, "chapter extraction", ct);
+        await RunFfmpegAsync(args, "chapter extraction", () => [outputPath], ct);
 
         logger.LogInformation("Chapter extracted to {OutputPath} ({Size} bytes)",
             outputPath, new FileInfo(outputPath).Length);
@@ -56,7 +56,7 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger, IPro
         try
         {
             var args = $"-f concat -safe 0 -i \"{listPath}\" -c copy -y \"{outputPath}\"";
-            await RunFfmpegAsync(args, "concatenation", ct);
+            await RunFfmpegAsync(args, "concatenation", () => [outputPath], ct);
             return outputPath;
         }
         finally
@@ -79,7 +79,8 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger, IPro
 
         var args = FormattableString.Invariant($"-i \"{inputFilePath}\" -f segment -segment_time {segmentSeconds:F3} ") +
                    $"-c copy -reset_timestamps 1 -y \"{pattern}\"";
-        await RunFfmpegAsync(args, "split", ct);
+        await RunFfmpegAsync(args, "split",
+            () => Directory.GetFiles(Path.GetTempPath(), $"segment_{token}_*"), ct);
 
         var segments = Directory
             .GetFiles(Path.GetTempPath(), $"segment_{token}_*.{outputFormat}")
@@ -94,6 +95,48 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger, IPro
 
     private static string TempPath(string outputFormat) =>
         Path.Combine(Path.GetTempPath(), $"audio_{Guid.NewGuid():N}.{outputFormat}");
+
+    private async Task RunFfmpegAsync(
+        string args, string operation, Func<IEnumerable<string>> outputFiles, CancellationToken ct)
+    {
+        try
+        {
+            await RunFfmpegAsync(args, operation, ct);
+        }
+        catch
+        {
+            // Callers learn the output paths only on success, so a failed or cancelled run's partial
+            // output (a merged book can be several GB) is ours to delete.
+            DeleteBestEffort(outputFiles);
+            throw;
+        }
+    }
+
+    private void DeleteBestEffort(Func<IEnumerable<string>> files)
+    {
+        string[] paths;
+        try
+        {
+            paths = files().ToArray();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to list ffmpeg's partial output for deletion");
+            return;
+        }
+
+        foreach (var path in paths)
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to delete ffmpeg's partial output {File}", path);
+            }
+        }
+    }
 
     private async Task RunFfmpegAsync(string args, string operation, CancellationToken ct)
     {
