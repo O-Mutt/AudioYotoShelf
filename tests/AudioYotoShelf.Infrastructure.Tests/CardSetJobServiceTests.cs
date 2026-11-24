@@ -151,4 +151,18 @@ public class CardSetJobServiceTests : IDisposable
 
         _orchestrator.Verify(o => o.TransferPlaylistAsync(ids[0], It.IsAny<CancellationToken>()), Times.Once);
     }
+    [Fact]
+    public async Task ARerun_SkipsCardsItNoLongerOwns()
+    {
+        // Back to draft after a cancel, failed, or already on Yoto: none of them is this job's to send.
+        var ids = await SeedCardsAsync(
+            PlaylistStatus.Draft, PlaylistStatus.Failed, PlaylistStatus.Transferred,
+            PlaylistStatus.Transferring, PlaylistStatus.Queued);
+
+        await _sut.ExecuteCardSetTransferAsync(Guid.NewGuid(), ids, CancellationToken.None);
+
+        _orchestrator.Verify(o => o.TransferPlaylistAsync(It.IsIn(ids[0], ids[1], ids[2]), It.IsAny<CancellationToken>()), Times.Never);
+        _orchestrator.Verify(o => o.TransferPlaylistAsync(ids[3], It.IsAny<CancellationToken>()), Times.Once);
+        _orchestrator.Verify(o => o.TransferPlaylistAsync(ids[4], It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

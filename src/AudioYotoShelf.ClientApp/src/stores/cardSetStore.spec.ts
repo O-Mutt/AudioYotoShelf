@@ -426,4 +426,59 @@ describe('cardSetStore', () => {
     await flushMicrotasks()
     expect(api.get).toHaveBeenCalledWith('set-1', false)
   })
+  it('ignores a slow load for the series the page has already left', async () => {
+    let finishFirst: (v: unknown) => void = () => {}
+    api.list.mockReturnValueOnce(new Promise((resolve) => (finishFirst = resolve)) as never)
+    api.list.mockReturnValueOnce(ok([]))
+    api.plan.mockReturnValue(ok(plan([card(0, 0, 3)])))
+    const store = useCardSetStore()
+
+    const first = store.load('ser-A', 'lib-1')
+    await store.load('ser-B', 'lib-1')
+    finishFirst({ data: [{ id: 'set-A' }] })
+    await first
+
+    expect(api.get).not.toHaveBeenCalled()
+    expect(store.isSaved).toBe(false)
+    expect(store.cards).toHaveLength(1)
+  })
+
+  it('drops a re-read that an earlier-sent one beat, so a finished send stays finished', async () => {
+    api.list.mockReturnValue(ok([{ id: 'set-1' }]))
+    api.get.mockReturnValueOnce(
+      ok(saved([card(0, 0, 3, { playlistId: 'p1', status: 'Transferring', locked: true })])),
+    )
+    const store = useCardSetStore()
+    await store.load('ser-1', 'lib-1')
+
+    let finishSlow: (v: unknown) => void = () => {}
+    api.get.mockReturnValueOnce(new Promise((resolve) => (finishSlow = resolve)) as never)
+    api.get.mockReturnValueOnce(
+      ok(saved([card(0, 0, 3, { playlistId: 'p1', status: 'Transferred', locked: true })])),
+    )
+    const slow = store.refresh()
+    await store.refresh()
+    finishSlow({
+      data: saved([card(0, 0, 3, { playlistId: 'p1', status: 'Transferring', locked: true })]),
+    })
+    await slow
+
+    expect(store.cards[0]!.status).toBe('Transferred')
+    expect(store.isSending).toBe(false)
+  })
+
+  it('counts a failed card with a Yoto id among the cards Send will send', async () => {
+    api.list.mockReturnValue(ok([{ id: 'set-1' }]))
+    api.get.mockReturnValue(
+      ok(
+        saved([
+          card(0, 0, 3, { playlistId: 'p1', status: 'Failed', locked: true, yotoCardId: 'y1' }),
+        ]),
+      ),
+    )
+    const store = useCardSetStore()
+    await store.load('ser-1', 'lib-1')
+
+    expect(store.unsentCards).toHaveLength(1)
+  })
 })

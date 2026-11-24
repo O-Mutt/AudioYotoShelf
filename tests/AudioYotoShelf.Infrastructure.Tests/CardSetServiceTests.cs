@@ -37,6 +37,17 @@ public class CardSetServiceTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
+    /// <summary>A second service on its own context over the same database, like a second request.</summary>
+    private CardSetService AnotherRequest()
+    {
+        var limits = new YotoCardLimits { MaxTotalBytes = 10 * 45_000_000L };
+        var trackPlanner = new TrackPlanner(limits);
+        var calculator = new CardCapacityCalculator(limits);
+        return new CardSetService(
+            _fixture.NewContext(), _absService.Object, trackPlanner, calculator,
+            new CardSetPlanner(calculator, trackPlanner, limits), limits, Mock.Of<ILogger<CardSetService>>());
+    }
+
     private record SeriesBookSpec(string Id, string? Sequence, params double[] ChapterHours);
 
     private async Task<Guid> SeedUserAsync()
@@ -738,5 +749,112 @@ public class CardSetServiceTests : IDisposable
         var act = () => _sut.RefreshAsync(set.Id);
 
         await act.Should().ThrowAsync<CardSetPlanException>();
+    }
+    // =========================================================================
+    // Second review
+    // =========================================================================
+
+    [Fact]
+    public async Task PrepareTransfer_TwoSendsAtOnce_QueueEachCardOnce()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(12));
+        var set = await _sut.CreateAsync(userId, Create());
+
+        var results = await Task.WhenAll(
+            AnotherRequest().PrepareTransferAsync(set.Id, null),
+            AnotherRequest().PrepareTransferAsync(set.Id, null));
+
+        results.SelectMany(r => r).Should().HaveCount(2).And.OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public async Task ACardOnYotoWhoseResendFailed_StaysLocked()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(12));
+        var set = await _sut.CreateAsync(userId, Create());
+        var card = await _fixture.DbContext.Playlists.FirstAsync(p => p.Id == set.Cards[0].PlaylistId);
+        card.Status = PlaylistStatus.Failed;
+        card.YotoCardId = "yoto-sent-before";
+        await _fixture.DbContext.SaveChangesAsync();
+
+        var read = await _sut.GetAsync(set.Id, withNewBooks: false);
+        var act = () => _sut.UpdateBreaksAsync(set.Id, new UpdateCardSetBreaksRequest([4]));
+
+        read!.Cards[0].Locked.Should().BeTrue();
+        await act.Should().ThrowAsync<CardSetConflictException>();
+        (await _sut.PrepareTransferAsync(set.Id, null)).Should().Contain(card.Id, "a failed card is still sent again");
+    }
+
+    [Fact]
+    public async Task Update_ModeChange_LeavesBooksNewToTheSeriesForRefresh()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(12));
+        var set = await _sut.CreateAsync(userId, Create());
+        SetupSeries(HourBooks(13));
+
+        var updated = await _sut.UpdateAsync(set.Id, new UpdateCardSetRequest(PackingMode: PackingMode.Fill));
+
+        updated.Books.Select(b => b.AbsLibraryItemId).Should().NotContain("b13");
+        (await _sut.GetAsync(set.Id))!.NewBooks!.Select(b => b.AbsLibraryItemId).Should().Equal("b13");
+    }
+
+    [Fact]
+    public async Task Update_ReincludingABook_PutsItBackOnTheCards()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(4));
+        var set = await _sut.CreateAsync(userId, Create(excluded: ["b2"]));
+
+        var updated = await _sut.UpdateAsync(set.Id, new UpdateCardSetRequest(ExcludedItemIds: []));
+
+        updated.Books.Select(b => b.AbsLibraryItemId).Should().Equal("b1", "b2", "b3", "b4");
+    }
+
+    [Fact]
+    public async Task Update_ExcludingABookOnACardThatCannotChange_Conflicts()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(12));
+        var set = await _sut.CreateAsync(userId, Create());
+        await LockAsync(set.Cards[1].PlaylistId!.Value);
+
+        var act = () => _sut.UpdateAsync(set.Id, new UpdateCardSetRequest(ExcludedItemIds: ["b2"]));
+
+        (await act.Should().ThrowAsync<CardSetConflictException>()).Which.Message.Should().Contain("Title b2");
+        (await _sut.GetAsync(set.Id, withNewBooks: false))!.ExcludedItemIds.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Refresh_ANewEntryWithoutAudio_IsLeftOutAndNamed()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(2));
+        var set = await _sut.CreateAsync(userId, Create());
+        SetupSeries([.. HourBooks(2), new SeriesBookSpec("ghost", "3", 1)]);
+        _absService.Setup(s => s.GetLibraryItemAsync(It.IsAny<string>(), It.IsAny<string>(), "ghost", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestData.CreateAbsLibraryItem("ghost", null) with { Media = null });
+
+        var refreshed = await _sut.RefreshAsync(set.Id);
+
+        refreshed.ExcludedItemIds.Should().Contain("ghost");
+        refreshed.Messages.Should().ContainSingle().Which.Should().Contain("no audio");
+        (await _sut.GetAsync(set.Id))!.NewBooks.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task UpdateBreaks_ThatChangeHowManyPartsABookHas_RenumberEveryPart()
+    {
+        var userId = await SeedUserAsync();
+        // 24 half-hour chapters: four 3 h parts, then two parts where the first keeps its range.
+        SetupSeries(new SeriesBookSpec("big", "4", Enumerable.Repeat(0.5, 24).ToArray()));
+        var set = await _sut.CreateAsync(userId, Create(splitPoints: new() { ["big"] = [6, 12, 18] }));
+
+        var updated = await _sut.UpdateBreaksAsync(set.Id, new UpdateCardSetBreaksRequest([], new() { ["big"] = [6] }));
+
+        updated.Cards.Select(c => c.Title).Should().Equal("Dragons 4 · Part 1 of 2", "Dragons 4 · Part 2 of 2");
+        (await CardsAsync(set.Id)).SelectMany(c => c.Items).Should().OnlyContain(i => i.PartCount == 2);
     }
 }

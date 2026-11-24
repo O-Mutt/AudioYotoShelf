@@ -59,6 +59,13 @@ export const useCardSetStore = defineStore('cardSet', () => {
   /** Books added to the series since the set was made; read with the set, cleared once placed. */
   const newBooks = ref<SeriesBookRef[]>([])
   let pollTimer: ReturnType<typeof setInterval> | null = null
+  // The store is shared by every series page, and its calls overlap: a load for the previous series,
+  // a poll and a push-triggered read of the same set. These counters let a late answer be dropped
+  // instead of overwriting a newer one.
+  let loadToken = 0
+  let readSeq = 0
+  let appliedRead = 0
+  let writes = 0
   const signalR = useSignalR()
 
   // A card of this set changed while sending: re-read now rather than at the next poll.
@@ -72,12 +79,16 @@ export const useCardSetStore = defineStore('cardSet', () => {
   const withinLimits = computed(() => view.value?.withinLimits ?? false)
   const messages = computed(() => view.value?.messages ?? [])
   const isSaved = computed(() => cardSet.value !== null)
-  const unsentCards = computed(() => cards.value.filter((c) => !c.locked))
+  /** What "Send" picks: cards never sent, or whose last send failed. */
+  const unsentCards = computed(() =>
+    cards.value.filter((c) => c.status === 'Draft' || c.status === 'Failed'),
+  )
   const isSending = computed(() => cards.value.some(inFlight))
   /** Books the planner had to leave out because one chapter is bigger than a card. */
   const unsplittable = computed(() => preview.value?.unsplittableBookIds ?? [])
 
   async function load(series: string, library: string) {
+    const token = ++loadToken
     stopPolling()
     if (cardSet.value) void leaveGroup(cardSet.value.id)
     newBooks.value = []
@@ -90,9 +101,11 @@ export const useCardSetStore = defineStore('cardSet', () => {
     isLoading.value = true
     try {
       const { data: sets } = await cardSetApi.list(series)
+      if (token !== loadToken) return
       const existing = sets[0]
       if (existing) {
         const { data } = await cardSetApi.get(existing.id)
+        if (token !== loadToken) return
         setSaved(data)
         void joinGroup(data.id)
         if (data.cards.some(inFlight)) startPolling()
@@ -100,13 +113,19 @@ export const useCardSetStore = defineStore('cardSet', () => {
         await replan()
       }
     } catch (err) {
-      error.value = errorMessage(err)
+      if (token === loadToken) error.value = errorMessage(err)
     } finally {
-      isLoading.value = false
+      if (token === loadToken) isLoading.value = false
     }
   }
 
+  /** Applies a set the server just returned for a change; any read already on its way is now older. */
   function setSaved(data: CardSetResponse) {
+    writes++
+    applySet(data)
+  }
+
+  function applySet(data: CardSetResponse) {
     cardSet.value = data
     if (data.newBooks) newBooks.value = data.newBooks
     mode.value = data.packingMode
@@ -115,8 +134,9 @@ export const useCardSetStore = defineStore('cardSet', () => {
 
   async function replan() {
     if (!seriesId.value || !libraryId.value) return
+    const series = seriesId.value
     const { data } = await cardSetApi.plan(planRequest(layout.value))
-    preview.value = data
+    if (seriesId.value === series) preview.value = data
   }
 
   function planRequest(withLayout: CardSetLayout | null) {
@@ -322,10 +342,18 @@ export const useCardSetStore = defineStore('cardSet', () => {
 
   async function refresh() {
     if (!cardSet.value) return stopPolling()
+    const setId = cardSet.value.id
+    const seq = ++readSeq
+    const writesAtStart = writes
     try {
-      const { data } = await cardSetApi.get(cardSet.value.id, false)
-      setSaved(data)
-      if (!data.cards.some(inFlight)) stopPolling()
+      const { data } = await cardSetApi.get(setId, false)
+      // Drop an answer that an earlier-sent read beat, that a change has made stale, or that is
+      // for a set this page has left.
+      if (seq < appliedRead || writes !== writesAtStart || cardSet.value?.id !== setId) return
+      appliedRead = seq
+      applySet(data)
+      if (data.cards.some(inFlight)) startPolling()
+      else stopPolling()
     } catch (err) {
       error.value = errorMessage(err)
       stopPolling()

@@ -313,4 +313,17 @@ public class CardSetsControllerTests : IDisposable
 
         result.Should().BeOfType<UnprocessableEntityObjectResult>();
     }
+
+    [Fact]
+    public async Task Update_ExcludingABookOnASentCard_Returns409()
+    {
+        var caller = Guid.NewGuid();
+        var id = await AddCardSetOwnedByAsync(caller);
+        _cardSets.Setup(s => s.UpdateAsync(id, It.IsAny<UpdateCardSetRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new CardSetConflictException("Book 2 is on a card that is on Yoto, or before one, so it can't be left out.", id));
+
+        var result = await _sut.AsUser(caller).Update(id, new UpdateCardSetRequest(ExcludedItemIds: ["b2"]), default);
+
+        result.Should().BeOfType<ConflictObjectResult>();
+    }
 }

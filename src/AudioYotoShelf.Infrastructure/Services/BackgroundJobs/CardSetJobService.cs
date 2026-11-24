@@ -39,8 +39,10 @@ public class CardSetJobService(
                 ct.ThrowIfCancellationRequested();
             }
 
-            // Hangfire re-runs a job that a server restart interrupted; cards it already sent stay as they are.
-            if (await StatusOfAsync(playlistIds[i]) == PlaylistStatus.Transferred)
+            // Send only a card this job still owns: Queued, or Transferring when a restart cut the last
+            // run short. Hangfire re-runs an interrupted job, and by then a card may be on Yoto, back
+            // to draft, re-packed, or queued again by a newer send that will send it itself.
+            if (await StatusOfAsync(playlistIds[i]) is not (PlaylistStatus.Queued or PlaylistStatus.Transferring))
                 continue;
 
             try

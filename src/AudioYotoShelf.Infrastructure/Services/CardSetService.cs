@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using AudioYotoShelf.Core.Configuration;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
@@ -25,6 +26,11 @@ public class CardSetService(
     private const TrackGrouping CardGrouping = TrackGrouping.Auto;
     private const int AbsFetchConcurrency = 4;
     private const int MaxNameLength = 256;
+
+    // Two Send requests for one set must not both see a card as unsent and both queue it; that makes
+    // two Yoto cards. The app runs as one process (Hangfire in-process), so a per-set lock here is
+    // enough to make the check-and-queue below atomic.
+    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> SendLocks = new();
 
     /// <summary>A series book with its per-chapter tracks (one per file, chapter, or whole file).</summary>
     private sealed record SeriesBook(
@@ -183,6 +189,11 @@ public class CardSetService(
         var position = order.Select((b, i) => (b.Id, i)).ToDictionary(x => x.Id, x => x.i);
         int PositionOf(string id) => position.GetValueOrDefault(id, -1);
         var newBooks = await FetchBooksAsync(user, set.AbsSeriesId, order.Where(b => newIds.Contains(b.Id)).ToList(), ct);
+
+        // A series entry with no audio can't go on a card; leaving it out stops it showing as new forever.
+        var fetchedIds = newBooks.Select(b => b.Id).ToHashSet();
+        var withoutAudio = order.Where(b => newIds.Contains(b.Id) && !fetchedIds.Contains(b.Id)).ToList();
+        set.ExcludedItemIds = [.. set.ExcludedItemIds, .. withoutAudio.Select(b => b.Id)];
         var tail = BooksOf(cards.Skip(keepCount)).Concat(newBooks).OrderBy(b => PositionOf(b.Id)).ToList();
 
         var plan = planner.Plan(tail.Select(b => b.Plan).ToList(), set.PackingMode, CardGrouping);
@@ -202,6 +213,8 @@ public class CardSetService(
                 return $"{b.Title} comes earlier in the series, but the cards before it are already set; it went on card {card}.";
             })
             .ToList();
+
+        messages.AddRange(withoutAudio.Select(b => $"{b.Title} has no audio in Audiobookshelf, so it was left out."));
 
         logger.LogInformation("Card set {CardSetId}: placed {Count} new books", set.Id, newBooks.Count);
         return ToResponse(set, newBooks: [], extraMessages: messages);
@@ -248,7 +261,7 @@ public class CardSetService(
         var fixedCount = FixedCount(cards);
         for (var i = 0; i < fixedCount; i++)
         {
-            if (i >= specs.Count || !SameContent(cards[i], specs[i]))
+            if (i >= specs.Count || !SameBooks(cards[i], specs[i]))
                 throw new CardSetConflictException($"That change moves card {i + 1}, which is already on Yoto.", set.Id);
         }
 
@@ -263,9 +276,22 @@ public class CardSetService(
         Guid cardSetId, UpdateCardSetRequest request, CancellationToken ct = default)
     {
         var set = await LoadOrThrowAsync(cardSetId, ct);
+        var inSet = KnownBookIds(set);
 
         if (!string.IsNullOrWhiteSpace(request.Name))
             set.Name = Truncate(request.Name.Trim());
+
+        if (request.ExcludedItemIds is not null)
+        {
+            var cards = Ordered(set);
+            var fixedBooks = cards.Take(FixedCount(cards)).SelectMany(c => c.Items)
+                .DistinctBy(i => i.AbsLibraryItemId)
+                .ToDictionary(i => i.AbsLibraryItemId, i => i.BookTitle);
+            var stuck = request.ExcludedItemIds.Where(fixedBooks.ContainsKey).Select(id => fixedBooks[id]).ToList();
+            if (stuck.Count > 0)
+                throw new CardSetConflictException(
+                    $"{string.Join(", ", stuck)} is on a card that is on Yoto, or before one, so it can't be left out.", set.Id);
+        }
 
         var repack = false;
         if (request.PackingMode is { } mode && mode != set.PackingMode)
@@ -280,7 +306,7 @@ public class CardSetService(
         }
 
         if (repack)
-            await RepackUnsentAsync(set, ct);
+            await RepackUnsentAsync(set, inSet, ct);
 
         await db.SaveChangesAsync(ct);
         return ToResponse(set);
@@ -315,13 +341,28 @@ public class CardSetService(
     public async Task<Guid[]> PrepareTransferAsync(
         Guid cardSetId, IReadOnlyList<Guid>? playlistIds, CancellationToken ct = default)
     {
+        var sendLock = SendLocks.GetOrAdd(cardSetId, _ => new SemaphoreSlim(1, 1));
+        await sendLock.WaitAsync(ct);
+        try
+        {
+            return await QueueCardsAsync(cardSetId, playlistIds, ct);
+        }
+        finally
+        {
+            sendLock.Release();
+        }
+    }
+
+    private async Task<Guid[]> QueueCardsAsync(Guid cardSetId, IReadOnlyList<Guid>? playlistIds, CancellationToken ct)
+    {
         var set = await LoadOrThrowAsync(cardSetId, ct);
         var cards = Ordered(set);
 
         List<Playlist> chosen;
         if (playlistIds is null)
         {
-            chosen = cards.Where(c => !IsLocked(c)).ToList();
+            // Every card not on Yoto in its current form: never sent, or whose last send failed.
+            chosen = cards.Where(c => c.Status is PlaylistStatus.Draft or PlaylistStatus.Failed).ToList();
         }
         else
         {
@@ -370,7 +411,11 @@ public class CardSetService(
     /// mode and exclusions. Cards up to and including the last locked card keep their books; a book
     /// split across that boundary continues on the next card from the chapter after its last sent part.
     /// </summary>
-    private async Task RepackUnsentAsync(CardSet set, CancellationToken ct)
+    /// <param name="inSet">
+    /// Books on the set's cards or left out of it before this change. Books outside it are new to the
+    /// series and stay for <see cref="RefreshAsync"/>, which places them where the user can see.
+    /// </param>
+    private async Task RepackUnsentAsync(CardSet set, IReadOnlySet<string> inSet, CancellationToken ct)
     {
         var user = await GetAbsUserAsync(set.UserConnectionId, ct);
         var (_, seriesBooks) = await LoadSeriesAsync(user, set.AbsLibraryId, set.AbsSeriesId, ct);
@@ -395,7 +440,8 @@ public class CardSetService(
                 item.SeriesSequence, chapters.Skip(next).ToList()));
         }
 
-        tail.AddRange(seriesBooks.Where(b => !placed.Contains(b.Id) && !set.ExcludedItemIds.Contains(b.Id)));
+        tail.AddRange(seriesBooks.Where(b =>
+            inSet.Contains(b.Id) && !placed.Contains(b.Id) && !set.ExcludedItemIds.Contains(b.Id)));
 
         var plan = planner.Plan(tail.Select(b => b.Plan).ToList(), set.PackingMode, CardGrouping,
             remainder is null ? null : new HashSet<int> { 0 });
@@ -554,7 +600,8 @@ public class CardSetService(
         return Truncate(title);
     }
 
-    private static bool SameContent(Playlist card, CardSpec spec)
+    /// <summary>The card holds the same books and chapter range; for checking cards that can't change.</summary>
+    private static bool SameBooks(Playlist card, CardSpec spec)
     {
         var items = card.Items.OrderBy(i => i.Position).ToList();
         if (items.Count != spec.Books.Count) return false;
@@ -564,6 +611,17 @@ public class CardSetService(
         }
         var first = items.FirstOrDefault();
         return first?.FirstChapterIndex == spec.FirstChapter && first?.LastChapterIndex == spec.LastChapter;
+    }
+
+    /// <summary>
+    /// Same books and range, and the same part numbering: a part whose split now has more or fewer
+    /// parts must be rewritten, or its title and the Yoto chapter keep saying "Part 1 of 2".
+    /// </summary>
+    private static bool SameContent(Playlist card, CardSpec spec)
+    {
+        if (!SameBooks(card, spec)) return false;
+        var first = card.Items.OrderBy(i => i.Position).FirstOrDefault();
+        return first?.PartNumber == spec.PartNumber && first?.PartCount == spec.PartCount;
     }
 
     // =========================================================================
@@ -771,9 +829,14 @@ public class CardSetService(
     private static List<Playlist> Ordered(CardSet set) =>
         set.Cards.OrderBy(c => c.SetIndex ?? int.MaxValue).ToList();
 
-    /// <summary>A card on Yoto, queued to send or being sent never changes.</summary>
+    /// <summary>
+    /// A card on Yoto, queued to send or being sent never changes its books. A card with a Yoto id
+    /// is on Yoto even after a failed re-send marks it Failed: changing its books would change what
+    /// the physical card plays on its next send, or orphan it if the card were removed.
+    /// </summary>
     private static bool IsLocked(Playlist card) =>
-        card.Status is PlaylistStatus.Transferred or PlaylistStatus.Transferring or PlaylistStatus.Queued;
+        card.Status is PlaylistStatus.Transferred or PlaylistStatus.Transferring or PlaylistStatus.Queued
+        || card.YotoCardId is not null;
 
     /// <summary>Cards up to the last locked one stay as they are, so nothing slides under a sent card.</summary>
     private static int FixedCount(List<Playlist> cards) => cards.FindLastIndex(IsLocked) + 1;

@@ -107,6 +107,10 @@ public class CardSetsController(
         {
             return Ok(await cardSets.UpdateAsync(cardSetId, request, ct));
         }
+        catch (CardSetConflictException ex)
+        {
+            return Conflict(new { ex.Message, ex.CardSetId });
+        }
         catch (CardSetPlanException ex)
         {
             return UnprocessableEntity(new { ex.Message, ex.Plan });
