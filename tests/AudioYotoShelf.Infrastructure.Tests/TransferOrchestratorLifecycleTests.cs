@@ -408,8 +408,87 @@ public partial class TransferOrchestratorTests
         (await ReadTransferAsync(other.Id)).TrackMappings.Select(m => m.AbsFileIno).Should().Equal("other-ino");
     }
 
+    private static TrackMapping EarlierTrack(Guid transferId, string fileIno, int index, double start, double end, string? sha)
+    {
+        var mapping = TestData.CreateTrackMapping(transferId, fileIno, $"Chapter {index + 1}", index, sha);
+        mapping.StartTime = start;
+        mapping.EndTime = end;
+        return mapping;
+    }
+
+    private static AbsLibraryItem ThreeChapterBook() => TestData.CreateAbsLibraryItem(media: TestData.CreateAbsMedia(
+        audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 900)],
+        chapters:
+        [
+            TestData.CreateAbsChapter(0, "Chapter 1", 0, 300),
+            TestData.CreateAbsChapter(1, "Chapter 2", 300, 600),
+            TestData.CreateAbsChapter(2, "Chapter 3", 600, 900),
+        ]));
+
     [Fact]
-    public async Task RetryTransferAsync_ResetsTheTransferAndItsMappingsEvenIfTheRerunFailsImmediately()
+    public async Task TransferBookAsync_Retry_AChapterAlreadyOnYotoIsNeitherExtractedNorUploadedAgain()
+    {
+        var user = await SeedUserAsync();
+        var failed = TestData.CreateCardTransfer(user.Id, status: TransferStatus.Failed);
+        _db.CardTransfers.Add(failed);
+        var done = EarlierTrack(failed.Id, "ino-1:ch0", 0, 0, 300, "sha-done");
+        _db.TrackMappings.AddRange(done, EarlierTrack(failed.Id, "ino-1:ch1", 1, 300, 600, sha: null));
+        await _db.SaveChangesAsync();
+        ServeItemWith(ThreeChapterBook());
+
+        await _sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest(), failed.Id);
+
+        _chapterExtractor.Verify(c => c.ExtractChapterAsync(
+            It.IsAny<string>(), It.IsAny<double>(), It.IsAny<double>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+        VerifyTrackUploads(Times.Exactly(2));
+        var mappings = (await ReadTransferAsync(failed.Id)).TrackMappings.OrderBy(m => m.ChapterIndex).ToList();
+        mappings.Select(m => (m.AbsFileIno, m.YotoTranscodedSha256)).Should().Equal(
+            ("ino-1:ch0", "sha-done"), ("ino-1:ch1", "sha256_test_hash"), ("ino-1:ch2", "sha256_test_hash"));
+        mappings[0].Id.Should().Be(done.Id);
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_Retry_AChapterWhoseTimesChangedIsUploadedAgain()
+    {
+        var user = await SeedUserAsync();
+        var failed = TestData.CreateCardTransfer(user.Id, status: TransferStatus.Failed);
+        _db.CardTransfers.Add(failed);
+        _db.TrackMappings.Add(EarlierTrack(failed.Id, "ino-1:ch0", 0, 0, 250, "sha-old-cut"));
+        await _db.SaveChangesAsync();
+        ServeItemWith(ThreeChapterBook());
+
+        await _sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest(), failed.Id);
+
+        VerifyTrackUploads(Times.Exactly(3));
+        (await ReadTransferAsync(failed.Id)).TrackMappings.Select(m => m.YotoTranscodedSha256)
+            .Should().OnlyContain(sha => sha == "sha256_test_hash");
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_Retry_AFileAlreadyOnYotoIsNotUploadedAgain()
+    {
+        var user = await SeedUserAsync();
+        var failed = TestData.CreateCardTransfer(user.Id, status: TransferStatus.Failed);
+        _db.CardTransfers.Add(failed);
+        _db.TrackMappings.Add(EarlierTrack(failed.Id, "ino-a", 0, 0, 300, "sha-a"));
+        await _db.SaveChangesAsync();
+        ServeItemWith(TestData.CreateAbsLibraryItem(media: TestData.CreateAbsMedia(audioFiles:
+        [
+            TestData.CreateAbsAudioFile(0, "ino-a", duration: 300),
+            TestData.CreateAbsAudioFile(1, "ino-b", duration: 400),
+        ])));
+
+        await _sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest(), failed.Id);
+
+        VerifyTrackUploads(Times.Once());
+        (await ReadTransferAsync(failed.Id)).TrackMappings.OrderBy(m => m.ChapterIndex)
+            .Select(m => (m.AbsFileIno, m.YotoTranscodedSha256))
+            .Should().Equal(("ino-a", "sha-a"), ("ino-b", "sha256_test_hash"));
+    }
+
+    [Fact]
+    public async Task RetryTransferAsync_ResetsTheTransferButKeepsItsMappingsIfTheRerunFailsImmediately()
     {
         var user = TestData.CreateUserConnection(yotoAccessToken: null);   // rerun fails at once: no Yoto connection
         _db.UserConnections.Add(user);
@@ -430,7 +509,8 @@ public partial class TransferOrchestratorTests
         var stored = await ReadTransferAsync(failed.Id);
         (stored.Status, stored.ErrorMessage, stored.ProgressPercent, stored.CompletedAt)
             .Should().Be((TransferStatus.Pending, null, 0, null));
-        stored.TrackMappings.Should().BeEmpty();
+        // Kept so a later retry can still reuse whatever had reached Yoto.
+        stored.TrackMappings.Select(m => m.AbsFileIno).Should().Equal("stale-ino");
         (await ReadTransferAsync(other.Id)).TrackMappings.Should().ContainSingle();
     }
 

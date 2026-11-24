@@ -827,6 +827,102 @@ public class YotoServiceTests
         _handler.Requests.Should().ContainSingle();
     }
 
+    private const string PollProcessingJson = """{"transcode":{"status":"processing"}}""";
+
+    private static HttpRequestException ConnectionReset() =>
+        new("An error occurred while sending the request.",
+            new IOException("Unable to read data from the transport connection: Connection reset by peer.",
+                new SocketException((int)SocketError.ConnectionReset)));
+
+    [Fact]
+    public async Task PollTranscodeStatusAsync_AConnectionResetIsRetriedAfterBackoff()
+    {
+        _handler.EnqueueThrow(ConnectionReset());
+        _handler.Enqueue(HttpStatusCode.OK, PollDoneJson);
+        var sut = CreateSut();
+
+        var result = await sut.PollTranscodeStatusAsync(Token, "up-1");
+
+        result.TranscodedSha256.Should().Be("sha-1");
+        _handler.Requests.Should().HaveCount(2);
+        sut.PollFailureBackoffs.Should().Equal(1);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.RequestTimeout)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    public async Task PollTranscodeStatusAsync_ATryAgainLaterStatusIsRetried(HttpStatusCode status)
+    {
+        _handler.Enqueue(status, "{}");
+        _handler.Enqueue(HttpStatusCode.OK, PollDoneJson);
+        var sut = CreateSut();
+
+        var result = await sut.PollTranscodeStatusAsync(Token, "up-1");
+
+        result.TranscodedSha256.Should().Be("sha-1");
+        sut.PollFailureBackoffs.Should().Equal(1);
+    }
+
+    [Fact]
+    public async Task PollTranscodeStatusAsync_AClientTimeoutIsRetried()
+    {
+        _handler.EnqueueThrow(new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout"));
+        _handler.Enqueue(HttpStatusCode.OK, PollDoneJson);
+        var sut = CreateSut();
+
+        var result = await sut.PollTranscodeStatusAsync(Token, "up-1");
+
+        result.TranscodedSha256.Should().Be("sha-1");
+        sut.PollFailureBackoffs.Should().Equal(1);
+    }
+
+    [Fact]
+    public async Task PollTranscodeStatusAsync_GivesUpAfterFiveFailuresInARow()
+    {
+        for (var i = 0; i < 5; i++) _handler.EnqueueThrow(ConnectionReset());
+        var sut = CreateSut();
+
+        var act = () => sut.PollTranscodeStatusAsync(Token, "up-1");
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+        _handler.Requests.Should().HaveCount(5);
+        sut.PollFailureBackoffs.Should().Equal(1, 2, 3, 4);
+    }
+
+    [Fact]
+    public async Task PollTranscodeStatusAsync_ASuccessfulPollResetsTheFailureCount()
+    {
+        for (var i = 0; i < 4; i++) _handler.EnqueueThrow(ConnectionReset());
+        _handler.Enqueue(HttpStatusCode.OK, PollProcessingJson);
+        for (var i = 0; i < 4; i++) _handler.EnqueueThrow(ConnectionReset());
+        _handler.Enqueue(HttpStatusCode.OK, PollDoneJson);
+        var sut = CreateSut();
+
+        var result = await sut.PollTranscodeStatusAsync(Token, "up-1");
+
+        result.TranscodedSha256.Should().Be("sha-1");
+        sut.PollFailureBackoffs.Should().Equal(1, 2, 3, 4, 1, 2, 3, 4);
+        sut.PollDelays.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task PollTranscodeStatusAsync_CallerCancellation_IsNotRetried()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        _handler.EnqueueThrow(new TaskCanceledException("The operation was canceled.", null, cts.Token));
+        var sut = CreateSut();
+
+        var act = () => sut.PollTranscodeStatusAsync(Token, "up-1", ct: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        sut.PollFailureBackoffs.Should().BeEmpty();
+    }
+
     // =========================================================================
     // UploadAndTranscodeAsync — the three steps in order, with progress
     // =========================================================================
@@ -1042,7 +1138,14 @@ public class YotoServiceTests
         : YotoService(factory, configuration, Mock.Of<ILogger<YotoService>>())
     {
         public List<int> UploadBackoffAttempts { get; } = [];
+        public List<int> PollFailureBackoffs { get; } = [];
         public int PollDelays { get; private set; }
+
+        protected override Task DelayAfterFailedPollAsync(int failure, CancellationToken ct)
+        {
+            PollFailureBackoffs.Add(failure);
+            return Task.CompletedTask;
+        }
 
         protected override Task DelayBetweenUploadAttemptsAsync(int attempt, CancellationToken ct)
         {
