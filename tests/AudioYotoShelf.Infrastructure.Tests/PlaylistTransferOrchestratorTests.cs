@@ -257,6 +257,62 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task TransferPlaylist_DownloadThatFailsPartway_DeletesThePartialFile()
+    {
+        string[]? onDiskWhenItFailed = null;
+        _absService.Setup(s => s.DownloadAudioFileAsync(
+                It.IsAny<string>(), It.IsAny<string>(), "book-1", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new FailsAfterFirstChunkStream(() =>
+            {
+                onDiskWhenItFailed = Directory.GetFiles(_tempDir);
+                return new HttpRequestException("connection reset");
+            }));
+        var playlistId = await SeedSingleFileBookAsync();
+
+        var act = () => _sut.TransferPlaylistAsync(playlistId);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+        onDiskWhenItFailed.Should().ContainSingle();
+        Directory.GetFiles(_tempDir).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task TransferPlaylist_DownloadCancelledPartway_DeletesThePartialFile()
+    {
+        using var cts = new CancellationTokenSource();
+        string[]? onDiskWhenCancelled = null;
+        _absService.Setup(s => s.DownloadAudioFileAsync(
+                It.IsAny<string>(), It.IsAny<string>(), "book-1", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new FailsAfterFirstChunkStream(() =>
+            {
+                onDiskWhenCancelled = Directory.GetFiles(_tempDir);
+                cts.Cancel();
+                return new OperationCanceledException(cts.Token);
+            }));
+        var playlistId = await SeedSingleFileBookAsync();
+
+        var act = () => _sut.TransferPlaylistAsync(playlistId, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        onDiskWhenCancelled.Should().ContainSingle();
+        Directory.GetFiles(_tempDir).Should().BeEmpty();
+    }
+
+    private async Task<Guid> SeedSingleFileBookAsync()
+    {
+        var playlistId = await SeedPlaylistAsync(
+            grouping: TrackGrouping.Chapters,
+            items:
+            [
+                new PlaylistItem { AbsLibraryItemId = "book-1", Position = 0, BookTitle = "Book 1",
+                    TrackDurations = [300], TrackBytes = [1_000_000] },
+            ]);
+        SetupBook("book-1", TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 300)], chapters: []));
+        return playlistId;
+    }
+
+    [Fact]
     public async Task TransferPlaylist_MultiFileBook_TitlesEachTrackFromTheMatchingChapter()
     {
         // Audiobookshelf's AudioFile.Index is 1-based (confirmed live against a real book) —
@@ -316,5 +372,43 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
         _yotoService.Verify(s => s.CreateOrUpdateCardAsync(
             It.IsAny<string>(), It.IsAny<YotoCardContent>(), It.IsAny<YotoCardMetadata>(),
             It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>Serves one chunk of audio, then fails the way a dropped connection or a cancelled job does mid-download.</summary>
+    private sealed class FailsAfterFirstChunkStream(Func<Exception> fail) : Stream
+    {
+        private bool _served;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            if (_served) throw fail();
+            _served = true;
+            var count = Math.Min(100, buffer.Length);
+            buffer[..count].Clear();
+            return count;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(Read(buffer.Span));
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.FromResult(Read(buffer, offset, count));
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }
