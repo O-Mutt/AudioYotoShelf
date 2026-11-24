@@ -13,6 +13,9 @@ namespace AudioYotoShelf.Infrastructure.Services;
 /// </summary>
 public static class BookCapacity
 {
+    private const string SendAnyway =
+        "\"Send anyway\" on the book page tries it as one card, which Yoto may refuse or not play to the end.";
+
     public static CapacityRefusal? Check(AbsLibraryItem item, ITrackPlanner planner, ICardCapacityCalculator calculator)
     {
         if (item.Media is not { } media) return null;
@@ -34,8 +37,8 @@ public static class BookCapacity
     {
         var why = string.Join(" ", result.Messages);
         var next = seriesName is not null
-            ? $"It is in the series \"{seriesName}\": the card plan on that series page can split it across cards."
-            : "Only a book in a series can be split across cards, from the series page.";
+            ? $"It is in the series \"{seriesName}\": the card plan on that series page can split it across cards. {SendAnyway}"
+            : SendAnyway;
         return $"\"{title}\" is larger than one Yoto card, so it was not sent. {why} {next}";
     }
 }

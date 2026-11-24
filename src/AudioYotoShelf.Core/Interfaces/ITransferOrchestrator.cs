@@ -46,7 +46,14 @@ public interface ITransferOrchestrator
 }
 
 /// <summary>A book is over the card limits, so its transfer stops before any download.</summary>
-public class CardCapacityExceededException(CapacityRefusal refusal) : InvalidOperationException(refusal.Message)
+public class CardCapacityExceededException(CapacityRefusal refusal, TransferResponse? transfer = null)
+    : InvalidOperationException(refusal.Message)
 {
     public CapacityRefusal Refusal { get; } = refusal;
+
+    /// <summary>
+    /// The transfer as it was marked Failed, so a caller can report it without reading it back; the
+    /// person may delete it in the meantime.
+    /// </summary>
+    public TransferResponse? Transfer { get; } = transfer;
 }

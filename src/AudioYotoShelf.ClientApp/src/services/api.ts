@@ -132,6 +132,7 @@ export const transferApi = {
     playbackType?: string
     overrideMinAge?: number
     overrideMaxAge?: number
+    allowOversized?: boolean
   }) {
     return api.post('/transfers/book', request)
   },

@@ -174,6 +174,51 @@ public class TransfersControllerTests : IDisposable
         result.Should().BeOfType<AcceptedResult>();
     }
 
+    [Fact]
+    public async Task TransferBook_AudiobookshelfTooSlowForTheCheck_StillQueuesForTheJobToCheck()
+    {
+        // An HttpClient timeout surfaces as TaskCanceledException, which must skip the check like any other failure.
+        _orchestrator.Setup(o => o.CheckBookCapacityAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (Guid _, string _, CancellationToken token) =>
+            {
+                await Task.Delay(Timeout.Infinite, token);
+                return null;
+            });
+        var sut = new TransfersController(
+            _db, _orchestrator.Object, _backgroundJobs.Object, _notifier.Object,
+            Mock.Of<ILogger<TransfersController>>())
+        { CapacityCheckTimeout = TimeSpan.FromMilliseconds(50) };
+
+        var result = await sut.AsUser(Guid.NewGuid()).TransferBook(new CreateTransferRequest("item-1"), CancellationToken.None);
+
+        result.Should().BeOfType<AcceptedResult>();
+    }
+
+    [Fact]
+    public async Task TransferBook_CallerGoneDuringTheCheck_QueuesNothing()
+    {
+        using var gone = new CancellationTokenSource();
+        gone.Cancel();
+        _orchestrator.Setup(o => o.CheckBookCapacityAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException(gone.Token));
+
+        var act = () => _sut.AsUser(Guid.NewGuid()).TransferBook(new CreateTransferRequest("item-1"), gone.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _backgroundJobs.VerifyNothingEnqueued();
+    }
+
+    [Fact]
+    public async Task TransferBook_SentAnyway_SkipsTheCapacityCheck()
+    {
+        var result = await _sut.AsUser(Guid.NewGuid()).TransferBook(
+            new CreateTransferRequest("item-1", AllowOversized: true), CancellationToken.None);
+
+        result.Should().BeOfType<AcceptedResult>();
+        _orchestrator.Verify(o => o.CheckBookCapacityAsync(
+            It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // =========================================================================
     // POST series transfer
     // =========================================================================

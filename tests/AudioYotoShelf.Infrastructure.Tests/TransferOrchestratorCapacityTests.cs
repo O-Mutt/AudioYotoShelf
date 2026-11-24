@@ -1,4 +1,5 @@
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
+using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
@@ -69,22 +70,98 @@ public partial class TransferOrchestratorTests
             .Which.Message.Should().Contain("series \"Wizards\"").And.Contain("card plan");
     }
 
-    [Fact]
-    public async Task TransferBookAsync_TracksOverThePerTrackSize_CountOncePerTrackBecauseTheyAreNotSplit()
-    {
-        // 60 five-minute files of 200 MB. Split to 100 MB pieces that would be 120 tracks, over the
-        // 100-track card; the single-book transfer uploads them whole, so the card gets 60.
-        var user = await SeedUserAsync();
-        var item = TestData.CreateAbsLibraryItem(media: TestData.CreateAbsMedia(
+    /// <summary>
+    /// 60 five-minute files of 200 MB. Split to 100 MB pieces that would be 120 tracks, over the
+    /// 100-track card; the single-book transfer uploads them whole, so the card gets 60.
+    /// </summary>
+    private static AbsLibraryItem BookWithLargeTracksThatFitUnsplit() =>
+        TestData.CreateAbsLibraryItem(media: TestData.CreateAbsMedia(
             audioFiles: Enumerable.Range(0, 60)
                 .Select(i => TestData.CreateAbsAudioFile(i, $"ino-{i}", 300, 200L * 1024 * 1024))
                 .ToArray(),
             duration: 60 * 300));
-        _absService.Setup(s => s.GetLibraryItemAsync(
-                It.IsAny<string>(), It.IsAny<string>(), "item-123", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(item);
+
+    [Fact]
+    public async Task CheckBookCapacityAsync_TracksOverThePerTrackSize_CountOncePerTrackBecauseTheyAreNotSplit()
+    {
+        var user = await SeedUserAsync();
+        ServeItemWith(BookWithLargeTracksThatFitUnsplit());
 
         (await _sut.CheckBookCapacityAsync(user.Id, "item-123")).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_TracksOverThePerTrackSize_AreNotRefusedBecauseTheyAreNotSplit()
+    {
+        var user = await SeedUserAsync();
+        ServeItemWith(BookWithLargeTracksThatFitUnsplit());
+
+        var result = await _sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest());
+
+        result.Status.Should().Be(TransferStatus.Completed);
+        result.Tracks.Should().HaveCount(60);
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_BookLargerThanOneCard_IsNotCountedAsAFailedTransfer()
+    {
+        var (totals, scope) = ListenToTransferMetrics();
+        using var _ = scope;
+        var user = await SeedUserAsync();
+        ServeItemWith(BookLargerThanOneCard());
+        var updates = CaptureNotifications();
+        var transferId = Guid.NewGuid();
+
+        var act = () => _sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest(), transferId);
+
+        var thrown = (await act.Should().ThrowAsync<CardCapacityExceededException>()).Which;
+        thrown.Transfer!.Status.Should().Be(TransferStatus.Failed);
+        thrown.Transfer.ErrorMessage.Should().Be(thrown.Message);
+        updates.Should().ContainSingle(u => u.TransferId == transferId && u.Status == TransferStatus.Failed);
+        totals.GetValueOrDefault("ays.transfers.failed").Should().Be(0);
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_BookLargerThanOneCardSentAnyway_IsSentAsOneCard()
+    {
+        var user = await SeedUserAsync();
+        ServeItemWith(BookLargerThanOneCard());
+        var transferId = Guid.NewGuid();
+
+        var result = await _sut.TransferBookAsync(
+            user.Id, TestData.CreateTransferRequest() with { AllowOversized = true }, transferId);
+
+        result.Status.Should().Be(TransferStatus.Completed);
+        (await ReadTransferAsync(transferId)).AllowOversized.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RetryTransferAsync_BookSentAnyway_KeepsThatChoice()
+    {
+        var user = await SeedUserAsync();
+        ServeItemWith(BookLargerThanOneCard());
+        var transfer = TestData.CreateCardTransfer(user.Id, status: TransferStatus.Failed);
+        transfer.AllowOversized = true;
+        _db.CardTransfers.Add(transfer);
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.RetryTransferAsync(transfer.Id);
+
+        result.Status.Should().Be(TransferStatus.Completed);
+    }
+
+    [Fact]
+    public async Task RetryTransferAsync_BookRefusedEarlier_IsRefusedAgain()
+    {
+        var user = await SeedUserAsync();
+        ServeItemWith(BookLargerThanOneCard());
+        var transfer = TestData.CreateCardTransfer(user.Id, status: TransferStatus.Failed);
+        _db.CardTransfers.Add(transfer);
+        await _db.SaveChangesAsync();
+
+        var act = () => _sut.RetryTransferAsync(transfer.Id);
+
+        await act.Should().ThrowAsync<CardCapacityExceededException>();
     }
 
     [Fact]
@@ -135,5 +212,34 @@ public partial class TransferOrchestratorTests
         notSent.Status.Should().Be(TransferStatus.Failed);
         notSent.ErrorMessage.Should().Contain("larger than one Yoto card").And.Contain("series \"Wizards\"");
         VerifyNothingDownloadedOrUploaded("book-2");
+    }
+
+    [Fact]
+    public async Task TransferSeriesAsync_RefusedBookDeletedMeanwhile_StillSendsTheBooksAfterIt()
+    {
+        var user = await SeedUserAsync();
+        _absService.Setup(s => s.GetSeriesDetailAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestData.CreateAbsSeriesItem("Wizards", 3));
+        _absService.Setup(s => s.GetLibraryItemAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, string _, string id, CancellationToken _) =>
+                id == "book-1" ? BookLargerThanOneCard(id, "Wizards") : TestData.CreateAbsLibraryItem(id));
+        // The person deletes the failed transfer from the Transfers page as soon as it shows up.
+        _notifier.Setup(n => n.SendProgressAsync(
+                It.Is<TransferProgressUpdate>(u => u.Status == TransferStatus.Failed), It.IsAny<CancellationToken>()))
+            .Callback<TransferProgressUpdate, CancellationToken>((update, _) =>
+            {
+                _db.CardTransfers.Remove(_db.CardTransfers.Single(t => t.Id == update.TransferId));
+                _db.SaveChanges();
+            })
+            .Returns(Task.CompletedTask);
+
+        var results = await _sut.TransferSeriesAsync(user.Id, TestData.CreateSeriesTransferRequest());
+
+        results.Select(r => (r.AbsLibraryItemId, r.Status)).Should().Equal(
+            ("book-1", TransferStatus.Failed),
+            ("book-2", TransferStatus.Completed),
+            ("book-3", TransferStatus.Completed));
     }
 }

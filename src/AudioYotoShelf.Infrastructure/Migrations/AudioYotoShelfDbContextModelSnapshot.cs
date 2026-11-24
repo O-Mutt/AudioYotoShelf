@@ -91,6 +91,9 @@ namespace AudioYotoShelf.Infrastructure.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<bool>("AllowOversized")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("BookAuthor")
                         .HasMaxLength(1024)
                         .HasColumnType("character varying(1024)");

@@ -68,6 +68,12 @@ public class TransfersController(
     {
         var userConnectionId = CurrentUserConnectionId;
 
+        // Before the duplicate check, not after: the transfer row only appears when the job starts, so
+        // a slow Audiobookshelf round trip between the check and the enqueue would let a second click through.
+        if (!request.AllowOversized &&
+            await CheckCapacityAsync(userConnectionId, request.AbsLibraryItemId, ct) is { } refusal)
+            return Conflict(new { refusal.Message, refusal.Capacity });
+
         // Guard against duplicate transfers for the same item
         var hasActive = await db.CardTransfers.AnyAsync(
             t => t.UserConnectionId == userConnectionId
@@ -81,9 +87,6 @@ public class TransfersController(
 
         if (hasActive)
             return Conflict(new { Message = "A transfer is already in progress for this book" });
-
-        if (await CheckCapacityAsync(userConnectionId, request.AbsLibraryItemId, ct) is { } refusal)
-            return Conflict(new { refusal.Message, refusal.Capacity });
 
         var transferId = Guid.NewGuid();
         var jobId = backgroundJobs.Enqueue<ITransferJobService>(
@@ -215,17 +218,26 @@ public class TransfersController(
     }
 
     /// <summary>
-    /// Why the book can't go on one card, or null when it fits or could not be checked. A failed check
-    /// still queues the transfer: the job checks again before downloading, and records the failure if
-    /// Audiobookshelf is unreachable there too.
+    /// How long the pre-queue check may wait on Audiobookshelf. Its HTTP client allows minutes (for
+    /// downloads), which would hold the request open; past this the job does the check instead.
+    /// </summary>
+    internal TimeSpan CapacityCheckTimeout { get; init; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// Why the book can't go on one card, or null when it fits or could not be checked. A failed or
+    /// slow check still queues the transfer: the job checks again before downloading, and records the
+    /// failure if Audiobookshelf is unreachable there too.
     /// </summary>
     private async Task<CapacityRefusal?> CheckCapacityAsync(Guid userConnectionId, string itemId, CancellationToken ct)
     {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(CapacityCheckTimeout);
         try
         {
-            return await orchestrator.CheckBookCapacityAsync(userConnectionId, itemId, ct);
+            return await orchestrator.CheckBookCapacityAsync(userConnectionId, itemId, timeout.Token);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        // An HttpClient timeout is an OperationCanceledException too; only the caller going away propagates.
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Could not check card capacity for {ItemId} before queueing", itemId);
             return null;

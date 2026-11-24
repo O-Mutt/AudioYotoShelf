@@ -5,12 +5,17 @@ namespace AudioYotoShelf.Core.DTOs.Transfer;
 
 // --- Transfer Requests ---
 
+/// <param name="AllowOversized">
+/// Send the book as one card even when it is over the card limits. The limits are conservative (Yoto
+/// accepted a 566 MB card), and a book outside a series has no other way onto Yoto.
+/// </param>
 public record CreateTransferRequest(
     string AbsLibraryItemId,
     YotoCategory Category = YotoCategory.Stories,
     PlaybackType PlaybackType = PlaybackType.Linear,
     int? OverrideMinAge = null,
-    int? OverrideMaxAge = null
+    int? OverrideMaxAge = null,
+    bool AllowOversized = false
 );
 
 public record CreateSeriesTransferRequest(
