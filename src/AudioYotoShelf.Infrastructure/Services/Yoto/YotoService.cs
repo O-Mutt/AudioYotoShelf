@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.Sockets;
@@ -19,6 +20,9 @@ public class YotoService(
     private const int MaxPercent = 100;
     private const int TranscodePollDelayMs = 5000;
     private const int MaxUploadAttempts = 4;
+    // A 20-hour book makes thousands of status polls; one dropped connection must not lose the
+    // whole transfer. Backoff 2+4+8+16 s rides out about half a minute of trouble before failing.
+    private const int MaxConsecutivePollFailures = 5;
     private static readonly JsonSerializerOptions JsonWeb = new(JsonSerializerDefaults.Web);
 
     // Base URLs are configurable (Yoto:ApiBase / Yoto:AuthBase) so tests/E2E can point them at a
@@ -237,7 +241,7 @@ public class YotoService(
                 response.EnsureSuccessStatusCode();
                 return;
             }
-            catch (HttpRequestException ex) when (attempt < MaxUploadAttempts && audioStream.CanSeek && IsTransientUploadError(ex))
+            catch (HttpRequestException ex) when (attempt < MaxUploadAttempts && audioStream.CanSeek && IsTransientTransportError(ex))
             {
                 logger.LogWarning(ex,
                     "Yoto upload PUT failed (attempt {Attempt}/{Max}); retrying after backoff",
@@ -255,12 +259,31 @@ public class YotoService(
     protected virtual Task DelayBetweenUploadAttemptsAsync(int attempt, CancellationToken ct) =>
         Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), ct);
 
+    // Seam for tests: backoff is 2s, 4s, 8s, 16s in production; overridden to no-op in unit tests.
+    protected virtual Task DelayAfterFailedPollAsync(int failure, CancellationToken ct) =>
+        Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, failure)), ct);
+
     /// <summary>
-    /// A reset/closed connection during the request-body write throws HttpRequestException
+    /// A status poll is a GET, so repeating it is always safe. Retry dropped connections, client
+    /// timeouts (not our own cancellation) and the statuses that mean "try again later"; anything
+    /// else, such as 401 or 404, is a real refusal and fails at once.
+    /// </summary>
+    private static bool IsTransientPollFailure(Exception ex, CancellationToken ct) => ex switch
+    {
+        TaskCanceledException => !ct.IsCancellationRequested,
+        HttpRequestException { StatusCode: { } status } => status is HttpStatusCode.RequestTimeout
+            or HttpStatusCode.TooManyRequests or HttpStatusCode.InternalServerError
+            or HttpStatusCode.BadGateway or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout,
+        HttpRequestException http => IsTransientTransportError(http),
+        _ => false,
+    };
+
+    /// <summary>
+    /// A reset/closed connection during a request throws HttpRequestException
     /// wrapping IOException → SocketException (broken pipe / connection reset). These are safe
     /// to retry; a non-success HTTP status (EnsureSuccessStatusCode) is not and falls through.
     /// </summary>
-    private static bool IsTransientUploadError(HttpRequestException ex)
+    private static bool IsTransientTransportError(HttpRequestException ex)
     {
         for (Exception? inner = ex; inner is not null; inner = inner.InnerException)
         {
@@ -278,14 +301,29 @@ public class YotoService(
     {
         using var client = CreateApiClient(accessToken);
         int? lastReportedPercent = null;
+        var consecutiveFailures = 0;
 
         for (var attempt = 0; attempt < MaxTranscodePollAttempts; attempt++)
         {
-            var response = await client.GetAsync(
-                $"/media/upload/{uploadId}/transcoded?loudnorm=false", ct);
-            response.EnsureSuccessStatusCode();
-
-            var json = await response.Content.ReadAsStringAsync(ct);
+            string json;
+            try
+            {
+                using var response = await client.GetAsync(
+                    $"/media/upload/{uploadId}/transcoded?loudnorm=false", ct);
+                response.EnsureSuccessStatusCode();
+                json = await response.Content.ReadAsStringAsync(ct);
+                consecutiveFailures = 0;
+            }
+            catch (Exception ex) when (IsTransientPollFailure(ex, ct) &&
+                                       consecutiveFailures + 1 < MaxConsecutivePollFailures)
+            {
+                consecutiveFailures++;
+                logger.LogWarning(ex,
+                    "Transcode poll for {UploadId} failed ({Failures}/{Max}); retrying after backoff",
+                    uploadId, consecutiveFailures, MaxConsecutivePollFailures);
+                await DelayAfterFailedPollAsync(consecutiveFailures, ct);
+                continue;
+            }
 
             // Raw body once per upload (Debug) for diagnosing response-shape changes.
             // Stryker disable once Equality : the condition only gates a debug log line
