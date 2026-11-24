@@ -22,7 +22,7 @@ public record CapacitySummary(
     int Tracks,
     int MaxTracks,
     double DurationSeconds,
-    double MaxDurationSeconds,
+    double? MaxDurationSeconds,
     long Bytes,
     long MaxBytes,
     bool WithinLimits,

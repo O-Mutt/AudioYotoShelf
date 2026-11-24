@@ -26,7 +26,9 @@ public class CardCapacityCalculator(YotoCardLimits limits) : ICardCapacityCalcul
             {
                 tracks += ProjectedTrackCount(track);
                 duration += track.DurationSeconds;
-                bytes += track.EstimatedBytes;
+                // Audiobookshelf reports 0 for files it has not scanned yet; without a duration the
+                // source size is the only size signal left, so a large unscanned book still fails.
+                bytes += limits.EstimateTranscodedBytes(track.DurationSeconds) + track.UnscannedBytes;
             }
 
             if (firstOverflow is null && Exceeds(tracks, duration, bytes))
@@ -34,14 +36,14 @@ public class CardCapacityCalculator(YotoCardLimits limits) : ICardCapacityCalcul
         }
 
         var exceedsTracks = tracks > limits.MaxTracks;
-        var exceedsDuration = duration > limits.MaxTotalDurationSeconds;
+        var exceedsDuration = ExceedsDuration(duration);
         var exceedsBytes = bytes > limits.MaxTotalBytes;
 
         var messages = new List<string>();
         if (exceedsTracks)
             messages.Add($"Track count {tracks} exceeds the limit of {limits.MaxTracks}.");
         if (exceedsDuration)
-            messages.Add($"Total duration {duration / 3600:F1}h exceeds the limit of {limits.MaxTotalDurationSeconds / 3600:F1}h.");
+            messages.Add($"Total duration {duration / 3600:F1}h exceeds the limit of {limits.MaxTotalDurationSeconds!.Value / 3600:F1}h.");
         if (exceedsBytes)
             messages.Add($"Estimated size {bytes / 1024.0 / 1024:F0}MB exceeds the limit of {limits.MaxTotalBytes / 1024 / 1024}MB.");
 
@@ -58,6 +60,9 @@ public class CardCapacityCalculator(YotoCardLimits limits) : ICardCapacityCalcul
 
     private bool Exceeds(int tracks, double duration, long bytes) =>
         tracks > limits.MaxTracks ||
-        duration > limits.MaxTotalDurationSeconds ||
+        ExceedsDuration(duration) ||
         bytes > limits.MaxTotalBytes;
+
+    private bool ExceedsDuration(double duration) =>
+        limits.MaxTotalDurationSeconds is { } max && duration > max;
 }

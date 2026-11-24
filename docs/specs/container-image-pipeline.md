@@ -314,7 +314,8 @@ containing `;` or `=` is escaped correctly (the current Compose string interpola
 
 **Advanced (native keys only, documented but no alias)**
 
-`Yoto__ApiBase`, `Yoto__AuthBase`, and `Yoto__CardLimits__{MaxTracks,MaxTrackBytes,MaxTrackDurationSeconds,MaxTotalBytes,MaxTotalDurationSeconds}`.
+`Yoto__ApiBase`, `Yoto__AuthBase`, and `Yoto__CardLimits__{MaxTracks,MaxTrackBytes,MaxTrackDurationSeconds,MaxTotalBytes,MaxTotalDurationSeconds,TranscodedBitrateKbps}`
+(defaults and reasoning: [yoto-card-limits.md](yoto-card-limits.md)).
 These exist for testing against a non-production Yoto or for when Yoto changes card limits; they
 don't need friendly names.
 

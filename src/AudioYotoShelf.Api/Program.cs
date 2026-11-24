@@ -134,6 +134,7 @@ builder.Services.AddScoped<IAgeSuggestionService, AgeSuggestionService>();
 // Card capacity (config-driven limits; stateless calculators)
 var cardLimits = builder.Configuration.GetSection(AudioYotoShelf.Core.Configuration.YotoCardLimits.SectionName)
     .Get<AudioYotoShelf.Core.Configuration.YotoCardLimits>() ?? new AudioYotoShelf.Core.Configuration.YotoCardLimits();
+cardLimits.Validate();
 builder.Services.AddSingleton(cardLimits);
 builder.Services.AddSingleton<ITrackPlanner, TrackPlanner>();
 builder.Services.AddSingleton<ICardCapacityCalculator, CardCapacityCalculator>();

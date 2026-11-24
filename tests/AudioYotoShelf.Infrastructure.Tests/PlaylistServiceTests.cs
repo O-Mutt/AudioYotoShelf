@@ -94,20 +94,20 @@ public class PlaylistServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Capacity_FlagsOverflowAndFirstBook_WhenTooLong()
+    public async Task Capacity_FlagsOverflowAndFirstBook_WhenTooLarge()
     {
         var userId = await SeedUserAsync();
         var playlist = await _sut.CreateAsync(userId, new CreatePlaylistRequest("Mix", TrackGrouping.Chapters));
 
-        // One 6-hour book (single track) exceeds the 5h total limit.
+        // One 12-hour book transcodes to ~515 MB, over the 500 MB card limit.
         SetupBook("big-book", TestData.CreateAbsMedia(
-            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 21600, size: 50_000_000)],
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 43200, size: 50_000_000)],
             chapters: []));
 
         var result = await _sut.AddItemsAsync(playlist.Id, ["big-book"]);
 
         result.Capacity.WithinLimits.Should().BeFalse();
-        result.Capacity.ExceedsDuration.Should().BeTrue();
+        result.Capacity.ExceedsBytes.Should().BeTrue();
         result.Capacity.FirstOverflowItemId.Should().Be("big-book");
     }
 
@@ -322,9 +322,10 @@ public class PlaylistServiceTests : IDisposable
         var stored = (await StoredPlaylistAsync(playlist.Id)).Items.Single();
         stored.TrackDurations.Should().Equal(100.0, 200.0, 300.0);
         stored.TrackBytes.Should().Equal(1_000L, 2_000L, 3_000L);
-        // The response sums the cached tracks rather than taking the largest one.
+        // The response sums the cached tracks rather than taking the largest one, and sizes the
+        // book the way the card total does: 600 s at 100 kbps, not the source bytes.
         (result.Items[0].DurationSeconds, result.Items[0].EstimatedBytes, result.Items[0].ProjectedTrackCount)
-            .Should().Be((600.0, 6_000L, 3));
+            .Should().Be((600.0, 7_500_000L, 3));
     }
 
     [Fact]
