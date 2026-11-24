@@ -10,7 +10,7 @@
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <PackageVersion Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.15" />
     <!-- Pinned to patch advisories (GHSA-37gx-xxp4-5rgx, GHSA-w3x6-4m5h-cxqf, GHSA-cvvh-rhrc-wg4q, GHSA-g8r8-53c2-pm3f, GHSA-mmjf-rqrv-855v) pulled in transitively by EF Core Design -->
-    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.14" />
+    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.15" />
   </ItemGroup>
 
   <ItemGroup Label="Observability">
@@ -32,7 +32,7 @@
   </ItemGroup>
 
   <ItemGroup Label="Validation">
-    <!-- Held at 11.x: FluentValidation 12 drops the AspNetCore auto-validation package we use. -->
+    <!-- FluentValidation.AspNetCore held at 11.x: it has no 12.x release, since FluentValidation 12 dropped the auto-validation package we use. -->
     <PackageVersion Include="FluentValidation" Version="12.2.0" />
     <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.2.0" />
     <PackageVersion Include="FluentValidation.AspNetCore" Version="11.3.1" />
