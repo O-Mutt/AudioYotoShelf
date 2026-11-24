@@ -265,7 +265,7 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
             .ReturnsAsync(() => new FailsAfterFirstChunkStream(() =>
             {
                 onDiskWhenItFailed = Directory.GetFiles(_tempDir);
-                throw new HttpRequestException("connection reset");
+                return new HttpRequestException("connection reset");
             }));
         var playlistId = await SeedSingleFileBookAsync();
 
@@ -287,7 +287,7 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
             {
                 onDiskWhenCancelled = Directory.GetFiles(_tempDir);
                 cts.Cancel();
-                cts.Token.ThrowIfCancellationRequested();
+                return new OperationCanceledException(cts.Token);
             }));
         var playlistId = await SeedSingleFileBookAsync();
 
@@ -375,7 +375,7 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
     }
 
     /// <summary>Serves one chunk of audio, then fails the way a dropped connection or a cancelled job does mid-download.</summary>
-    private sealed class FailsAfterFirstChunkStream(Action fail) : Stream
+    private sealed class FailsAfterFirstChunkStream(Func<Exception> fail) : Stream
     {
         private bool _served;
 
@@ -391,7 +391,7 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
 
         public override int Read(Span<byte> buffer)
         {
-            if (_served) fail();
+            if (_served) throw fail();
             _served = true;
             var count = Math.Min(100, buffer.Length);
             buffer[..count].Clear();
