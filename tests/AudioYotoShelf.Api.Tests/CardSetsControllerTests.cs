@@ -71,6 +71,7 @@ public class CardSetsControllerTests : IDisposable
         { "RenameCard", (c, id) => c.RenameCard(id, Guid.NewGuid(), new RenameCardSetCardRequest("x"), default) },
         { "Delete", (c, id) => c.Delete(id, default) },
         { "Transfer", (c, id) => c.Transfer(id, new TransferCardSetRequest(), default) },
+        { "Refresh", (c, id) => c.Refresh(id, default) },
     };
 
     [Theory]
@@ -259,5 +260,57 @@ public class CardSetsControllerTests : IDisposable
 
         await act.Should().ThrowAsync<InvalidOperationException>();
         _cardSets.Verify(s => s.ReleaseQueuedAsync(cards, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // =========================================================================
+    // Phase 2
+    // =========================================================================
+
+    [Fact]
+    public async Task Get_PassesWhetherToLookForNewBooks()
+    {
+        var caller = Guid.NewGuid();
+        var id = await AddCardSetOwnedByAsync(caller);
+        _cardSets.Setup(s => s.GetAsync(id, false, It.IsAny<CancellationToken>())).ReturnsAsync(SetResponse(id));
+
+        var result = await _sut.AsUser(caller).Get(id, default, newBooks: false);
+
+        result.Should().BeOfType<OkObjectResult>();
+        _cardSets.Verify(s => s.GetAsync(id, false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Status_SplitsTheSeriesIdsForTheCaller()
+    {
+        var caller = Guid.NewGuid();
+        CardSetStatusResponse[] status = [new("ser-1", Guid.NewGuid(), 2, 1, false, CardSetStatus.Draft, ["b1"])];
+        _cardSets.Setup(s => s.StatusAsync(caller, It.Is<IReadOnlyList<string>>(ids => ids.SequenceEqual(new[] { "ser-1", "ser-2" })), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(status);
+
+        var result = await _sut.AsUser(caller).Status(" ser-1 ,ser-2,", default);
+
+        result.Should().BeOfType<OkObjectResult>().Which.Value.Should().BeSameAs(status);
+    }
+
+    [Fact]
+    public async Task Status_WithNoSeries_AsksForNothing()
+    {
+        var result = await _sut.AsUser(Guid.NewGuid()).Status(null, default);
+
+        result.Should().BeOfType<OkObjectResult>();
+        _cardSets.Invocations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Refresh_ANewBookThatCannotBeSplit_Returns422()
+    {
+        var caller = Guid.NewGuid();
+        var id = await AddCardSetOwnedByAsync(caller);
+        _cardSets.Setup(s => s.RefreshAsync(id, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new CardSetPlanException("leave it out", Plan()));
+
+        var result = await _sut.AsUser(caller).Refresh(id, default);
+
+        result.Should().BeOfType<UnprocessableEntityObjectResult>();
     }
 }

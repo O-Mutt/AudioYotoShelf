@@ -1,3 +1,4 @@
+using AudioYotoShelf.Core.DTOs.CardSet;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Infrastructure.Data;
@@ -21,6 +22,7 @@ public interface ICardSetJobService
 public class CardSetJobService(
     IPlaylistTransferOrchestrator orchestrator,
     AudioYotoShelfDbContext db,
+    ICardSetProgressNotifier notifier,
     ILogger<CardSetJobService> logger) : ICardSetJobService
 {
     public async Task ExecuteCardSetTransferAsync(Guid cardSetId, Guid[] playlistIds, CancellationToken ct)
@@ -33,6 +35,7 @@ public class CardSetJobService(
             if (ct.IsCancellationRequested)
             {
                 await SetStatusAsync(playlistIds[i..], PlaylistStatus.Queued, PlaylistStatus.Draft, null);
+                await NotifyAsync(cardSetId, playlistIds[i..]);
                 ct.ThrowIfCancellationRequested();
             }
 
@@ -42,11 +45,14 @@ public class CardSetJobService(
 
             try
             {
+                await NotifyAsync(cardSetId, [playlistIds[i]], PlaylistStatus.Transferring);
                 await orchestrator.TransferPlaylistAsync(playlistIds[i], ct);
+                await NotifyAsync(cardSetId, [playlistIds[i]]);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 await SetStatusAsync(playlistIds[i..], PlaylistStatus.Queued, PlaylistStatus.Draft, null);
+                await NotifyAsync(cardSetId, playlistIds[i..]);
                 throw;
             }
             catch (Exception ex)
@@ -54,6 +60,7 @@ public class CardSetJobService(
                 // The orchestrator marks a card Failed once it starts sending it. A card that failed
                 // before that (no connection, missing playlist) would otherwise stay Queued for good.
                 await SetStatusAsync([playlistIds[i]], PlaylistStatus.Queued, PlaylistStatus.Failed, ex.Message);
+                await NotifyAsync(cardSetId, [playlistIds[i]]);
                 failed++;
                 logger.LogError(ex, "Card set {CardSetId}: card {Index}/{Total} ({PlaylistId}) failed",
                     cardSetId, i + 1, playlistIds.Length, playlistIds[i]);
@@ -62,6 +69,28 @@ public class CardSetJobService(
 
         logger.LogInformation("Card set {CardSetId}: {Sent} of {Total} cards sent",
             cardSetId, playlistIds.Length - failed, playlistIds.Length);
+    }
+
+    /// <summary>
+    /// Tells the series page each card's state as stored, or <paramref name="announced"/> for a card
+    /// about to start. Best effort: a page that misses one still catches up on its next read.
+    /// </summary>
+    private async Task NotifyAsync(Guid cardSetId, Guid[] playlistIds, PlaylistStatus? announced = null)
+    {
+        try
+        {
+            var cards = await db.Playlists.AsNoTracking()
+                .Where(p => playlistIds.Contains(p.Id))
+                .Select(p => new { p.Id, p.SetIndex, p.Status, p.ErrorMessage })
+                .ToListAsync(CancellationToken.None);
+            foreach (var card in cards)
+                await notifier.CardChangedAsync(new CardSetProgressUpdate(
+                    cardSetId, card.Id, card.SetIndex, announced ?? card.Status, announced is null ? card.ErrorMessage : null));
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Card set {CardSetId}: could not push card progress", cardSetId);
+        }
     }
 
     private async Task<PlaylistStatus?> StatusOfAsync(Guid playlistId) =>

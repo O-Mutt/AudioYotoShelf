@@ -1,3 +1,4 @@
+using AudioYotoShelf.Core.DTOs.CardSet;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
@@ -14,10 +15,18 @@ public class CardSetJobServiceTests : IDisposable
 {
     private readonly InMemoryDbFixture _fixture = new();
     private readonly Mock<IPlaylistTransferOrchestrator> _orchestrator = new();
+    private readonly Mock<ICardSetProgressNotifier> _notifier = new();
+    private readonly List<CardSetProgressUpdate> _pushed = [];
     private readonly CardSetJobService _sut;
 
-    public CardSetJobServiceTests() =>
-        _sut = new CardSetJobService(_orchestrator.Object, _fixture.DbContext, Mock.Of<ILogger<CardSetJobService>>());
+    public CardSetJobServiceTests()
+    {
+        _notifier.Setup(n => n.CardChangedAsync(It.IsAny<CardSetProgressUpdate>(), It.IsAny<CancellationToken>()))
+            .Callback<CardSetProgressUpdate, CancellationToken>((u, _) => _pushed.Add(u))
+            .Returns(Task.CompletedTask);
+        _sut = new CardSetJobService(
+            _orchestrator.Object, _fixture.DbContext, _notifier.Object, Mock.Of<ILogger<CardSetJobService>>());
+    }
 
     public void Dispose() => _fixture.Dispose();
 
@@ -103,5 +112,43 @@ public class CardSetJobServiceTests : IDisposable
         await act.Should().ThrowAsync<OperationCanceledException>();
         _orchestrator.Verify(o => o.TransferPlaylistAsync(ids[1], It.IsAny<CancellationToken>()), Times.Never);
         (await StatusAsync(ids[1])).Should().Be(PlaylistStatus.Draft);
+    }
+
+    [Fact]
+    public async Task PushesEachCardsProgressToTheSet()
+    {
+        var setId = Guid.NewGuid();
+        var ids = await SeedCardsAsync(PlaylistStatus.Queued, PlaylistStatus.Queued);
+        _orchestrator.Setup(o => o.TransferPlaylistAsync(ids[0], It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                var card = await _fixture.DbContext.Playlists.FirstAsync(p => p.Id == ids[0]);
+                card.Status = PlaylistStatus.Transferred;
+                await _fixture.DbContext.SaveChangesAsync();
+            });
+        _orchestrator.Setup(o => o.TransferPlaylistAsync(ids[1], It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("No valid Yoto connection"));
+
+        await _sut.ExecuteCardSetTransferAsync(setId, ids, CancellationToken.None);
+
+        _pushed.Should().OnlyContain(u => u.CardSetId == setId);
+        _pushed.Select(u => (u.PlaylistId, u.Status)).Should().Equal(
+            (ids[0], PlaylistStatus.Transferring),
+            (ids[0], PlaylistStatus.Transferred),
+            (ids[1], PlaylistStatus.Transferring),
+            (ids[1], PlaylistStatus.Failed));
+        _pushed.Last().ErrorMessage.Should().Be("No valid Yoto connection");
+    }
+
+    [Fact]
+    public async Task APushThatFails_DoesNotStopTheSend()
+    {
+        var ids = await SeedCardsAsync(PlaylistStatus.Queued);
+        _notifier.Setup(n => n.CardChangedAsync(It.IsAny<CardSetProgressUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("hub down"));
+
+        await _sut.ExecuteCardSetTransferAsync(Guid.NewGuid(), ids, CancellationToken.None);
+
+        _orchestrator.Verify(o => o.TransferPlaylistAsync(ids[0], It.IsAny<CancellationToken>()), Times.Once);
     }
 }

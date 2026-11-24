@@ -1,4 +1,6 @@
 using System.Globalization;
+using AudioYotoShelf.Core.Configuration;
+using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.DTOs.CardSet;
 using AudioYotoShelf.Core.DTOs.Playlist;
 using AudioYotoShelf.Core.Entities;
@@ -16,6 +18,7 @@ public class CardSetService(
     ITrackPlanner trackPlanner,
     ICardCapacityCalculator calculator,
     ICardSetPlanner planner,
+    YotoCardLimits limits,
     ILogger<CardSetService> logger) : ICardSetService
 {
     // Auto keeps short books as one track each, which is what lets a long series fit the track limit.
@@ -126,11 +129,108 @@ public class CardSetService(
             .ToArray();
     }
 
-    public async Task<CardSetResponse?> GetAsync(Guid cardSetId, CancellationToken ct = default)
+    public async Task<CardSetResponse?> GetAsync(Guid cardSetId, bool withNewBooks = true, CancellationToken ct = default)
     {
         var set = await LoadAsync(cardSetId, ct);
-        return set is null ? null : ToResponse(set);
+        if (set is null) return null;
+        return ToResponse(set, newBooks: withNewBooks ? await NewBooksAsync(set, ct) : null);
     }
+
+    public async Task<CardSetStatusResponse[]> StatusAsync(
+        Guid userConnectionId, IReadOnlyList<string> absSeriesIds, CancellationToken ct = default)
+    {
+        var sets = await db.CardSets
+            .Include(s => s.Cards).ThenInclude(c => c.Items)
+            .Where(s => s.UserConnectionId == userConnectionId && absSeriesIds.Contains(s.AbsSeriesId))
+            .ToListAsync(ct);
+
+        return sets.Select(s => new CardSetStatusResponse(
+                s.AbsSeriesId, s.Id, s.Cards.Count,
+                s.Cards.Count(c => c.Status == PlaylistStatus.Transferred),
+                s.Cards.Any(c => c.Status is PlaylistStatus.Queued or PlaylistStatus.Transferring),
+                StatusOf(s.Cards),
+                KnownBookIds(s).ToArray()))
+            .ToArray();
+    }
+
+    public CardLimitsResponse Limits() => new(
+        limits.MaxTracks, limits.MaxTotalBytes, limits.MaxTotalDurationSeconds, limits.TranscodedBitrateKbps);
+
+    // =========================================================================
+    // New books in the series
+    // =========================================================================
+
+    public async Task<CardSetResponse> RefreshAsync(Guid cardSetId, CancellationToken ct = default)
+    {
+        var set = await LoadOrThrowAsync(cardSetId, ct);
+        var user = await GetAbsUserAsync(set.UserConnectionId, ct);
+        var (_, order) = await LoadSeriesOrderAsync(user, set.AbsLibraryId, set.AbsSeriesId, ct);
+
+        var known = KnownBookIds(set);
+        var newIds = order.Where(b => !known.Contains(b.Id)).Select(b => b.Id).ToList();
+        if (newIds.Count == 0)
+            return ToResponse(set, newBooks: [], extraMessages: ["No new books in this series."]);
+
+        var cards = Ordered(set);
+        var last = cards.LastOrDefault();
+        // The last card takes new books too unless it is on Yoto (or on its way) or holds part of a
+        // split book; every card before it stays as it is.
+        var keepCount = last is not null && !IsLocked(last) && !last.Items.Any(i => i.IsPart)
+            ? cards.Count - 1
+            : cards.Count;
+        var kept = BooksOf(cards.Take(keepCount));
+
+        var position = order.Select((b, i) => (b.Id, i)).ToDictionary(x => x.Id, x => x.i);
+        int PositionOf(string id) => position.GetValueOrDefault(id, -1);
+        var newBooks = await FetchBooksAsync(user, set.AbsSeriesId, order.Where(b => newIds.Contains(b.Id)).ToList(), ct);
+        var tail = BooksOf(cards.Skip(keepCount)).Concat(newBooks).OrderBy(b => PositionOf(b.Id)).ToList();
+
+        var plan = planner.Plan(tail.Select(b => b.Plan).ToList(), set.PackingMode, CardGrouping);
+        RequireSavable(plan, () => ToPlanResponse(set.Name, tail, [], plan));
+
+        var specs = Specs(tail, plan, offset: kept.Count);
+        ReplaceCards(set, cards, keepCount, specs);
+        await db.SaveChangesAsync(ct);
+
+        // Cards before the tail cannot move, so a new book that belongs among them lands after them.
+        var lastKeptPosition = kept.Select(b => PositionOf(b.Id)).DefaultIfEmpty(-1).Max();
+        var messages = newBooks
+            .Where(b => PositionOf(b.Id) < lastKeptPosition)
+            .Select(b =>
+            {
+                var card = keepCount + specs.FindIndex(sp => sp.Books.Any(x => x.Id == b.Id)) + 1;
+                return $"{b.Title} comes earlier in the series, but the cards before it are already set; it went on card {card}.";
+            })
+            .ToList();
+
+        logger.LogInformation("Card set {CardSetId}: placed {Count} new books", set.Id, newBooks.Count);
+        return ToResponse(set, newBooks: [], extraMessages: messages);
+    }
+
+    /// <summary>Series books in Audiobookshelf on no card and not left out. Empty if Audiobookshelf can't be read.</summary>
+    private async Task<SeriesBookRefResponse[]> NewBooksAsync(CardSet set, CancellationToken ct)
+    {
+        try
+        {
+            var user = await GetAbsUserAsync(set.UserConnectionId, ct);
+            var (_, order) = await LoadSeriesOrderAsync(user, set.AbsLibraryId, set.AbsSeriesId, ct);
+            var known = KnownBookIds(set);
+            return order
+                .Where(b => !known.Contains(b.Id))
+                .Select(b => new SeriesBookRefResponse(b.Id, b.Title, b.Sequence))
+                .ToArray();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Card set {CardSetId}: could not read the series for new books", set.Id);
+            return [];
+        }
+    }
+
+    private static HashSet<string> KnownBookIds(CardSet set) =>
+        set.Cards.SelectMany(c => c.Items).Select(i => i.AbsLibraryItemId)
+            .Concat(set.ExcludedItemIds)
+            .ToHashSet();
 
     // =========================================================================
     // Change
@@ -482,14 +582,15 @@ public class CardSetService(
         return new CardSetPlanResponse(
             seriesName,
             books.Select(b => BookResponse(b, plan.SplitChapters.GetValueOrDefault(b.Id))).ToArray(),
-            excluded.Select(b => new ExcludedBookResponse(b.Id, b.Title, b.Sequence)).ToArray(),
+            excluded.Select(b => new SeriesBookRefResponse(b.Id, b.Title, b.Sequence)).ToArray(),
             cards,
             plan.WithinLimits,
             plan.UnsplittableBookIds.ToArray(),
             plan.Messages.ToArray());
     }
 
-    private CardSetResponse ToResponse(CardSet set)
+    private CardSetResponse ToResponse(
+        CardSet set, SeriesBookRefResponse[]? newBooks = null, IReadOnlyList<string>? extraMessages = null)
     {
         var cards = Ordered(set);
         var books = BooksOf(cards);
@@ -520,7 +621,8 @@ public class CardSetService(
             books.Select(b => BookResponse(b, splitIds.Contains(b.Id) ? b.Chapters : null)).ToArray(),
             cardResponses,
             messages.Count == 0,
-            messages.ToArray());
+            messages.Concat(extraMessages ?? []).ToArray(),
+            newBooks);
     }
 
     private CardSetBookResponse BookResponse(SeriesBook book, IReadOnlyList<SourceTrack>? splitChapters)
@@ -568,47 +670,65 @@ public class CardSetService(
                 books.Where(b => excluded.Contains(b.Id)).ToList());
     }
 
+    private sealed record SeriesOrderEntry(string Id, float? Sequence, string Title);
+
     /// <summary>
-    /// Reads the series and each book's full media. Books are ordered by sequence number (books
-    /// without one last), then title, so fractional sequences such as 1.5 sort in place.
+    /// The series' books in order, without their media: by sequence number (books without one last),
+    /// then title, so fractional sequences such as 1.5 sort in place. One Audiobookshelf call.
     /// </summary>
-    private async Task<(string Name, List<SeriesBook> Books)> LoadSeriesAsync(
+    private async Task<(AbsSeriesItem Series, List<SeriesOrderEntry> Order)> LoadSeriesOrderAsync(
         UserConnection user, string libraryId, string seriesId, CancellationToken ct)
     {
         var series = await absService.GetSeriesDetailAsync(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, libraryId, seriesId, ct);
 
-        var ordered = series.Books
-            .Select(b => (b.Id, Sequence: PlaylistService.ParseSequence(b.Sequence), Title: b.Media?.Metadata.Title ?? ""))
+        var order = series.Books
+            .Select(b => new SeriesOrderEntry(
+                b.Id, PlaylistService.ParseSequence(b.Sequence), b.Media?.Metadata.Title ?? "Unknown"))
             .OrderBy(b => b.Sequence is null)
             .ThenBy(b => b.Sequence)
             .ThenBy(b => b.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();
+        return (series, order);
+    }
 
-        var fetched = new SeriesBook?[ordered.Count];
+    /// <summary>Reads the series and each book's full media, in series order.</summary>
+    private async Task<(string Name, List<SeriesBook> Books)> LoadSeriesAsync(
+        UserConnection user, string libraryId, string seriesId, CancellationToken ct)
+    {
+        var (series, order) = await LoadSeriesOrderAsync(user, libraryId, seriesId, ct);
+        return (series.Name, await FetchBooksAsync(user, seriesId, order, ct, series.Name));
+    }
+
+    /// <summary>Fetches each listed book's media (a few at a time) and its per-chapter tracks.</summary>
+    private async Task<List<SeriesBook>> FetchBooksAsync(
+        UserConnection user, string seriesId, IReadOnlyList<SeriesOrderEntry> order, CancellationToken ct,
+        string? seriesName = null)
+    {
+        var fetched = new SeriesBook?[order.Count];
         await Parallel.ForEachAsync(
-            Enumerable.Range(0, ordered.Count),
+            Enumerable.Range(0, order.Count),
             new ParallelOptions { MaxDegreeOfParallelism = AbsFetchConcurrency, CancellationToken = ct },
             async (i, token) =>
             {
                 var item = await absService.GetLibraryItemAsync(
-                    user.AudiobookshelfUrl, user.AudiobookshelfToken!, ordered[i].Id, token);
+                    user.AudiobookshelfUrl, user.AudiobookshelfToken!, order[i].Id, token);
                 if (item.Media is not { } media)
                 {
-                    logger.LogWarning("Series {SeriesId}: skipping book {ItemId} with no media", seriesId, ordered[i].Id);
+                    logger.LogWarning("Series {SeriesId}: skipping book {ItemId} with no media", seriesId, order[i].Id);
                     return;
                 }
                 var metadata = media.Metadata;
                 fetched[i] = new SeriesBook(
-                    ordered[i].Id,
+                    order[i].Id,
                     metadata.Title ?? "Unknown",
                     metadata.Authors?.FirstOrDefault()?.Name,
-                    metadata.Series?.FirstOrDefault(s => s.Id == seriesId)?.Name ?? series.Name,
-                    ordered[i].Sequence,
+                    metadata.Series?.FirstOrDefault(s => s.Id == seriesId)?.Name ?? seriesName,
+                    order[i].Sequence,
                     trackPlanner.Plan(media, TrackGrouping.Chapters));
             });
 
-        return (series.Name, fetched.OfType<SeriesBook>().ToList());
+        return fetched.OfType<SeriesBook>().ToList();
     }
 
     private async Task<CardSet?> LoadAsync(Guid cardSetId, CancellationToken ct) =>

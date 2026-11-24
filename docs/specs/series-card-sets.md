@@ -1,6 +1,6 @@
 # Spec: series card sets
 
-**Status:** Phase 1 built ([#114](https://github.com/O-Mutt/AudioYotoShelf/issues/114)); Phase 2 (§10) not started. §13 lists where the build differs from this design.
+**Status:** Built, Phases 1 and 2 ([#114](https://github.com/O-Mutt/AudioYotoShelf/issues/114)). §13 lists where the build differs from this design.
 **Scope:** turn an Audiobookshelf series into an ordered set of Yoto Make Your Own (MYO) cards,
 each holding a run of whole books, packed under the card limits.
 
@@ -409,7 +409,7 @@ Mockups: the "Series MYO Cards" canvas (C1–C3). Built in Vue with a new `cardS
 - **Manual.** Make a Dragon Masters set, send it, play the first and last book of each card. Make a
   Harry Potter 1–4 set and check Goblet of Fire's second card starts at the chapter after the split.
 
-## 13. Phase 1 as built
+## 13. As built
 
 Where the code differs from the sections above, the code is right and this list says why.
 
@@ -447,8 +447,8 @@ Where the code differs from the sections above, the code is right and this list 
   be enqueued the cards go back to draft. The job has no automatic retry; when Hangfire re-runs one
   after a restart it skips cards already on Yoto, a card that fails before sending starts is marked
   `Failed` rather than left queued, and cancelling it puts the cards it had not reached back to
-  draft. Progress is not added to the SignalR hub yet: the series page re-reads the set every 5 s
-  while any card is queued or being sent.
+  draft. Progress is pushed on the existing hub (below); the series page also re-reads the set
+  every 5 s while any card is queued or being sent, so a missed push only delays an update.
 - **Books that cannot be split (§5.4 step 4).** Creating a set, or re-packing one, is refused
   (`422`) while a book has a chapter bigger than a card; the series page marks the book and asks for
   it to be left out first. Saving would otherwise drop it from the set without a trace.
@@ -456,5 +456,22 @@ Where the code differs from the sections above, the code is right and this list 
   (`409`) one that belongs to a set; reading it still works.
 - **UI (§8).** Breaks and split points move with buttons (one book or one chapter either way)
   instead of dragging. The chapter strip shows where each split falls.
-- **Not built (Phase 2):** `refresh`, `newBookIds`, `GET /status`, the series grid badges and
-  filters, and SignalR progress for a set.
+- **New books (§7.3, §7.4 refresh).** `GET /api/cardsets/{id}` returns `newBooks` (id, title,
+  sequence) rather than `newBookIds`, so the page can name them; `?newBooks=false` skips the
+  Audiobookshelf read for the re-reads while sending, and every other response leaves it `null`.
+  If Audiobookshelf can't be read the list is empty rather than the read failing.
+  `POST /refresh` puts new books on the last card when that card is not on Yoto, queued or a part
+  of a split book, and on new cards after it; every earlier card keeps its books. A new book whose
+  place in the series is before those cards goes on the first card that can change, with a message.
+  A new book that cannot be split is refused (`422`) like at create.
+- **Series grid (§7.3 status, §8).** `GET /api/cardsets/status?seriesIds=a,b,c` returns, per series
+  with a set, the card and sent counts, whether it is sending, the set status, and `knownBookIds`
+  (books on its cards or left out) instead of `newBookCount`: the grid already has each series' book
+  ids, so it counts new books itself and the endpoint makes no Audiobookshelf calls.
+  `GET /api/cardsets/limits` gives the card limits so the grid can show "Fits on 1 card" from a
+  series' total duration; that is a size estimate only, and the series page's plan is the answer.
+  The filter chips (All / Not on cards / New books since last cards) filter the page of series shown.
+- **Live progress (§7.5).** The hub has `JoinCardSetGroup` / `LeaveCardSetGroup` (owner only, group
+  `cardset:{id}`). The send job pushes `CardSetProgress { cardSetId, playlistId, cardIndex, status,
+  errorMessage }` when a card starts, lands or fails, and when a cancel returns cards to draft. The
+  series page re-reads its set on each push. Pushes are best effort: a failed push never stops a send.

@@ -151,6 +151,7 @@ builder.Services.AddSingleton<ICacheService, RedisCacheService>();
 builder.Services.AddSingleton<ISsoFlowStore, DistributedCacheSsoFlowStore>();
 builder.Services.AddTransferJobs();
 builder.Services.AddScoped<ITransferProgressNotifier, AudioYotoShelf.Api.Hubs.SignalRTransferProgressNotifier>();
+builder.Services.AddScoped<ICardSetProgressNotifier, AudioYotoShelf.Api.Hubs.SignalRCardSetProgressNotifier>();
 
 // --- FluentValidation ---
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();

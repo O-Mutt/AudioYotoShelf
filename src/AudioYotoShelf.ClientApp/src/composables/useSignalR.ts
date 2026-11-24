@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr'
-import type { TrackLiveState, TransferProgressUpdate } from '@/types'
+import type { CardSetProgressUpdate, TrackLiveState, TransferProgressUpdate } from '@/types'
 
 // Shared singletons across every component that uses the hub, so the single
 // 'TransferProgress' handler updates one map that all views render from.
@@ -13,6 +13,8 @@ const trackStates = ref<Record<string, Record<string, TrackLiveState>>>({})
 // Bumped whenever the server broadcasts that the transfer list changed (e.g. a new transfer
 // was queued elsewhere), so list views can refresh without a manual reload.
 const listChangedAt = ref(0)
+// The latest change pushed for a card of a joined card set; the series page re-reads its set on it.
+const cardSetUpdate = ref<CardSetProgressUpdate | null>(null)
 let connecting: Promise<void> | null = null
 
 async function connect(): Promise<void> {
@@ -44,6 +46,9 @@ async function connect(): Promise<void> {
     })
     conn.on('TransferListChanged', () => {
       listChangedAt.value = Date.now()
+    })
+    conn.on('CardSetProgress', (update: CardSetProgressUpdate) => {
+      cardSetUpdate.value = update
     })
     conn.onreconnected(() => {
       isConnected.value = true
@@ -81,6 +86,19 @@ export function useSignalR() {
     }
   }
 
+  async function joinCardSet(cardSetId: string) {
+    await connect()
+    if (connection.value?.state === 'Connected') {
+      await connection.value.invoke('JoinCardSetGroup', cardSetId)
+    }
+  }
+
+  async function leaveCardSet(cardSetId: string) {
+    if (connection.value?.state === 'Connected') {
+      await connection.value.invoke('LeaveCardSetGroup', cardSetId)
+    }
+  }
+
   async function disconnect() {
     if (connection.value) {
       await connection.value.stop()
@@ -93,7 +111,10 @@ export function useSignalR() {
     disconnect,
     joinTransfer,
     leaveTransfer,
+    joinCardSet,
+    leaveCardSet,
     isConnected,
+    cardSetUpdate,
     progressUpdates,
     trackStates,
     listChangedAt,

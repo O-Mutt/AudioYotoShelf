@@ -16,7 +16,22 @@ public interface ICardSetService
     Task<CardSetResponse> CreateAsync(Guid userConnectionId, CreateCardSetRequest request, CancellationToken ct = default);
 
     Task<CardSetSummaryResponse[]> ListAsync(Guid userConnectionId, string? absSeriesId = null, CancellationToken ct = default);
-    Task<CardSetResponse?> GetAsync(Guid cardSetId, CancellationToken ct = default);
+
+    /// <param name="withNewBooks">Also read the series from Audiobookshelf to list books new since the set was made.</param>
+    Task<CardSetResponse?> GetAsync(Guid cardSetId, bool withNewBooks = true, CancellationToken ct = default);
+
+    /// <summary>Card-set state for each of the given series that has a set, for the series grid.</summary>
+    Task<CardSetStatusResponse[]> StatusAsync(Guid userConnectionId, IReadOnlyList<string> absSeriesIds, CancellationToken ct = default);
+
+    CardLimitsResponse Limits();
+
+    /// <summary>
+    /// Re-reads the series and places books new since the set was made: they join the last card if it
+    /// is not on Yoto, and new cards after it. Earlier cards stay as they are; a new book whose place in
+    /// the series is before them goes on the first card that can still change, and a message says so.
+    /// </summary>
+    /// <exception cref="CardSetPlanException">A new book cannot be split onto cards; leave it out first.</exception>
+    Task<CardSetResponse> RefreshAsync(Guid cardSetId, CancellationToken ct = default);
 
     /// <exception cref="CardSetConflictException">A break or split point moves a card already on Yoto.</exception>
     /// <exception cref="CardSetPlanException">A card would not fit.</exception>

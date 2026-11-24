@@ -70,17 +70,22 @@ public record CardSetCardResponse(
     string? YotoCardId = null,
     string? ErrorMessage = null);
 
-public record ExcludedBookResponse(string AbsLibraryItemId, string Title, float? Sequence);
+/// <summary>A series book named without its tracks: one left out of the plan, or one new to the series.</summary>
+public record SeriesBookRefResponse(string AbsLibraryItemId, string Title, float? Sequence);
 
 public record CardSetPlanResponse(
     string SeriesName,
     CardSetBookResponse[] Books,
-    ExcludedBookResponse[] ExcludedBooks,
+    SeriesBookRefResponse[] ExcludedBooks,
     CardSetCardResponse[] Cards,
     bool WithinLimits,
     string[] UnsplittableBookIds,
     string[] Messages);
 
+/// <summary>
+/// A saved set. <see cref="NewBooks"/> lists series books in Audiobookshelf that are on no card and
+/// not left out; it is null when the server did not check (every response but a read).
+/// </summary>
 public record CardSetResponse(
     Guid Id,
     string Name,
@@ -92,7 +97,8 @@ public record CardSetResponse(
     CardSetBookResponse[] Books,
     CardSetCardResponse[] Cards,
     bool WithinLimits,
-    string[] Messages);
+    string[] Messages,
+    SeriesBookRefResponse[]? NewBooks = null);
 
 public record CardSetSummaryResponse(
     Guid Id,
@@ -101,3 +107,31 @@ public record CardSetSummaryResponse(
     int CardCount,
     int SentCount,
     CardSetStatus Status);
+
+/// <summary>
+/// Card-set state for one series, for the series grid. <see cref="KnownBookIds"/> are the books on
+/// the set's cards or left out of it; any other book of the series is new since the set was made.
+/// </summary>
+public record CardSetStatusResponse(
+    string AbsSeriesId,
+    Guid CardSetId,
+    int CardCount,
+    int SentCount,
+    bool Sending,
+    CardSetStatus Status,
+    string[] KnownBookIds);
+
+/// <summary>The card limits in force, so the client can tell whether a series fits one card.</summary>
+public record CardLimitsResponse(
+    int MaxTracks,
+    long MaxTotalBytes,
+    double? MaxTotalDurationSeconds,
+    int TranscodedBitrateKbps);
+
+/// <summary>Pushed to a set's SignalR group whenever one of its cards changes state while sending.</summary>
+public record CardSetProgressUpdate(
+    Guid CardSetId,
+    Guid PlaylistId,
+    int? CardIndex,
+    PlaylistStatus Status,
+    string? ErrorMessage);

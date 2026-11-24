@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
 import { cardSetApi } from '@/services/api'
+import { useSignalR } from '@/composables/useSignalR'
 import { errorMessage } from '@/utils/errors'
 import type {
   CardSetBook,
@@ -10,6 +11,7 @@ import type {
   CardSetPlanResponse,
   CardSetResponse,
   PackingMode,
+  SeriesBookRef,
 } from '@/types'
 
 const POLL_MS = 5000
@@ -54,7 +56,15 @@ export const useCardSetStore = defineStore('cardSet', () => {
   const isLoading = ref(false)
   const isSaving = ref(false)
   const error = ref<string | null>(null)
+  /** Books added to the series since the set was made; read with the set, cleared once placed. */
+  const newBooks = ref<SeriesBookRef[]>([])
   let pollTimer: ReturnType<typeof setInterval> | null = null
+  const signalR = useSignalR()
+
+  // A card of this set changed while sending: re-read now rather than at the next poll.
+  watch(signalR.cardSetUpdate, (update) => {
+    if (update && update.cardSetId === cardSet.value?.id) void refresh()
+  })
 
   const view = computed(() => cardSet.value ?? preview.value)
   const books = computed(() => view.value?.books ?? [])
@@ -69,6 +79,8 @@ export const useCardSetStore = defineStore('cardSet', () => {
 
   async function load(series: string, library: string) {
     stopPolling()
+    if (cardSet.value) void leaveGroup(cardSet.value.id)
+    newBooks.value = []
     seriesId.value = series
     libraryId.value = library
     cardSet.value = null
@@ -82,6 +94,7 @@ export const useCardSetStore = defineStore('cardSet', () => {
       if (existing) {
         const { data } = await cardSetApi.get(existing.id)
         setSaved(data)
+        void joinGroup(data.id)
         if (data.cards.some(inFlight)) startPolling()
       } else {
         await replan()
@@ -95,6 +108,7 @@ export const useCardSetStore = defineStore('cardSet', () => {
 
   function setSaved(data: CardSetResponse) {
     cardSet.value = data
+    if (data.newBooks) newBooks.value = data.newBooks
     mode.value = data.packingMode
     excluded.value = [...data.excludedItemIds]
   }
@@ -232,6 +246,7 @@ export const useCardSetStore = defineStore('cardSet', () => {
     return run(async () => {
       const { data } = await cardSetApi.create(planRequest(layout.value))
       setSaved(data)
+      void joinGroup(data.id)
       preview.value = null
       layout.value = null
       await sendNow()
@@ -265,10 +280,38 @@ export const useCardSetStore = defineStore('cardSet', () => {
     return run(async () => {
       if (!cardSet.value) return
       await cardSetApi.remove(cardSet.value.id)
+      void leaveGroup(cardSet.value.id)
       stopPolling()
+      newBooks.value = []
       cardSet.value = null
       await replan()
     })
+  }
+
+  /** Places the series' new books on the set's cards (spec §7.4 refresh). */
+  function addNewBooks() {
+    return run(async () => {
+      if (!cardSet.value) return
+      const { data } = await cardSetApi.refresh(cardSet.value.id)
+      setSaved(data)
+    })
+  }
+
+  // Live updates are a bonus over polling, so a hub that can't be reached is not an error.
+  async function joinGroup(cardSetId: string) {
+    try {
+      await signalR.joinCardSet(cardSetId)
+    } catch {
+      /* polling still keeps the page current */
+    }
+  }
+
+  async function leaveGroup(cardSetId: string) {
+    try {
+      await signalR.leaveCardSet(cardSetId)
+    } catch {
+      /* nothing to undo */
+    }
   }
 
   /** Re-reads the set while any card is queued or being sent. */
@@ -280,7 +323,7 @@ export const useCardSetStore = defineStore('cardSet', () => {
   async function refresh() {
     if (!cardSet.value) return stopPolling()
     try {
-      const { data } = await cardSetApi.get(cardSet.value.id)
+      const { data } = await cardSetApi.get(cardSet.value.id, false)
       setSaved(data)
       if (!data.cards.some(inFlight)) stopPolling()
     } catch (err) {
@@ -311,6 +354,8 @@ export const useCardSetStore = defineStore('cardSet', () => {
     unsentCards,
     isSending,
     unsplittable,
+    newBooks,
+    addNewBooks,
     load,
     setMode,
     toggleExcluded,

@@ -5,6 +5,24 @@ import { cardSetApi } from '@/services/api'
 import { layoutOf, useCardSetStore } from '@/stores/cardSetStore'
 import type { CardSetBook, CardSetCard, CardSetPlanResponse, CardSetResponse } from '@/types'
 
+const signalR = vi.hoisted(() => ({
+  cardSetUpdate: null as never,
+  joinCardSet: vi.fn(),
+  leaveCardSet: vi.fn(),
+}))
+
+vi.mock('@/composables/useSignalR', async () => {
+  const { ref } = await import('vue')
+  signalR.cardSetUpdate = ref(null) as never
+  return {
+    useSignalR: () => ({
+      cardSetUpdate: signalR.cardSetUpdate,
+      joinCardSet: signalR.joinCardSet,
+      leaveCardSet: signalR.leaveCardSet,
+    }),
+  }
+})
+
 vi.mock('@/services/api', () => ({
   cardSetApi: {
     plan: vi.fn(),
@@ -16,10 +34,12 @@ vi.mock('@/services/api', () => ({
     renameCard: vi.fn(),
     remove: vi.fn(),
     transfer: vi.fn(),
+    refresh: vi.fn(),
   },
 }))
 
 const api = vi.mocked(cardSetApi)
+const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0))
 const ok = <T>(data: T) => Promise.resolve({ data }) as never
 
 function book(i: number, chapters: number | null = null): CardSetBook {
@@ -110,6 +130,7 @@ function saved(cards: CardSetCard[]): CardSetResponse {
     cards,
     withinLimits: true,
     messages: [],
+    newBooks: null,
   }
 }
 
@@ -356,5 +377,53 @@ describe('cardSetStore', () => {
     await store.load('ser-1', 'lib-1')
 
     expect(store.unsplittable).toEqual(['b3'])
+  })
+
+  it('keeps the new books a read of the set found, and places them on request', async () => {
+    api.list.mockReturnValue(ok([{ id: 'set-1' }]))
+    api.get.mockReturnValue(
+      ok({
+        ...saved([card(0, 0, 3, { playlistId: 'p1', status: 'Draft' })]),
+        newBooks: [{ absLibraryItemId: 'b4', title: 'Book 4', sequence: 5 }],
+      }),
+    )
+    api.refresh.mockReturnValue(
+      ok({ ...saved([card(0, 0, 3, { playlistId: 'p1', status: 'Draft' })]), newBooks: [] }),
+    )
+    const store = useCardSetStore()
+    await store.load('ser-1', 'lib-1')
+    expect(store.newBooks.map((b) => b.absLibraryItemId)).toEqual(['b4'])
+    expect(signalR.joinCardSet).toHaveBeenCalledWith('set-1')
+
+    await store.addNewBooks()
+
+    expect(api.refresh).toHaveBeenCalledWith('set-1')
+    expect(store.newBooks).toEqual([])
+  })
+
+  it('re-reads the set when a card of it changes, but not for another set', async () => {
+    api.list.mockReturnValue(ok([{ id: 'set-1' }]))
+    api.get.mockReturnValue(
+      ok(saved([card(0, 0, 3, { playlistId: 'p1', status: 'Queued', locked: true })])),
+    )
+    const store = useCardSetStore()
+    await store.load('ser-1', 'lib-1')
+    api.get.mockClear()
+    const update = (cardSetId: string) =>
+      ({
+        cardSetId,
+        playlistId: 'p1',
+        cardIndex: 0,
+        status: 'Transferring',
+        errorMessage: null,
+      }) as never
+
+    ;(signalR.cardSetUpdate as unknown as { value: unknown }).value = update('other-set')
+    await flushMicrotasks()
+    expect(api.get).not.toHaveBeenCalled()
+
+    ;(signalR.cardSetUpdate as unknown as { value: unknown }).value = update('set-1')
+    await flushMicrotasks()
+    expect(api.get).toHaveBeenCalledWith('set-1', false)
   })
 })

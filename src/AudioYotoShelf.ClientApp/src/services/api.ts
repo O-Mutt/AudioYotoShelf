@@ -9,11 +9,13 @@ import type {
   AbsSeriesResponse,
   BatchTransferResponse,
   BookDetailResponse,
+  CardLimits,
   CardSetPlanResponse,
   CardSetResponse,
   CardSetSummary,
   ConnectionStatus,
   PackingMode,
+  SeriesCardStatus,
   TransferResponse,
 } from '@/types'
 
@@ -214,8 +216,25 @@ export const cardSetApi = {
     return api.get<CardSetSummary[]>('/cardsets', { params: { seriesId: seriesId || undefined } })
   },
 
-  get(cardSetId: string) {
-    return api.get<CardSetResponse>(`/cardsets/${cardSetId}`)
+  /** newBooks: false skips reading Audiobookshelf, for frequent re-reads while sending. */
+  get(cardSetId: string, newBooks = true) {
+    return api.get<CardSetResponse>(`/cardsets/${cardSetId}`, {
+      params: newBooks ? undefined : { newBooks: false },
+    })
+  },
+
+  status(seriesIds: string[]) {
+    return api.get<SeriesCardStatus[]>('/cardsets/status', {
+      params: { seriesIds: seriesIds.join(',') },
+    })
+  },
+
+  limits() {
+    return api.get<CardLimits>('/cardsets/limits')
+  },
+
+  refresh(cardSetId: string) {
+    return api.post<CardSetResponse>(`/cardsets/${cardSetId}/refresh`)
   },
 
   updateBreaks(cardSetId: string, breaks: number[], splitPoints: Record<string, number[]>) {

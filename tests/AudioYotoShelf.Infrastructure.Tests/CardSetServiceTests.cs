@@ -32,7 +32,7 @@ public class CardSetServiceTests : IDisposable
         var calculator = new CardCapacityCalculator(limits);
         _sut = new CardSetService(
             _fixture.DbContext, _absService.Object, trackPlanner, calculator,
-            new CardSetPlanner(calculator, trackPlanner, limits), Mock.Of<ILogger<CardSetService>>());
+            new CardSetPlanner(calculator, trackPlanner, limits), limits, Mock.Of<ILogger<CardSetService>>());
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -585,5 +585,158 @@ public class CardSetServiceTests : IDisposable
         var updated = await _sut.UpdateAsync(set.Id, new UpdateCardSetRequest(ExcludedItemIds: ["c0"]));
 
         updated.Cards.Last().Title.Should().Be("Dragons · Books 5–6");
+    }
+    // =========================================================================
+    // Phase 2: new books, status, limits
+    // =========================================================================
+
+    [Fact]
+    public async Task Get_ListsBooksAddedToTheSeriesSinceTheSetWasMade()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(3));
+        var set = await _sut.CreateAsync(userId, Create(excluded: ["b2"]));
+        SetupSeries(HourBooks(4));
+
+        var read = await _sut.GetAsync(set.Id);
+
+        read!.NewBooks.Should().ContainSingle().Which.AbsLibraryItemId.Should().Be("b4");
+    }
+
+    [Fact]
+    public async Task Get_WithoutNewBooks_DoesNotReadAudiobookshelf()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(3));
+        var set = await _sut.CreateAsync(userId, Create());
+        _absService.Invocations.Clear();
+
+        var read = await _sut.GetAsync(set.Id, withNewBooks: false);
+
+        read!.NewBooks.Should().BeNull();
+        _absService.Invocations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Get_WhenAudiobookshelfCannotBeRead_StillAnswersWithNoNewBooks()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(3));
+        var set = await _sut.CreateAsync(userId, Create());
+        _absService.Setup(s => s.GetSeriesDetailAsync(
+                It.IsAny<string>(), It.IsAny<string>(), LibraryId, SeriesId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("ABS down"));
+
+        var read = await _sut.GetAsync(set.Id);
+
+        read!.NewBooks.Should().BeEmpty();
+        read.Cards.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Status_ReportsOnlyTheAskedSeries_WithTheBooksTheSetKnows()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(3));
+        var set = await _sut.CreateAsync(userId, Create(excluded: ["b3"]));
+        await _sut.PrepareTransferAsync(set.Id, null);
+
+        var status = await _sut.StatusAsync(userId, [SeriesId, "not-a-set"]);
+
+        var one = status.Should().ContainSingle().Subject;
+        one.CardSetId.Should().Be(set.Id);
+        one.Sending.Should().BeTrue();
+        one.KnownBookIds.Should().BeEquivalentTo(["b1", "b2", "b3"]);
+    }
+
+    [Fact]
+    public async Task Status_ForAnotherUsersSeries_IsEmpty()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(3));
+        await _sut.CreateAsync(userId, Create());
+
+        (await _sut.StatusAsync(Guid.NewGuid(), [SeriesId])).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Limits_AreTheConfiguredOnes()
+    {
+        _sut.Limits().Should().Be(new CardLimitsResponse(100, 10 * 45_000_000L, null, 100));
+    }
+
+    [Fact]
+    public async Task Refresh_WithNoNewBooks_SaysSo()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(3));
+        var set = await _sut.CreateAsync(userId, Create());
+
+        var refreshed = await _sut.RefreshAsync(set.Id);
+
+        refreshed.Messages.Should().Equal("No new books in this series.");
+        refreshed.Cards.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Refresh_AddsNewBooksToTheLastCardWhileItIsNotOnYoto()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(3));
+        var set = await _sut.CreateAsync(userId, Create());
+        SetupSeries(HourBooks(4));
+
+        var refreshed = await _sut.RefreshAsync(set.Id);
+
+        refreshed.Cards.Should().ContainSingle();
+        refreshed.Books.Select(b => b.AbsLibraryItemId).Should().Equal("b1", "b2", "b3", "b4");
+        refreshed.Cards[0].Title.Should().Be("Dragons · Books 1–4");
+        refreshed.NewBooks.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Refresh_WhenTheLastCardIsOnYoto_PutsNewBooksOnANewCard()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(3));
+        var set = await _sut.CreateAsync(userId, Create());
+        await LockAsync(set.Cards[0].PlaylistId!.Value);
+        SetupSeries(HourBooks(5));
+
+        var refreshed = await _sut.RefreshAsync(set.Id);
+
+        refreshed.Cards.Select(c => (c.FirstBookIndex, c.LastBookIndex)).Should().Equal((0, 2), (3, 4));
+        refreshed.Cards[0].Locked.Should().BeTrue();
+        refreshed.Cards[1].Title.Should().Be("Dragons · Books 4–5");
+    }
+
+    [Fact]
+    public async Task Refresh_ABookEarlierInTheSeries_GoesOnTheFirstCardThatCanChange_AndSaysSo()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(12));
+        var set = await _sut.CreateAsync(userId, Create());
+        var firstCard = set.Cards[0];
+        SetupSeries([.. HourBooks(12), new SeriesBookSpec("b3.5", "3.5", 1)]);
+
+        var refreshed = await _sut.RefreshAsync(set.Id);
+
+        refreshed.Cards[0].PlaylistId.Should().Be(firstCard.PlaylistId);
+        refreshed.Cards[0].Title.Should().Be(firstCard.Title);
+        refreshed.Books.Select(b => b.AbsLibraryItemId).Skip(6).First().Should().Be("b3.5");
+        refreshed.Messages.Should().ContainSingle().Which.Should().Contain("Title b3.5").And.Contain("card 2");
+    }
+
+    [Fact]
+    public async Task Refresh_ANewBookThatCannotBeSplit_IsRefused()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(2));
+        var set = await _sut.CreateAsync(userId, Create());
+        SetupSeries([.. HourBooks(2), new SeriesBookSpec("huge", "3", 12, 1)]);
+
+        var act = () => _sut.RefreshAsync(set.Id);
+
+        await act.Should().ThrowAsync<CardSetPlanException>();
     }
 }

@@ -1,4 +1,5 @@
 using AudioYotoShelf.Api.Auth;
+using AudioYotoShelf.Core.DTOs.CardSet;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Infrastructure.Data;
@@ -34,6 +35,36 @@ public class TransferHub(AudioYotoShelfDbContext db) : Hub
     {
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, transferId.ToString());
     }
+
+    /// <summary>Subscribes to a card set's sending progress; ignored for a set that isn't the caller's.</summary>
+    public async Task JoinCardSetGroup(Guid cardSetId)
+    {
+        var owner = await db.CardSets
+            .Where(s => s.Id == cardSetId)
+            .Select(s => (Guid?)s.UserConnectionId)
+            .FirstOrDefaultAsync();
+        if (owner is null || owner != Context.User.GetUserConnectionId())
+            return;
+
+        await Groups.AddToGroupAsync(Context.ConnectionId, CardSetGroup(cardSetId));
+    }
+
+    public async Task LeaveCardSetGroup(Guid cardSetId)
+    {
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, CardSetGroup(cardSetId));
+    }
+
+    // Prefixed so a set's group can never collide with a transfer's, which is named by its bare id.
+    internal static string CardSetGroup(Guid cardSetId) => $"cardset:{cardSetId}";
+}
+
+/// <summary>SignalR-backed implementation of <see cref="ICardSetProgressNotifier"/>.</summary>
+public class SignalRCardSetProgressNotifier(IHubContext<TransferHub> hubContext) : ICardSetProgressNotifier
+{
+    public Task CardChangedAsync(CardSetProgressUpdate update, CancellationToken ct = default) =>
+        hubContext.Clients
+            .Group(TransferHub.CardSetGroup(update.CardSetId))
+            .SendAsync("CardSetProgress", update, ct);
 }
 
 /// <summary>

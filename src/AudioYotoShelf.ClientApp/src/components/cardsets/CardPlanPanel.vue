@@ -168,6 +168,31 @@ async function deleteSet() {
       <li v-for="message in store.messages" :key="message">{{ message }}</li>
     </ul>
 
+    <div
+      v-if="store.isSaved && store.newBooks.length"
+      class="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-50 border border-amber-200 p-3"
+      data-testid="new-books"
+    >
+      <p class="text-sm text-amber-800">
+        {{ store.newBooks.length }} new {{ store.newBooks.length === 1 ? 'book' : 'books' }} since
+        these cards were made:
+        {{
+          store.newBooks
+            .map((b) => (b.sequence != null ? `#${b.sequence} ` : '') + b.title)
+            .join(', ')
+        }}
+      </p>
+      <button
+        type="button"
+        class="btn-primary text-sm"
+        data-testid="add-new-books"
+        :disabled="store.isSaving"
+        @click="store.addNewBooks()"
+      >
+        Add to cards
+      </button>
+    </div>
+
     <!-- Card tiles, with the break between each pair -->
     <ol class="space-y-2">
       <template v-for="(card, index) in store.cards" :key="card.playlistId ?? index">

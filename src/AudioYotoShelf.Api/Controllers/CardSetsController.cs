@@ -44,12 +44,39 @@ public class CardSetsController(
     public async Task<IActionResult> List([FromQuery] string? seriesId, CancellationToken ct)
         => Ok(await cardSets.ListAsync(CurrentUserConnectionId, seriesId, ct));
 
+    /// <param name="newBooks">false skips reading Audiobookshelf for new books, for frequent re-reads while sending.</param>
     [HttpGet("{cardSetId:guid}")]
-    public async Task<IActionResult> Get(Guid cardSetId, CancellationToken ct)
+    public async Task<IActionResult> Get(Guid cardSetId, CancellationToken ct, [FromQuery] bool newBooks = true)
     {
         if (!await OwnsCardSetAsync(cardSetId, ct)) return NotFound();
-        var result = await cardSets.GetAsync(cardSetId, ct);
+        var result = await cardSets.GetAsync(cardSetId, newBooks, ct);
         return result is null ? NotFound() : Ok(result);
+    }
+
+    /// <summary>Card-set badges for a page of the series grid: <c>?seriesIds=a,b,c</c>.</summary>
+    [HttpGet("status")]
+    public async Task<IActionResult> Status([FromQuery] string? seriesIds, CancellationToken ct)
+    {
+        var ids = (seriesIds ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return Ok(ids.Length == 0 ? [] : await cardSets.StatusAsync(CurrentUserConnectionId, ids, ct));
+    }
+
+    [HttpGet("limits")]
+    public IActionResult Limits() => Ok(cardSets.Limits());
+
+    /// <summary>Places books added to the series since the set was made.</summary>
+    [HttpPost("{cardSetId:guid}/refresh")]
+    public async Task<IActionResult> Refresh(Guid cardSetId, CancellationToken ct)
+    {
+        if (!await OwnsCardSetAsync(cardSetId, ct)) return NotFound();
+        try
+        {
+            return Ok(await cardSets.RefreshAsync(cardSetId, ct));
+        }
+        catch (CardSetPlanException ex)
+        {
+            return UnprocessableEntity(new { ex.Message, ex.Plan });
+        }
     }
 
     [HttpPut("{cardSetId:guid}/breaks")]

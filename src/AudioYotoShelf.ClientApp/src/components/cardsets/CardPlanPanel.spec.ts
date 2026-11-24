@@ -6,6 +6,24 @@ import { useCardSetStore } from '@/stores/cardSetStore'
 import CardPlanPanel from '@/components/cardsets/CardPlanPanel.vue'
 import type { CardSetCard, CardSetResponse } from '@/types'
 
+const signalR = vi.hoisted(() => ({
+  cardSetUpdate: null as never,
+  joinCardSet: vi.fn(),
+  leaveCardSet: vi.fn(),
+}))
+
+vi.mock('@/composables/useSignalR', async () => {
+  const { ref } = await import('vue')
+  signalR.cardSetUpdate = ref(null) as never
+  return {
+    useSignalR: () => ({
+      cardSetUpdate: signalR.cardSetUpdate,
+      joinCardSet: signalR.joinCardSet,
+      leaveCardSet: signalR.leaveCardSet,
+    }),
+  }
+})
+
 vi.mock('@/services/api', () => ({
   cardSetApi: {
     plan: vi.fn(),
@@ -17,6 +35,7 @@ vi.mock('@/services/api', () => ({
     renameCard: vi.fn(),
     remove: vi.fn(),
     transfer: vi.fn(),
+    refresh: vi.fn(),
   },
   authApi: { getConnectionStatus: vi.fn() },
 }))
@@ -85,6 +104,7 @@ function saved(cards: CardSetCard[]): CardSetResponse {
     cards,
     withinLimits: true,
     messages: [],
+    newBooks: null,
   }
 }
 
@@ -177,5 +197,26 @@ describe('CardPlanPanel', () => {
 
     expect(wrapper.find('[data-testid="make-cards"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-testid="unsplittable-b3"]').exists()).toBe(true)
+  })
+
+  it('offers to add books new to the series', async () => {
+    api.list.mockReturnValue(ok([{ id: 'set-1' }]))
+    api.get.mockReturnValue(
+      ok({
+        ...saved([card(0, 0, 3)]),
+        newBooks: [{ absLibraryItemId: 'b5', title: 'Book 5', sequence: 5 }],
+      }),
+    )
+    api.refresh.mockReturnValue(ok({ ...saved([card(0, 0, 3)]), newBooks: [] }))
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="new-books"]').text()).toContain('#5 Book 5')
+
+    await wrapper.find('[data-testid="add-new-books"]').trigger('click')
+    await flushPromises()
+
+    expect(api.refresh).toHaveBeenCalledWith('set-1')
+    expect(wrapper.find('[data-testid="new-books"]').exists()).toBe(false)
   })
 })

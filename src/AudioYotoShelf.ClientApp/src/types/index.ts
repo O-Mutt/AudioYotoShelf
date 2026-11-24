@@ -373,7 +373,8 @@ export interface CardSetCard {
   errorMessage: string | null
 }
 
-export interface ExcludedBook {
+/** A series book named without its tracks: left out of the plan, or new to the series. */
+export interface SeriesBookRef {
   absLibraryItemId: string
   title: string
   sequence: number | null
@@ -382,7 +383,7 @@ export interface ExcludedBook {
 export interface CardSetPlanResponse {
   seriesName: string
   books: CardSetBook[]
-  excludedBooks: ExcludedBook[]
+  excludedBooks: SeriesBookRef[]
   cards: CardSetCard[]
   withinLimits: boolean
   unsplittableBookIds: string[]
@@ -401,6 +402,8 @@ export interface CardSetResponse {
   cards: CardSetCard[]
   withinLimits: boolean
   messages: string[]
+  /** Books new to the series since the set was made; null when the server did not check. */
+  newBooks: SeriesBookRef[] | null
 }
 
 export interface CardSetSummary {
@@ -416,4 +419,30 @@ export interface CardSetSummary {
 export interface CardSetLayout {
   breaks: number[]
   splitPoints: Record<string, number[]>
+}
+
+/** Card-set state for one series, for the series grid. Any series book not in knownBookIds is new. */
+export interface SeriesCardStatus {
+  absSeriesId: string
+  cardSetId: string
+  cardCount: number
+  sentCount: number
+  sending: boolean
+  status: CardSetStatus
+  knownBookIds: string[]
+}
+
+export interface CardLimits {
+  maxTracks: number
+  maxTotalBytes: number
+  maxTotalDurationSeconds: number | null
+  transcodedBitrateKbps: number
+}
+
+export interface CardSetProgressUpdate {
+  cardSetId: string
+  playlistId: string
+  cardIndex: number | null
+  status: PlaylistStatus
+  errorMessage: string | null
 }
