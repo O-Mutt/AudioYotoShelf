@@ -3,7 +3,14 @@ using AudioYotoShelf.Core.Configuration;
 namespace AudioYotoShelf.Core.DTOs.Playlist;
 
 /// <summary>A single logical track derived from a book's media (one file or one chapter).</summary>
-public record SourceTrack(string Title, double DurationSeconds, long EstimatedBytes);
+public record SourceTrack(string Title, double DurationSeconds, long EstimatedBytes)
+{
+    /// <summary>
+    /// Source bytes of the parts Audiobookshelf has not scanned yet (duration 0). Tracked apart from
+    /// the duration so merging scanned and unscanned chapters into one track keeps both size signals.
+    /// </summary>
+    public long UnscannedBytes { get; init; } = DurationSeconds > 0 ? 0 : EstimatedBytes;
+}
 
 /// <summary>The ordered tracks that make up one book within a playlist.</summary>
 public record BookTrackPlan(string AbsLibraryItemId, string BookTitle, IReadOnlyList<SourceTrack> Tracks);

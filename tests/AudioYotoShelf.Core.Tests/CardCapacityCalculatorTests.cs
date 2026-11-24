@@ -1,5 +1,6 @@
 using AudioYotoShelf.Core.Configuration;
 using AudioYotoShelf.Core.DTOs.Playlist;
+using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Services;
 using FluentAssertions;
 
@@ -92,6 +93,21 @@ public class CardCapacityCalculatorTests
         var result = _sut.Calculate([Book("b1", Tracks(6, 0, 100L * 1024 * 1024))]);
 
         result.Projected.Bytes.Should().Be(600L * 1024 * 1024);
+        result.ExceedsBytes.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(TrackGrouping.Chapters)]
+    [InlineData(TrackGrouping.SingleTrack)]
+    public void Calculate_UnscannedFiles_WeighTheSameWhateverTheGrouping(TrackGrouping grouping)
+    {
+        // Merging must not fold the unscanned files' source size into the scanned duration.
+        var chapters = Tracks(10, Hour, 1_000_000).Concat(Tracks(5, 0, 100_000_000)).ToArray();
+        var grouped = new TrackPlanner(_limits).ApplyGrouping(chapters, grouping, "b1");
+
+        var result = _sut.Calculate([new BookTrackPlan("b1", "b1", grouped)]);
+
+        result.Projected.Bytes.Should().Be(10 * 45_000_000L + 5 * 100_000_000L);
         result.ExceedsBytes.Should().BeTrue();
     }
 

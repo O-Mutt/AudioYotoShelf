@@ -36,7 +36,22 @@ public class YotoCardLimitsTests
     {
         var act = () => new YotoCardLimits { MaxTotalDurationSeconds = 0 }.Validate();
 
-        act.Should().Throw<InvalidOperationException>().WithMessage("*MaxTotalDurationSeconds must be unset or greater than 0*");
+        act.Should().Throw<InvalidOperationException>().WithMessage("*MaxTotalDurationSeconds must be unset or a finite number greater than 0*");
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Validate_ADurationThatIsNotAFiniteNumber_Fails(double seconds)
+    {
+        var act = () => new YotoCardLimits
+        {
+            MaxTrackDurationSeconds = seconds,
+            MaxTotalDurationSeconds = seconds,
+        }.Validate();
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*MaxTrackDurationSeconds must be a finite number*MaxTotalDurationSeconds must be unset or a finite number*");
     }
 
     [Fact]

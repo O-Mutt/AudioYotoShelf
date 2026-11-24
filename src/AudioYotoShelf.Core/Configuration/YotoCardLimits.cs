@@ -55,14 +55,17 @@ public class YotoCardLimits
             problems.Add($"{nameof(MaxTracks)} must be greater than 0 (got {MaxTracks}).");
         if (MaxTrackBytes <= 0)
             problems.Add($"{nameof(MaxTrackBytes)} must be greater than 0 (got {MaxTrackBytes}).");
-        if (MaxTrackDurationSeconds <= 0)
-            problems.Add($"{nameof(MaxTrackDurationSeconds)} must be greater than 0 (got {MaxTrackDurationSeconds}).");
+        // NaN compares false with everything, so a plain "<= 0" would let it through and switch the check off.
+        if (!IsPositiveFinite(MaxTrackDurationSeconds))
+            problems.Add($"{nameof(MaxTrackDurationSeconds)} must be a finite number greater than 0 (got {MaxTrackDurationSeconds}).");
         if (MaxTotalBytes <= 0)
             problems.Add($"{nameof(MaxTotalBytes)} must be greater than 0 (got {MaxTotalBytes}).");
-        if (MaxTotalDurationSeconds is <= 0)
-            problems.Add($"{nameof(MaxTotalDurationSeconds)} must be unset or greater than 0 (got {MaxTotalDurationSeconds}).");
+        if (MaxTotalDurationSeconds is { } maxTotal && !IsPositiveFinite(maxTotal))
+            problems.Add($"{nameof(MaxTotalDurationSeconds)} must be unset or a finite number greater than 0 (got {MaxTotalDurationSeconds}).");
 
         if (problems.Count > 0)
             throw new InvalidOperationException($"Invalid {SectionName} settings: {string.Join(" ", problems)}");
     }
+
+    private static bool IsPositiveFinite(double value) => double.IsFinite(value) && value > 0;
 }

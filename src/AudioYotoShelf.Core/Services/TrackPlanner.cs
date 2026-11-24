@@ -68,7 +68,10 @@ public class TrackPlanner(YotoCardLimits limits) : ITrackPlanner
     private static SourceTrack Merge(IReadOnlyList<SourceTrack> tracks, string bookTitle) =>
         new(bookTitle,
             tracks.Sum(t => t.DurationSeconds),
-            tracks.Sum(t => t.EstimatedBytes));
+            tracks.Sum(t => t.EstimatedBytes))
+        {
+            UnscannedBytes = tracks.Sum(t => t.UnscannedBytes)
+        };
 
     private bool FitsOneTrack(IReadOnlyList<SourceTrack> tracks) =>
         tracks.Sum(t => t.DurationSeconds) <= limits.MaxTrackDurationSeconds &&
