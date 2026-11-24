@@ -1,6 +1,6 @@
 # Spec: series card sets
 
-**Status:** Draft — design agreed (option C), not yet built ([#114](https://github.com/O-Mutt/AudioYotoShelf/issues/114))
+**Status:** Phase 1 built ([#114](https://github.com/O-Mutt/AudioYotoShelf/issues/114)); Phase 2 (§10) not started. §13 lists where the build differs from this design.
 **Scope:** turn an Audiobookshelf series into an ordered set of Yoto Make Your Own (MYO) cards,
 each holding a run of whole books, packed under the card limits.
 
@@ -408,3 +408,43 @@ Mockups: the "Series MYO Cards" canvas (C1–C3). Built in Vue with a new `cardS
   break snapping back, locked cards disabled.
 - **Manual.** Make a Dragon Masters set, send it, play the first and last book of each card. Make a
   Harry Potter 1–4 set and check Goblet of Fire's second card starts at the chapter after the split.
+
+## 13. Phase 1 as built
+
+Where the code differs from the sections above, the code is right and this list says why.
+
+- **Planner input (§5.1).** `ICardSetPlanner.Plan` and `Apply` take each book's per-chapter tracks
+  (what `ITrackPlanner.Plan(media, Chapters)` returns) and the playlist grouping, and apply the
+  grouping themselves. Capacity therefore matches what a card's playlist sends, and the planner can
+  split a book on its chapters without a second input. Card playlists use `Auto` grouping, so short
+  books stay one track each and a long series fits the 100-track limit.
+- **`CardSetPlan.SplitChapters`.** The plan carries, per split book, the chapter list its ranges
+  index into: the book's chapters, or the one-track segments of a book without chapters. Each part's
+  `PlaylistItem.TrackDurations` stores that full list, so a part of a chapterless book knows its
+  segments; the transfer cuts segment *i* as `[total·i/n, total·(i+1)/n)`.
+- **Standalone books.** `Plan` takes an optional set of book indices that must sit alone. Re-packing
+  uses it for the rest of a split book whose first parts are on Yoto.
+- **Breaks around split books.** `Apply` adds the breaks on each side of a book that needs splitting
+  when the caller leaves them out, and splits a book without split points by the set's mode.
+- **Locked cards.** A card that is `Transferring` is locked as well as `Transferred`. Every card up
+  to the last locked one keeps its books (§5.5), so nothing slides under a sent card. Changing the
+  mode or exclusions (§7.4 `PATCH`) re-reads the series and re-packs only the cards after it,
+  continuing a partly sent split book from the chapter after its last sent part.
+- **Responses (§7.3).** `GET /api/cardsets/{id}` returns `books` and `cards` in the same shape as the
+  plan preview, each card adding `playlistId`, `status`, `locked`, `yotoCardId` and `errorMessage`,
+  so the UI draws a preview and a saved set the same way. Set `status` is
+  `Draft | Sending | NeedsAttention | Complete`. `GET /api/cardsets` takes `?seriesId=` so the series
+  page finds its set. Chapter titles of a saved split book are "Chapter *n*"; the playlist items
+  cache durations, not titles.
+- **Changed cards (§7.4 `PUT /breaks`).** A card whose books and range do not change keeps its title
+  and status; a changed card gets its default title back and returns to draft.
+- **Chapters changed in Audiobookshelf (§9).** Sending a part whose book no longer has the chapter
+  count it was planned with fails that card with a message asking to re-plan; the other cards still
+  send.
+- **Send (§7.5).** The job has no automatic retry, so a retry never re-sends a card already on Yoto.
+  Progress is not added to the SignalR hub yet: the series page re-reads the set every 5 s until the
+  cards it sent are on Yoto or failed.
+- **UI (§8).** Breaks and split points move with buttons (one book or one chapter either way)
+  instead of dragging. The chapter strip shows where each split falls.
+- **Not built (Phase 2):** `refresh`, `newBookIds`, `GET /status`, the series grid badges and
+  filters, and SignalR progress for a set.
