@@ -30,6 +30,11 @@ updates:
       npm:
         patterns:
           - "*"
+    ignore:
+      # TypeScript 7 ships no JS API, so typescript-eslint and vue-tsc (Volar) cannot load it.
+      # Drop this once both support TypeScript 7.1+ (tracked in #125).
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
 
