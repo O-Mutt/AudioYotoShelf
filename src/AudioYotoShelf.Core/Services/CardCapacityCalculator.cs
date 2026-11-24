@@ -13,7 +13,7 @@ public class CardCapacityCalculator(YotoCardLimits limits) : ICardCapacityCalcul
         return Math.Max(1, Math.Max(byDuration, byBytes));
     }
 
-    public CapacityResult Calculate(IEnumerable<BookTrackPlan> books)
+    public CapacityResult Calculate(IEnumerable<BookTrackPlan> books, bool splitTracks = true)
     {
         var tracks = 0;
         var duration = 0.0;
@@ -24,7 +24,7 @@ public class CardCapacityCalculator(YotoCardLimits limits) : ICardCapacityCalcul
         {
             foreach (var track in book.Tracks)
             {
-                tracks += ProjectedTrackCount(track);
+                tracks += splitTracks ? ProjectedTrackCount(track) : 1;
                 duration += track.DurationSeconds;
                 // Audiobookshelf reports 0 for files it has not scanned yet; without a duration the
                 // source size is the only size signal left, so a large unscanned book still fails.

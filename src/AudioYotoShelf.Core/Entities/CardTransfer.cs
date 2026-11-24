@@ -33,6 +33,9 @@ public class CardTransfer : BaseEntity
     public int? OverrideMinAge { get; set; }
     public int? OverrideMaxAge { get; set; }
 
+    /// <summary>The person chose to send the book although it is over the card limits; a retry keeps that choice.</summary>
+    public bool AllowOversized { get; set; }
+
     public int EffectiveMinAge => OverrideMinAge ?? SuggestedMinAge;
     public int EffectiveMaxAge => OverrideMaxAge ?? SuggestedMaxAge;
 

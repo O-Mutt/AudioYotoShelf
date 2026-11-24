@@ -56,11 +56,11 @@ async function transferSeries() {
   isTransferring.value = true
   transferMessage.value = null
   try {
-    await transferApi.transferSeries({
+    const { data } = await transferApi.transferSeries({
       absSeriesId: props.seriesId,
       absLibraryId: libraryId,
     })
-    transferMessage.value = 'Series transfer queued successfully!'
+    transferMessage.value = data?.message ?? 'Series transfer queued.'
   } catch (err: unknown) {
     transferMessage.value = `Error: ${errorMessage(err)}`
   } finally {

@@ -6,7 +6,7 @@ import { useSignalR } from '@/composables/useSignalR'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { transferApi } from '@/services/api'
-import { errorMessage } from '@/utils/errors'
+import { capacityRefusalMessage, errorMessage } from '@/utils/errors'
 import type { TransferProgressUpdate } from '@/types'
 
 const props = defineProps<{ itemId: string }>()
@@ -21,6 +21,7 @@ const overrideMinAge = ref<number | null>(null)
 const overrideMaxAge = ref<number | null>(null)
 const isTransferring = ref(false)
 const activeTransferId = ref<string | null>(null)
+const transferRefusal = ref<string | null>(null)
 
 const book = computed(() => libraryStore.currentBookDetail)
 const metadata = computed(() => book.value?.item?.media?.metadata)
@@ -86,14 +87,19 @@ async function startTransfer() {
     confirmText: 'Start Transfer',
   })
   if (!ok) return
+  await queueTransfer(false)
+}
 
+async function queueTransfer(allowOversized: boolean) {
   isTransferring.value = true
+  transferRefusal.value = null
 
   try {
     const { data } = await transferApi.transferBook({
       absLibraryItemId: props.itemId,
       overrideMinAge: overrideMinAge.value ?? undefined,
       overrideMaxAge: overrideMaxAge.value ?? undefined,
+      allowOversized: allowOversized || undefined,
     })
     toast.success('Transfer queued successfully!')
 
@@ -104,7 +110,11 @@ async function startTransfer() {
       await joinTransfer(activeTransferId.value)
     }
   } catch (err: unknown) {
-    toast.error(`Transfer failed: ${errorMessage(err)}`)
+    // A capacity refusal says what to do instead (split it from the series page, or send it
+    // anyway); a toast would disappear before that is read.
+    const refusal = capacityRefusalMessage(err)
+    if (refusal) transferRefusal.value = refusal
+    else toast.error(`Transfer failed: ${errorMessage(err)}`)
   } finally {
     isTransferring.value = false
   }
@@ -296,6 +306,28 @@ async function startTransfer() {
       <p class="text-xs text-gray-500 mt-1">
         {{ liveProgress.currentStep ?? `${liveProgress.progressPercent}% complete` }}
       </p>
+    </div>
+
+    <div
+      v-if="transferRefusal"
+      role="alert"
+      data-test="transfer-refusal"
+      class="text-sm text-red-700 bg-red-50 rounded-lg p-3 space-y-3"
+    >
+      <p data-test="transfer-refusal-message">{{ transferRefusal }}</p>
+      <div class="flex items-center gap-3">
+        <button
+          data-test="send-anyway"
+          class="btn-secondary"
+          :disabled="isTransferring"
+          @click="queueTransfer(true)"
+        >
+          Send anyway
+        </button>
+        <span class="text-xs text-red-600">
+          Yoto may refuse a card this large, or it may not play to the end.
+        </span>
+      </div>
     </div>
 
     <!-- Transfer button -->

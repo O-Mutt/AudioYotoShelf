@@ -1,9 +1,11 @@
+using AudioYotoShelf.Core.Configuration;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
+using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Core.Tests.Helpers;
 using AudioYotoShelf.Infrastructure.Data;
 using AudioYotoShelf.Infrastructure.Observability;
@@ -64,7 +66,9 @@ public partial class TransferOrchestratorTests : IDisposable
     private TransferOrchestrator CreateSut(IConfiguration configuration) => new(
         _db, _absService.Object, _yotoService.Object,
         _iconService.Object, _ageService.Object,
-        _chapterExtractor.Object, _notifier.Object, configuration,
+        _chapterExtractor.Object,
+        new TrackPlanner(new YotoCardLimits()), new CardCapacityCalculator(new YotoCardLimits()),
+        _notifier.Object, configuration,
         _metrics,
         Mock.Of<ILogger<TransferOrchestrator>>());
 

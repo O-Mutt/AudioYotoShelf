@@ -11,5 +11,10 @@ public interface ICardCapacityCalculator
     /// <summary>Number of compliant sub-tracks an oversized source track will be split into (>= 1).</summary>
     int ProjectedTrackCount(SourceTrack track);
 
-    CapacityResult Calculate(IEnumerable<BookTrackPlan> books);
+    /// <param name="books">The books on the card, in order.</param>
+    /// <param name="splitTracks">
+    /// False counts each source track as one card track, for a transfer that uploads tracks as they
+    /// are (the single-book transfer) rather than splitting them to the per-track limits.
+    /// </param>
+    CapacityResult Calculate(IEnumerable<BookTrackPlan> books, bool splitTracks = true);
 }

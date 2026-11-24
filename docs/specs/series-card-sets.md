@@ -25,7 +25,7 @@ Related: [yoto-card-limits.md](yoto-card-limits.md) (what a card can hold, and h
 - Packing books from different series onto one card. That is a plain playlist.
 - Reordering books. Series order comes from Audiobookshelf's sequence numbers.
 - Changing what a Yoto card holds after it has been sent, other than re-sending the same card.
-- Enforcing a card limit on single-book transfers. That is a separate gap (§11, [#117](https://github.com/O-Mutt/AudioYotoShelf/issues/117)).
+- Enforcing a card limit on single-book transfers. That was a separate gap (§11, [#117](https://github.com/O-Mutt/AudioYotoShelf/issues/117)).
 
 ## 2. Current state
 
@@ -378,8 +378,9 @@ Mockups: the "Series MYO Cards" canvas (C1–C3). Built in Vue with a new `cardS
    whether Yoto enforces 500 MB at all. The answer changes `YotoCardLimits` defaults only.
 2. **Cover art for multi-book cards.** The playlist transfer only sets a cover for a single-book
    playlist. Options: first book's cover, or a generated series cover.
-3. **Single-book transfers have no capacity check.** [#117](https://github.com/O-Mutt/AudioYotoShelf/issues/117); "One card per book" on the series
-   page inherits it until fixed.
+3. **Single-book transfers have no capacity check.** Resolved by [#117](https://github.com/O-Mutt/AudioYotoShelf/issues/117): "One card per book"
+   sends the books that fit and reports the rest as failed with the reason; see
+   [Yoto card limits](yoto-card-limits.md#single-book-transfers).
 
 ## 12. Test plan
 

@@ -1,4 +1,5 @@
 using AudioYotoShelf.Api.Controllers;
+using AudioYotoShelf.Core.DTOs.Playlist;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
@@ -144,6 +145,80 @@ public class TransfersControllerTests : IDisposable
         result.Should().BeOfType<AcceptedResult>();
     }
 
+    [Fact]
+    public async Task TransferBook_LargerThanOneCard_Returns409WithTheReasonAndQueuesNothing()
+    {
+        var capacity = new CapacitySummary(
+            40, 100, 20 * 3600, null, 900L * 1024 * 1024, 500L * 1024 * 1024,
+            WithinLimits: false, ExceedsTracks: false, ExceedsDuration: false, ExceedsBytes: true,
+            FirstOverflowItemId: "item-1", Messages: ["Estimated size 900MB exceeds the limit of 500MB."]);
+        var refusal = new CapacityRefusal("\"Big Book\" is larger than one Yoto card, so it was not sent.", capacity);
+        _orchestrator.Setup(o => o.CheckBookCapacityAsync(It.IsAny<Guid>(), "item-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(refusal);
+
+        var result = await _sut.AsUser(Guid.NewGuid()).TransferBook(new CreateTransferRequest("item-1"), CancellationToken.None);
+
+        result.Should().BeOfType<ConflictObjectResult>()
+            .Which.Value.Should().BeEquivalentTo(new { refusal.Message, Capacity = capacity });
+        _backgroundJobs.VerifyNothingEnqueued();
+    }
+
+    [Fact]
+    public async Task TransferBook_CapacityCheckCannotReachAudiobookshelf_StillQueuesForTheJobToCheck()
+    {
+        _orchestrator.Setup(o => o.CheckBookCapacityAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Audiobookshelf is down"));
+
+        var result = await _sut.AsUser(Guid.NewGuid()).TransferBook(new CreateTransferRequest("item-1"), CancellationToken.None);
+
+        result.Should().BeOfType<AcceptedResult>();
+    }
+
+    [Fact]
+    public async Task TransferBook_AudiobookshelfTooSlowForTheCheck_StillQueuesForTheJobToCheck()
+    {
+        // An HttpClient timeout surfaces as TaskCanceledException, which must skip the check like any other failure.
+        _orchestrator.Setup(o => o.CheckBookCapacityAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (Guid _, string _, CancellationToken token) =>
+            {
+                await Task.Delay(Timeout.Infinite, token);
+                return null;
+            });
+        var sut = new TransfersController(
+            _db, _orchestrator.Object, _backgroundJobs.Object, _notifier.Object,
+            Mock.Of<ILogger<TransfersController>>())
+        { CapacityCheckTimeout = TimeSpan.FromMilliseconds(50) };
+
+        var result = await sut.AsUser(Guid.NewGuid()).TransferBook(new CreateTransferRequest("item-1"), CancellationToken.None);
+
+        result.Should().BeOfType<AcceptedResult>();
+    }
+
+    [Fact]
+    public async Task TransferBook_CallerGoneDuringTheCheck_QueuesNothing()
+    {
+        using var gone = new CancellationTokenSource();
+        gone.Cancel();
+        _orchestrator.Setup(o => o.CheckBookCapacityAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException(gone.Token));
+
+        var act = () => _sut.AsUser(Guid.NewGuid()).TransferBook(new CreateTransferRequest("item-1"), gone.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _backgroundJobs.VerifyNothingEnqueued();
+    }
+
+    [Fact]
+    public async Task TransferBook_SentAnyway_SkipsTheCapacityCheck()
+    {
+        var result = await _sut.AsUser(Guid.NewGuid()).TransferBook(
+            new CreateTransferRequest("item-1", AllowOversized: true), CancellationToken.None);
+
+        result.Should().BeOfType<AcceptedResult>();
+        _orchestrator.Verify(o => o.CheckBookCapacityAsync(
+            It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // =========================================================================
     // POST series transfer
     // =========================================================================
@@ -155,6 +230,17 @@ public class TransfersControllerTests : IDisposable
         var result = await _sut.AsUser(Guid.NewGuid()).TransferSeries(request, CancellationToken.None);
 
         result.Should().BeOfType<AcceptedResult>();
+    }
+
+    [Fact]
+    public async Task TransferSeries_TellsThePersonWhereABookTooLargeForOneCardIsReported()
+    {
+        var request = new CreateSeriesTransferRequest("ser-1", "lib-1");
+        var result = await _sut.AsUser(Guid.NewGuid()).TransferSeries(request, CancellationToken.None);
+
+        var body = result.Should().BeOfType<AcceptedResult>().Subject.Value!;
+        body.GetType().GetProperty("Message")!.GetValue(body).Should().BeOfType<string>()
+            .Which.Should().Contain("larger than one Yoto card").And.Contain("Transfers page");
     }
 
     // =========================================================================

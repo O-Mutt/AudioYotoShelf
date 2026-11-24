@@ -56,6 +56,13 @@ public class TransferJobService(
             // token is different (the server is stopping) and does propagate, so the job is requeued.
             logger.LogInformation("Hangfire: Book transfer for item {ItemId} was cancelled", request.AbsLibraryItemId);
         }
+        catch (CardCapacityExceededException ex)
+        {
+            // The transfer is already marked Failed with the reason. A Hangfire retry would fetch the
+            // same book and refuse it again.
+            logger.LogWarning("Hangfire: Book transfer for item {ItemId} refused: {Reason}",
+                    request.AbsLibraryItemId, ex.Message);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Hangfire: Book transfer failed for item {ItemId}",
@@ -80,7 +87,7 @@ public class TransferJobService(
                         result.Id,
                         result.Status,
                         result.ProgressPercent,
-                        "Series transfer complete",
+                        result.Status == TransferStatus.Failed ? "Not sent" : "Series transfer complete",
                         result.ErrorMessage
                 ), ct);
             }
@@ -116,6 +123,10 @@ public class TransferJobService(
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             logger.LogInformation("Hangfire: Retry of transfer {TransferId} was cancelled", transferId);
+        }
+        catch (CardCapacityExceededException ex)
+        {
+            logger.LogWarning("Hangfire: Retry of transfer {TransferId} refused: {Reason}", transferId, ex.Message);
         }
         catch (Exception ex)
         {
