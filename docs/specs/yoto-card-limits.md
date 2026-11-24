@@ -81,10 +81,11 @@ Two folders take this: downloads go to `Transfer:TempDirectory`, and ffmpeg's me
 split files go to the system temp folder (`TMPDIR`). The Docker image sets `TMPDIR=/app/temp`, so
 both land on the same volume there; outside the image, size both. A download that fails or is
 cancelled partway is deleted with the rest of its transfer's temp files
-([#131](https://github.com/O-Mutt/AudioYotoShelf/issues/131)). Partial files left by a failed
-ffmpeg run are not cleaned up yet ([#132](https://github.com/O-Mutt/AudioYotoShelf/issues/132)).
-A hard stop of the process (container restart, out-of-memory kill, `SIGKILL`) still leaves
-whatever temp files the running transfer had, because nothing sweeps the temp folders at startup.
+([#131](https://github.com/O-Mutt/AudioYotoShelf/issues/131)), and an ffmpeg run that fails or is
+cancelled deletes its own partial output
+([#132](https://github.com/O-Mutt/AudioYotoShelf/issues/132)). A hard stop of the process
+(container restart, out-of-memory kill, `SIGKILL`) still leaves whatever temp files the running
+transfer had, because nothing sweeps the temp folders at startup.
 
 ## 4. Open questions
 
