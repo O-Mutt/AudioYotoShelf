@@ -51,17 +51,19 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger, IPro
         // ffmpeg concat demuxer needs a list file of the inputs.
         var listPath = Path.Combine(Path.GetTempPath(), $"concat_{Guid.NewGuid():N}.txt");
         var listContent = string.Join('\n', inputFilePaths.Select(p => $"file '{p.Replace("'", "'\\''")}'"));
-        await File.WriteAllTextAsync(listPath, listContent, ct);
 
         try
         {
+            // Inside the try: a write that fails or is cancelled partway still leaves a file to delete.
+            await File.WriteAllTextAsync(listPath, listContent, ct);
+
             var args = $"-f concat -safe 0 -i \"{listPath}\" -c copy -y \"{outputPath}\"";
             await RunFfmpegAsync(args, "concatenation", () => [outputPath], ct);
             return outputPath;
         }
         finally
         {
-            if (File.Exists(listPath)) File.Delete(listPath);
+            DeleteBestEffort(() => [listPath]);
         }
     }
 
