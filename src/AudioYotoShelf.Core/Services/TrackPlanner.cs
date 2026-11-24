@@ -42,19 +42,7 @@ public class TrackPlanner(YotoCardLimits limits) : ITrackPlanner
         }
 
         if (media.Chapters.Length > 0 && media.AudioFiles.Length == 1)
-        {
-            // Single-file book split by chapters: estimate per-chapter bytes proportionally.
-            var file = media.AudioFiles[0];
-            var totalDuration = file.Duration > 0 ? file.Duration : media.Duration;
-            return media.Chapters.Select(c =>
-            {
-                var duration = c.End - c.Start;
-                var bytes = totalDuration > 0
-                    ? (long)(file.Size * (duration / totalDuration))
-                    : file.Size;
-                return new SourceTrack(c.Title, duration, bytes);
-            }).ToList();
-        }
+            return SplitFileByChapters(media.AudioFiles[0], media.Chapters, media.Duration);
 
         if (media.AudioFiles.Length == 1)
         {
@@ -65,6 +53,44 @@ public class TrackPlanner(YotoCardLimits limits) : ITrackPlanner
         return [];
     }
 
+    private static IReadOnlyList<SourceTrack> SplitFileByChapters(
+        AbsAudioFile file, AbsChapter[] chapters, double bookDuration)
+    {
+        // A malformed chapter (End < Start) must not shrink the divisor or carry negative bytes.
+        var spans = chapters.Select(c => Math.Max(0, c.End - c.Start)).ToArray();
+
+        // Chapter spans stand in for an unscanned file's length only when every chapter is timed:
+        // one untimed chapter means the spans may miss audio, and the bytes it would leave out
+        // could let a large book slip past the size check.
+        var totalDuration = file.Duration > 0 ? file.Duration
+            : bookDuration > 0 ? bookDuration
+            : spans.All(s => s > 0) ? spans.Sum() : 0;
+
+        if (totalDuration > 0)
+        {
+            var tracks = new List<SourceTrack>(chapters.Length);
+            var elapsed = 0.0;
+            var bytesBefore = 0L;
+            for (var i = 0; i < chapters.Length; i++)
+            {
+                elapsed += spans[i];
+                // Rounding the running boundary rather than each share keeps the shares summing to
+                // the file when the chapters cover it, yet leaves audio they do not cover unclaimed.
+                var bytesAfter = Math.Min(file.Size, (long)Math.Round(file.Size * (elapsed / totalDuration)));
+                tracks.Add(new SourceTrack(chapters[i].Title, spans[i], bytesAfter - bytesBefore));
+                bytesBefore = bytesAfter;
+            }
+            return tracks;
+        }
+
+        // With no duration at all, every share counts in full as unscanned size; the last takes
+        // the rounding remainder so the card total holds the file exactly once.
+        var share = file.Size / chapters.Length;
+        var lastShare = file.Size - share * (chapters.Length - 1);
+        return chapters.Select((c, i) =>
+            new SourceTrack(c.Title, 0, i == chapters.Length - 1 ? lastShare : share)).ToList();
+    }
+
     private static SourceTrack Merge(IReadOnlyList<SourceTrack> tracks, string bookTitle) =>
         new(bookTitle,
             tracks.Sum(t => t.DurationSeconds),
@@ -73,7 +99,9 @@ public class TrackPlanner(YotoCardLimits limits) : ITrackPlanner
             UnscannedBytes = tracks.Sum(t => t.UnscannedBytes)
         };
 
+    // An unscanned track's length is unknown, so its zero duration cannot prove the book fits one track.
     private bool FitsOneTrack(IReadOnlyList<SourceTrack> tracks) =>
+        tracks.All(t => t.UnscannedBytes == 0) &&
         tracks.Sum(t => t.DurationSeconds) <= limits.MaxTrackDurationSeconds &&
         tracks.Sum(t => t.EstimatedBytes) <= limits.MaxTrackBytes;
 }
