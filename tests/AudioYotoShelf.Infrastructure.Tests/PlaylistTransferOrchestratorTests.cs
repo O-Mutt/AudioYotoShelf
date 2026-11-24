@@ -170,6 +170,66 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task TransferPlaylist_DeletesABooksMergedAndSplitFilesBeforeTheNextBookDownloads()
+    {
+        _yotoService.Setup(s => s.CreateOrUpdateCardAsync(
+                It.IsAny<string>(), It.IsAny<YotoCardContent>(), It.IsAny<YotoCardMetadata>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("card-abc");
+
+        // The extractor mock writes real files so the test sees what ffmpeg would leave behind.
+        string WriteTempFile(string name)
+        {
+            var path = Path.Combine(_tempDir, name);
+            File.WriteAllBytes(path, new byte[100]);
+            return path;
+        }
+        _chapterExtractor.Setup(e => e.ConcatenateAsync(
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => WriteTempFile("merged.m4a"));
+        _chapterExtractor.Setup(e => e.SplitAsync(
+                It.IsAny<string>(), It.IsAny<double>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => (IReadOnlyList<string>)[WriteTempFile("segment_000.m4a"), WriteTempFile("segment_001.m4a")]);
+
+        string[]? onDiskWhenBook2Starts = null;
+        _absService.Setup(s => s.DownloadAudioFileAsync(
+                It.IsAny<string>(), It.IsAny<string>(), "book-2", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                onDiskWhenBook2Starts ??= Directory.GetFiles(_tempDir);
+                return new MemoryStream(new byte[100]);
+            });
+
+        // Book 1 merges to one 4000 s track, over the 1 h per-track limit, so it is also split.
+        var playlistId = await SeedPlaylistAsync(
+            grouping: TrackGrouping.SingleTrack,
+            items:
+            [
+                new PlaylistItem { AbsLibraryItemId = "book-1", Position = 0, BookTitle = "Book 1",
+                    TrackDurations = [2000, 2000], TrackBytes = [1_000_000, 1_000_000] },
+                new PlaylistItem { AbsLibraryItemId = "book-2", Position = 1, BookTitle = "Book 2",
+                    TrackDurations = [300], TrackBytes = [1_000_000] },
+            ]);
+
+        SetupBook("book-1", TestData.CreateAbsMedia(audioFiles:
+        [
+            TestData.CreateAbsAudioFile(0, "ino-1", duration: 2000),
+            TestData.CreateAbsAudioFile(1, "ino-2", duration: 2000),
+        ]));
+        SetupBook("book-2", TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-3", duration: 300)], chapters: []));
+
+        await _sut.TransferPlaylistAsync(playlistId);
+
+        _chapterExtractor.Verify(e => e.ConcatenateAsync(
+            It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _chapterExtractor.Verify(e => e.SplitAsync(
+            It.IsAny<string>(), It.IsAny<double>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        onDiskWhenBook2Starts.Should().NotBeNull().And.BeEmpty();
+        Directory.GetFiles(_tempDir).Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task TransferPlaylist_BookThatFailsMidway_StillDeletesItsTempFiles()
     {
         _yotoService.Setup(s => s.UploadAndTranscodeAsync(
