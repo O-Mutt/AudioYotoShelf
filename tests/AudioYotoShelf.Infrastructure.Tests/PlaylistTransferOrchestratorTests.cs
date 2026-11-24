@@ -175,7 +175,7 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
             items:
             [
                 new PlaylistItem { AbsLibraryItemId = "huge", Position = 0, BookTitle = "Huge",
-                    TrackDurations = [21600], TrackBytes = [50_000_000] }, // 6h > 5h limit
+                    TrackDurations = [43200], TrackBytes = [50_000_000] }, // 12 h ≈ 515 MB transcoded > 500 MB
             ]);
 
         var act = () => _sut.TransferPlaylistAsync(playlistId);

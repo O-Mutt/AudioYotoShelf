@@ -13,8 +13,8 @@ public record CapacityUsage(int Tracks, double DurationSeconds, long Bytes);
 
 /// <summary>
 /// Result of checking a set of books against the card limits.
-/// Byte figures are conservative estimates from source sizes; track count and
-/// duration are exact and are the hard gates.
+/// Byte figures estimate Yoto's transcoded size from duration (see
+/// <see cref="YotoCardLimits.TranscodedBitrateKbps"/>); track count and duration are exact.
 /// </summary>
 public record CapacityResult(
     CapacityUsage Projected,

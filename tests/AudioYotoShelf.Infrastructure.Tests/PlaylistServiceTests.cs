@@ -94,20 +94,20 @@ public class PlaylistServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Capacity_FlagsOverflowAndFirstBook_WhenTooLong()
+    public async Task Capacity_FlagsOverflowAndFirstBook_WhenTooLarge()
     {
         var userId = await SeedUserAsync();
         var playlist = await _sut.CreateAsync(userId, new CreatePlaylistRequest("Mix", TrackGrouping.Chapters));
 
-        // One 6-hour book (single track) exceeds the 5h total limit.
+        // One 12-hour book transcodes to ~515 MB, over the 500 MB card limit.
         SetupBook("big-book", TestData.CreateAbsMedia(
-            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 21600, size: 50_000_000)],
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 43200, size: 50_000_000)],
             chapters: []));
 
         var result = await _sut.AddItemsAsync(playlist.Id, ["big-book"]);
 
         result.Capacity.WithinLimits.Should().BeFalse();
-        result.Capacity.ExceedsDuration.Should().BeTrue();
+        result.Capacity.ExceedsBytes.Should().BeTrue();
         result.Capacity.FirstOverflowItemId.Should().Be("big-book");
     }
 
