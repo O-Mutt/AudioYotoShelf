@@ -236,22 +236,92 @@ public class TrackPlannerTests
     }
 
     [Fact]
-    public void Plan_SingleFileWithChapters_UntimedChaptersAmongTimedOnesGetNoBytes()
+    public void Plan_SingleFileWithChapters_SplitsEvenlyAsUnscannedWhenOnlySomeChaptersAreTimed()
     {
         var media = TestData.CreateAbsMedia(
             audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 0, size: 90_000_000)],
             chapters:
             [
                 TestData.CreateAbsChapter(0, "Ch1", 0, 600),
-                TestData.CreateAbsChapter(1, "Marker", 600, 600),
-                TestData.CreateAbsChapter(2, "Ch2", 600, 1200),
+                TestData.CreateAbsChapter(1, "Ch2", 600, 600),
+                TestData.CreateAbsChapter(2, "Ch3", 600, 600),
             ],
             duration: 0);
 
         var tracks = _sut.Plan(media);
 
+        tracks.Select(t => t.EstimatedBytes).Should().Equal(30_000_000, 30_000_000, 30_000_000);
+        tracks.Should().OnlyContain(t => t.DurationSeconds == 0);
+        tracks.Sum(t => t.UnscannedBytes).Should().Be(90_000_000);
+    }
+
+    [Fact]
+    public void Plan_SingleFileWithChapters_ClampsAMalformedChapterToZero()
+    {
+        var media = TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 3600, size: 90_000_000)],
+            chapters:
+            [
+                TestData.CreateAbsChapter(0, "Ch1", 0, 1800),
+                TestData.CreateAbsChapter(1, "Broken", 1800, 1200),
+                TestData.CreateAbsChapter(2, "Ch2", 1800, 3600),
+            ]);
+
+        var tracks = _sut.Plan(media);
+
+        tracks.Select(t => t.DurationSeconds).Should().Equal(1800, 0, 1800);
         tracks.Select(t => t.EstimatedBytes).Should().Equal(45_000_000, 0, 45_000_000);
-        tracks.Sum(t => t.UnscannedBytes).Should().Be(0);
+    }
+
+    [Fact]
+    public void Plan_SingleFileWithMalformedChapterAndNoDuration_StillCountsTheWholeFile()
+    {
+        var media = TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 0, size: 90_000_000)],
+            chapters:
+            [
+                TestData.CreateAbsChapter(0, "Ch1", 0, 600),
+                TestData.CreateAbsChapter(1, "Broken", 600, 0),
+                TestData.CreateAbsChapter(2, "Ch2", 0, 600),
+            ],
+            duration: 0);
+
+        var tracks = _sut.Plan(media);
+
+        tracks.Should().OnlyContain(t => t.EstimatedBytes >= 0 && t.DurationSeconds >= 0);
+        tracks.Sum(t => t.UnscannedBytes).Should().Be(90_000_000);
+    }
+
+    [Fact]
+    public void Plan_SingleFileWithChapters_ProratedSharesSumToTheFileSize()
+    {
+        var media = TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 3000, size: 100_000_000)],
+            chapters:
+            [
+                TestData.CreateAbsChapter(0, "Ch1", 0, 1000),
+                TestData.CreateAbsChapter(1, "Ch2", 1000, 2000),
+                TestData.CreateAbsChapter(2, "Ch3", 2000, 3000),
+            ]);
+
+        _sut.Plan(media).Sum(t => t.EstimatedBytes).Should().Be(100_000_000);
+    }
+
+    [Fact]
+    public void Plan_Auto_DoesNotMergeAnUnscannedBookIntoOneTrack()
+    {
+        // 50 MB fits one track by size, but with no duration the book could be hours long.
+        var media = TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 0, size: 50_000_000)],
+            chapters:
+            [
+                TestData.CreateAbsChapter(0, "Ch1", 0, 0),
+                TestData.CreateAbsChapter(1, "Ch2", 0, 0),
+                TestData.CreateAbsChapter(2, "Ch3", 0, 0),
+            ],
+            duration: 0);
+
+        _sut.Plan(media, TrackGrouping.Auto).Should().HaveCount(3);
     }
 
     [Fact]
@@ -274,26 +344,59 @@ public class TrackPlannerTests
         tracks.Sum(t => t.UnscannedBytes).Should().Be(100_000_000);
     }
 
-    [Theory]
-    [InlineData(0)]     // chapters carry no timing either: even split
-    [InlineData(600)]   // chapters are timed: prorated by their own durations
-    public void Plan_SingleFileWithNoDuration_ProjectsAboutOneTrackPerChapterOnTheCard(double chapterSeconds)
+    // The #129 scenario: a 300 MB single-file book with 20 chapters that Audiobookshelf has not scanned.
+    private const long UnscannedFileBytes = 300L * 1024 * 1024;
+
+    [Fact]
+    public void Capacity_UnscannedFileWithUntimedChapters_CountsOneTrackPerChapterAndTheFileOnce()
     {
-        const long fileBytes = 300L * 1024 * 1024;
+        var (tracks, result) = PlanUnscannedBookOnACard(_ => (0, 0));
+
+        result.Projected.Tracks.Should().Be(20);
+        tracks.Sum(t => t.UnscannedBytes).Should().Be(UnscannedFileBytes);
+        result.Projected.Bytes.Should().Be(UnscannedFileBytes);
+    }
+
+    [Fact]
+    public void Capacity_UnscannedFileWithTimedChapters_SizesTheCardByChapterDuration()
+    {
+        var limits = new YotoCardLimits();
+        var (tracks, result) = PlanUnscannedBookOnACard(i => (i * 600, (i + 1) * 600));
+
+        result.Projected.Tracks.Should().Be(20);
+        tracks.Sum(t => t.UnscannedBytes).Should().Be(0);
+        result.Projected.Bytes.Should().Be(20 * limits.EstimateTranscodedBytes(600));
+    }
+
+    [Fact]
+    public void Capacity_UnscannedFileWithPartlyTimedChapters_CountsTheWholeFileAsUnscanned()
+    {
+        var (tracks, result) = PlanUnscannedBookOnACard(i => i == 0 ? (0, 600) : (600, 600));
+
+        result.Projected.Tracks.Should().Be(20);
+        tracks.Sum(t => t.UnscannedBytes).Should().Be(UnscannedFileBytes);
+        result.Projected.Bytes.Should().Be(UnscannedFileBytes);
+    }
+
+    private static (IReadOnlyList<SourceTrack> Tracks, CapacityResult Result) PlanUnscannedBookOnACard(
+        Func<int, (double Start, double End)> chapterSpan)
+    {
         var limits = new YotoCardLimits();
         var chapters = Enumerable.Range(0, 20)
-            .Select(i => TestData.CreateAbsChapter(i, $"Ch{i + 1}", i * chapterSeconds, (i + 1) * chapterSeconds))
+            .Select(i =>
+            {
+                var (start, end) = chapterSpan(i);
+                return TestData.CreateAbsChapter(i, $"Ch{i + 1}", start, end);
+            })
             .ToArray();
         var media = TestData.CreateAbsMedia(
-            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 0, size: fileBytes)],
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 0, size: UnscannedFileBytes)],
             chapters: chapters,
             duration: 0);
 
         var tracks = new TrackPlanner(limits).Plan(media);
         var result = new CardCapacityCalculator(limits).Calculate([new BookTrackPlan("item-1", "Test Book", tracks)]);
-
-        result.Projected.Tracks.Should().Be(20);
-        tracks.Sum(t => t.UnscannedBytes).Should().BeLessThanOrEqualTo(fileBytes);
+        return (tracks, result);
     }
 
     [Theory]
