@@ -1,5 +1,6 @@
 using AudioYotoShelf.Core.Configuration;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
+using AudioYotoShelf.Core.DTOs.Playlist;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Core.Tests.Helpers;
@@ -224,14 +225,75 @@ public class TrackPlannerTests
     }
 
     [Fact]
-    public void Plan_SingleFileWithChapters_GivesEachChapterTheWholeFileWhenNoDurationIsKnown()
+    public void Plan_SingleFileWithChapters_ProratesByChapterDurationsWhenFileAndBookDurationAreZero()
     {
         var media = TestData.CreateAbsMedia(
             audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 0, size: 90_000_000)],
-            chapters: [TestData.CreateAbsChapter(0, "Ch1", 0, 600), TestData.CreateAbsChapter(1, "Ch2", 600, 1200)],
+            chapters: [TestData.CreateAbsChapter(0, "Ch1", 0, 600), TestData.CreateAbsChapter(1, "Ch2", 600, 1800)],
             duration: 0);
 
-        _sut.Plan(media).Select(t => t.EstimatedBytes).Should().Equal(90_000_000, 90_000_000);
+        _sut.Plan(media).Select(t => t.EstimatedBytes).Should().Equal(30_000_000, 60_000_000);
+    }
+
+    [Fact]
+    public void Plan_SingleFileWithChapters_UntimedChaptersAmongTimedOnesGetNoBytes()
+    {
+        var media = TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 0, size: 90_000_000)],
+            chapters:
+            [
+                TestData.CreateAbsChapter(0, "Ch1", 0, 600),
+                TestData.CreateAbsChapter(1, "Marker", 600, 600),
+                TestData.CreateAbsChapter(2, "Ch2", 600, 1200),
+            ],
+            duration: 0);
+
+        var tracks = _sut.Plan(media);
+
+        tracks.Select(t => t.EstimatedBytes).Should().Equal(45_000_000, 0, 45_000_000);
+        tracks.Sum(t => t.UnscannedBytes).Should().Be(0);
+    }
+
+    [Fact]
+    public void Plan_SingleFileWithChapters_SplitsTheFileEvenlyWhenNoDurationIsKnown()
+    {
+        var media = TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 0, size: 100_000_000)],
+            chapters:
+            [
+                TestData.CreateAbsChapter(0, "Ch1", 0, 0),
+                TestData.CreateAbsChapter(1, "Ch2", 0, 0),
+                TestData.CreateAbsChapter(2, "Ch3", 0, 0),
+            ],
+            duration: 0);
+
+        var tracks = _sut.Plan(media);
+
+        tracks.Select(t => t.EstimatedBytes).Should().Equal(33_333_333, 33_333_333, 33_333_334);
+        tracks.Sum(t => t.EstimatedBytes).Should().Be(100_000_000);
+        tracks.Sum(t => t.UnscannedBytes).Should().Be(100_000_000);
+    }
+
+    [Theory]
+    [InlineData(0)]     // chapters carry no timing either: even split
+    [InlineData(600)]   // chapters are timed: prorated by their own durations
+    public void Plan_SingleFileWithNoDuration_ProjectsAboutOneTrackPerChapterOnTheCard(double chapterSeconds)
+    {
+        const long fileBytes = 300L * 1024 * 1024;
+        var limits = new YotoCardLimits();
+        var chapters = Enumerable.Range(0, 20)
+            .Select(i => TestData.CreateAbsChapter(i, $"Ch{i + 1}", i * chapterSeconds, (i + 1) * chapterSeconds))
+            .ToArray();
+        var media = TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 0, size: fileBytes)],
+            chapters: chapters,
+            duration: 0);
+
+        var tracks = new TrackPlanner(limits).Plan(media);
+        var result = new CardCapacityCalculator(limits).Calculate([new BookTrackPlan("item-1", "Test Book", tracks)]);
+
+        result.Projected.Tracks.Should().Be(20);
+        tracks.Sum(t => t.UnscannedBytes).Should().BeLessThanOrEqualTo(fileBytes);
     }
 
     [Theory]

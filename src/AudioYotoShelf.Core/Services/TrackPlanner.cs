@@ -42,19 +42,7 @@ public class TrackPlanner(YotoCardLimits limits) : ITrackPlanner
         }
 
         if (media.Chapters.Length > 0 && media.AudioFiles.Length == 1)
-        {
-            // Single-file book split by chapters: estimate per-chapter bytes proportionally.
-            var file = media.AudioFiles[0];
-            var totalDuration = file.Duration > 0 ? file.Duration : media.Duration;
-            return media.Chapters.Select(c =>
-            {
-                var duration = c.End - c.Start;
-                var bytes = totalDuration > 0
-                    ? (long)(file.Size * (duration / totalDuration))
-                    : file.Size;
-                return new SourceTrack(c.Title, duration, bytes);
-            }).ToList();
-        }
+            return SplitFileByChapters(media.AudioFiles[0], media.Chapters, media.Duration);
 
         if (media.AudioFiles.Length == 1)
         {
@@ -63,6 +51,32 @@ public class TrackPlanner(YotoCardLimits limits) : ITrackPlanner
         }
 
         return [];
+    }
+
+    private static IReadOnlyList<SourceTrack> SplitFileByChapters(
+        AbsAudioFile file, AbsChapter[] chapters, double bookDuration)
+    {
+        // Chapter markers can carry timing before Audiobookshelf has scanned the file, so their
+        // span is a better weight than an even split when neither the file nor the book has a duration.
+        var totalDuration = file.Duration > 0 ? file.Duration
+            : bookDuration > 0 ? bookDuration
+            : chapters.Sum(c => c.End - c.Start);
+
+        if (totalDuration > 0)
+        {
+            return chapters.Select(c =>
+            {
+                var duration = c.End - c.Start;
+                return new SourceTrack(c.Title, duration, (long)(file.Size * (duration / totalDuration)));
+            }).ToList();
+        }
+
+        // These chapters have no duration, so each one's bytes count in full as unscanned size;
+        // the last takes the rounding remainder so the card total holds the file exactly once.
+        var share = file.Size / chapters.Length;
+        var lastShare = file.Size - share * (chapters.Length - 1);
+        return chapters.Select((c, i) =>
+            new SourceTrack(c.Title, c.End - c.Start, i == chapters.Length - 1 ? lastShare : share)).ToList();
     }
 
     private static SourceTrack Merge(IReadOnlyList<SourceTrack> tracks, string bookTitle) =>
