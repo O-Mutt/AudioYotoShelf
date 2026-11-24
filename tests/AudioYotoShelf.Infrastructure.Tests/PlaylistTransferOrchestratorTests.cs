@@ -129,6 +129,74 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task TransferPlaylist_DeletesEachBooksTempFilesBeforeTheNextBookDownloads()
+    {
+        _yotoService.Setup(s => s.CreateOrUpdateCardAsync(
+                It.IsAny<string>(), It.IsAny<YotoCardContent>(), It.IsAny<YotoCardMetadata>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("card-abc");
+
+        string[]? onDiskWhenBook2Starts = null;
+        _absService.Setup(s => s.DownloadAudioFileAsync(
+                It.IsAny<string>(), It.IsAny<string>(), "book-2", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                onDiskWhenBook2Starts ??= Directory.GetFiles(_tempDir);
+                return new MemoryStream(new byte[100]);
+            });
+
+        var playlistId = await SeedPlaylistAsync(
+            grouping: TrackGrouping.Chapters,
+            items:
+            [
+                new PlaylistItem { AbsLibraryItemId = "book-1", Position = 0, BookTitle = "Book 1",
+                    TrackDurations = [300, 300], TrackBytes = [1_000_000, 1_000_000] },
+                new PlaylistItem { AbsLibraryItemId = "book-2", Position = 1, BookTitle = "Book 2",
+                    TrackDurations = [300], TrackBytes = [1_000_000] },
+            ]);
+
+        SetupBook("book-1", TestData.CreateAbsMedia(audioFiles:
+        [
+            TestData.CreateAbsAudioFile(0, "ino-1", duration: 300),
+            TestData.CreateAbsAudioFile(1, "ino-2", duration: 300),
+        ]));
+        SetupBook("book-2", TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-3", duration: 300)], chapters: []));
+
+        await _sut.TransferPlaylistAsync(playlistId);
+
+        onDiskWhenBook2Starts.Should().NotBeNull().And.BeEmpty();
+        Directory.GetFiles(_tempDir).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task TransferPlaylist_BookThatFailsMidway_StillDeletesItsTempFiles()
+    {
+        _yotoService.Setup(s => s.UploadAndTranscodeAsync(
+                It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
+                It.IsAny<IProgress<int>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("upload failed"));
+
+        var playlistId = await SeedPlaylistAsync(
+            grouping: TrackGrouping.Chapters,
+            items:
+            [
+                new PlaylistItem { AbsLibraryItemId = "book-1", Position = 0, BookTitle = "Book 1",
+                    TrackDurations = [300, 300], TrackBytes = [1_000_000, 1_000_000] },
+            ]);
+        SetupBook("book-1", TestData.CreateAbsMedia(audioFiles:
+        [
+            TestData.CreateAbsAudioFile(0, "ino-1", duration: 300),
+            TestData.CreateAbsAudioFile(1, "ino-2", duration: 300),
+        ]));
+
+        var act = () => _sut.TransferPlaylistAsync(playlistId);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+        Directory.GetFiles(_tempDir).Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task TransferPlaylist_MultiFileBook_TitlesEachTrackFromTheMatchingChapter()
     {
         // Audiobookshelf's AudioFile.Index is 1-based (confirmed live against a real book) —

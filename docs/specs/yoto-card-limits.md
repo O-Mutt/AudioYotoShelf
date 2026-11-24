@@ -67,6 +67,13 @@ zero or negative, or if `TranscodedBitrateKbps` is not greater than 0.
 
 Sizes in the app's messages are MiB (1,048,576 bytes), shown as "MB".
 
+Because the card total is estimated from duration, source size no longer limits a transfer: a
+book Yoto stores as 566 MB was 6.3 GB of source. A playlist transfer deletes each book's temp files
+(`Transfer:TempDirectory`) once that book's tracks are uploaded, so peak disk use is the largest
+single book plus its merged or split copies, not the whole playlist
+([#128](https://github.com/O-Mutt/AudioYotoShelf/issues/128)). The temp volume must still hold that
+one book.
+
 ## 4. Open questions
 
 - Whether a card over 500 MB plays end to end (Goblet of Fire, 566 MB), and whether any larger
