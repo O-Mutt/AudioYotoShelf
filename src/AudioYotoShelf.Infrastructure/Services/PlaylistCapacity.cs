@@ -23,11 +23,29 @@ public static class PlaylistCapacity
         return planner.ApplyGrouping(ChapterTracks(item), effective, item.BookTitle);
     }
 
-    public static IReadOnlyList<SourceTrack> ChapterTracks(PlaylistItem item) =>
-        item.TrackDurations
+    /// <summary>
+    /// The item's per-chapter tracks: the whole book, or for one part of a split book only the
+    /// chapters in its range.
+    /// </summary>
+    public static IReadOnlyList<SourceTrack> ChapterTracks(PlaylistItem item)
+    {
+        var all = item.TrackDurations
             .Select((duration, idx) => new SourceTrack(
                 item.BookTitle,
                 duration,
                 idx < item.TrackBytes.Count ? item.TrackBytes[idx] : 0))
             .ToList();
+        if (!item.IsPart) return all;
+
+        var first = Math.Clamp(item.FirstChapterIndex!.Value, 0, all.Count);
+        var last = Math.Clamp(item.LastChapterIndex!.Value, first - 1, all.Count - 1);
+        return all.GetRange(first, last - first + 1);
+    }
+
+    public static CapacitySummary ToSummary(CapacityResult r) => new(
+        r.Projected.Tracks, r.Limits.MaxTracks,
+        r.Projected.DurationSeconds, r.Limits.MaxTotalDurationSeconds,
+        r.Projected.Bytes, r.Limits.MaxTotalBytes,
+        r.WithinLimits, r.ExceedsTracks, r.ExceedsDuration, r.ExceedsBytes,
+        r.FirstOverflowItemId, r.Messages.ToArray());
 }

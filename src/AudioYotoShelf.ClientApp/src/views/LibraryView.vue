@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLibraryStore, SORT_OPTIONS } from '@/stores/libraryStore'
 import { useSelection } from '@/composables/useSelection'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
-import { transferApi } from '@/services/api'
+import { cardSetApi, transferApi } from '@/services/api'
+import { matchesFilter, seriesCardBadges, type SeriesCardFilter } from '@/utils/seriesCardBadges'
+import type { CardLimits, SeriesCardStatus } from '@/types'
 
 const router = useRouter()
 const libraryStore = useLibraryStore()
@@ -24,6 +26,40 @@ const {
 } = useSelection()
 
 const isBatchTransferring = ref(false)
+
+// Card-set badges for the series grid: one status call per page of series.
+const cardStatus = ref<Map<string, SeriesCardStatus>>(new Map())
+const cardLimits = ref<CardLimits | null>(null)
+const seriesFilter = ref<SeriesCardFilter>('all')
+const seriesFilters: { value: SeriesCardFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'not-on-cards', label: 'Not on cards' },
+  { value: 'new-books', label: 'New books since last cards' },
+]
+
+const visibleSeries = computed(() =>
+  libraryStore.series.filter((s) =>
+    matchesFilter(seriesFilter.value, s, cardStatus.value.get(s.id)),
+  ),
+)
+
+watch(
+  () => libraryStore.series,
+  async (series) => {
+    if (series.length === 0) return
+    try {
+      const [{ data: statuses }, limits] = await Promise.all([
+        cardSetApi.status(series.map((s) => s.id)),
+        cardLimits.value ? Promise.resolve(null) : cardSetApi.limits(),
+      ])
+      cardStatus.value = new Map(statuses.map((st) => [st.absSeriesId, st]))
+      if (limits) cardLimits.value = limits.data
+    } catch {
+      // Badges are a hint; the grid still works without them.
+      cardStatus.value = new Map()
+    }
+  },
+)
 
 onMounted(async () => {
   await libraryStore.loadLibraries()
@@ -423,8 +459,26 @@ function onCoverError(e: Event) {
       v-else-if="libraryStore.viewMode === 'series'"
       class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4"
     >
+      <div class="col-span-full flex flex-wrap gap-2" role="group" aria-label="Filter series">
+        <button
+          v-for="f in seriesFilters"
+          :key="f.value"
+          type="button"
+          class="px-3 py-1 rounded-full text-sm border"
+          :class="
+            seriesFilter === f.value
+              ? 'bg-yoto-blue text-white border-yoto-blue'
+              : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+          "
+          :aria-pressed="seriesFilter === f.value"
+          :data-testid="`series-filter-${f.value}`"
+          @click="seriesFilter = f.value"
+        >
+          {{ f.label }}
+        </button>
+      </div>
       <div
-        v-for="s in libraryStore.series"
+        v-for="s in visibleSeries"
         :key="s.id"
         @click="openSeries(s.id)"
         class="card cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all p-0 overflow-hidden"
@@ -449,6 +503,22 @@ function onCoverError(e: Event) {
             {{ s.books.length }} book{{ s.books.length !== 1 ? 's' : '' }} ·
             {{ formatDuration(s.totalDuration) }}
           </p>
+          <div class="flex flex-wrap gap-1 mt-2" :data-testid="`series-badges-${s.id}`">
+            <span
+              v-for="badge in seriesCardBadges(s, cardStatus.get(s.id), cardLimits)"
+              :key="badge.label"
+              class="px-2 py-0.5 rounded-full text-[11px] font-medium"
+              :class="{
+                'bg-green-100 text-green-700': badge.tone === 'green',
+                'bg-blue-100 text-blue-700': badge.tone === 'blue',
+                'bg-amber-100 text-amber-700': badge.tone === 'amber',
+                'bg-red-100 text-red-700': badge.tone === 'red',
+                'bg-gray-100 text-gray-600': badge.tone === 'gray',
+              }"
+            >
+              {{ badge.label }}
+            </span>
+          </div>
         </div>
       </div>
     </div>

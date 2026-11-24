@@ -91,7 +91,7 @@ public class PlaylistTransferOrchestrator(
                 try
                 {
                     chapter = await BuildBookChapterAsync(
-                        user, libraryItem, media, item.BookTitle, grouping, yotoToken, bookIndex + 1, bookTemp, ct);
+                        user, libraryItem, media, item, grouping, yotoToken, bookIndex + 1, bookTemp, ct);
                 }
                 finally
                 {
@@ -144,10 +144,13 @@ public class PlaylistTransferOrchestrator(
     }
 
     private async Task<YotoChapter> BuildBookChapterAsync(
-        UserConnection user, AbsLibraryItem libraryItem, AbsBookMedia media, string bookTitle,
+        UserConnection user, AbsLibraryItem libraryItem, AbsBookMedia media, PlaylistItem item,
         TrackGrouping grouping, string yotoToken, int chapterIndex, List<string> temp, CancellationToken ct)
     {
-        var baseTracks = await ProduceBaseTracksAsync(user, libraryItem, media, bookTitle, grouping, temp, ct);
+        var bookTitle = item.BookTitle;
+        var baseTracks = item.IsPart
+            ? await ProducePartTracksAsync(user, libraryItem, media, item, grouping, temp, ct)
+            : await ProduceBaseTracksAsync(user, libraryItem, media, bookTitle, grouping, temp, ct);
         var iconRef = await GenerateBookIconAsync(yotoToken, bookTitle, media.Metadata.Genres?.FirstOrDefault(), ct);
         var display = iconRef is not null ? new YotoDisplay(iconRef) : null;
 
@@ -181,7 +184,7 @@ public class PlaylistTransferOrchestrator(
 
         return new YotoChapter(
             Key: $"{chapterIndex:D2}",
-            Title: bookTitle,
+            Title: item.IsPart ? $"{bookTitle} · Part {item.PartNumber} of {item.PartCount}" : bookTitle,
             Tracks: yotoTracks.ToArray(),
             Display: display);
     }
@@ -244,6 +247,62 @@ public class PlaylistTransferOrchestrator(
         var single = files[0];
         var singlePath = await DownloadToTempAsync(user, libraryItem.Id, single, temp, ct);
         return [new LocalTrack(singlePath, single.Duration, bookTitle)];
+    }
+
+    /// <summary>
+    /// Produces the tracks for one part of a book split across cards: only the chapters in the item's
+    /// range are downloaded or extracted. The range indexes the chapter list cached when the card set
+    /// was planned (files, embedded chapters, or equal time segments for a book without chapters), so
+    /// a book whose chapters changed since then is refused rather than sent with the wrong range.
+    /// </summary>
+    private async Task<List<LocalTrack>> ProducePartTracksAsync(
+        UserConnection user, AbsLibraryItem libraryItem, AbsBookMedia media, PlaylistItem item,
+        TrackGrouping grouping, List<string> temp, CancellationToken ct)
+    {
+        var first = item.FirstChapterIndex!.Value;
+        var last = item.LastChapterIndex!.Value;
+        var planned = item.TrackDurations.Count;
+        var files = media.AudioFiles.OrderBy(f => f.Index).ToList();
+        // The planner cuts a book with a single entry in its chapter list into equal time segments, and a
+        // single file with one embedded chapter has a single entry just as one with none does.
+        var timeSegments = files.Count == 1 && media.Chapters.Length <= 1;
+        var current = files.Count > 1 ? files.Count : timeSegments ? planned : media.Chapters.Length;
+
+        if (files.Count == 0 || current != planned || first < 0 || last >= planned || first > last)
+            throw new InvalidOperationException(
+                $"'{item.BookTitle}' no longer has the chapters this card was planned with; re-plan the card set before sending it.");
+
+        var tracks = new List<LocalTrack>();
+        if (files.Count > 1)
+        {
+            foreach (var f in files.GetRange(first, last - first + 1))
+            {
+                var path = await DownloadToTempAsync(user, libraryItem.Id, f, temp, ct);
+                tracks.Add(new LocalTrack(path, f.Duration, ChapterTitleResolver.ForFile(media.Chapters, f)));
+            }
+        }
+        else
+        {
+            var inputPath = await DownloadToTempAsync(user, libraryItem.Id, files[0], temp, ct);
+            var total = files[0].Duration > 0 ? files[0].Duration : media.Duration;
+            for (var i = first; i <= last; i++)
+            {
+                var (start, end, title) = timeSegments
+                    ? (total * i / planned, total * (i + 1) / planned, $"{item.BookTitle} ({i + 1})")
+                    : (media.Chapters[i].Start, media.Chapters[i].End, media.Chapters[i].Title);
+                var chapterPath = await chapterExtractor.ExtractChapterAsync(inputPath, start, end, "m4a", ct);
+                temp.Add(chapterPath);
+                tracks.Add(new LocalTrack(chapterPath, end - start, title));
+            }
+        }
+
+        var merge = tracks.Count > 1 && planner.ApplyGrouping(
+            PlaylistCapacity.ChapterTracks(item), grouping, item.BookTitle).Count == 1;
+        if (!merge) return tracks;
+
+        var mergedPath = await chapterExtractor.ConcatenateAsync(tracks.Select(t => t.Path).ToList(), "m4a", ct);
+        temp.Add(mergedPath);
+        return [new LocalTrack(mergedPath, tracks.Sum(t => t.DurationSeconds), item.BookTitle)];
     }
 
     private async Task<List<LocalTrack>> SplitIfNeededAsync(LocalTrack track, List<string> temp, CancellationToken ct)

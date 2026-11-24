@@ -138,6 +138,7 @@ cardLimits.Validate();
 builder.Services.AddSingleton(cardLimits);
 builder.Services.AddSingleton<ITrackPlanner, TrackPlanner>();
 builder.Services.AddSingleton<ICardCapacityCalculator, CardCapacityCalculator>();
+builder.Services.AddSingleton<ICardSetPlanner, CardSetPlanner>();
 builder.Services.AddSingleton<IProcessRunner, SystemProcessRunner>();
 builder.Services.AddScoped<IChapterExtractor, FfmpegChapterExtractor>();
 builder.Services.AddScoped<GeminiIconGenerationService>();
@@ -145,10 +146,12 @@ builder.Services.AddScoped<IIconGenerationService, RateLimitedIconService>();
 builder.Services.AddScoped<ITransferOrchestrator, TransferOrchestrator>();
 builder.Services.AddScoped<IPlaylistService, PlaylistService>();
 builder.Services.AddScoped<IPlaylistTransferOrchestrator, PlaylistTransferOrchestrator>();
+builder.Services.AddScoped<ICardSetService, CardSetService>();
 builder.Services.AddSingleton<ICacheService, RedisCacheService>();
 builder.Services.AddSingleton<ISsoFlowStore, DistributedCacheSsoFlowStore>();
 builder.Services.AddTransferJobs();
 builder.Services.AddScoped<ITransferProgressNotifier, AudioYotoShelf.Api.Hubs.SignalRTransferProgressNotifier>();
+builder.Services.AddScoped<ICardSetProgressNotifier, AudioYotoShelf.Api.Hubs.SignalRCardSetProgressNotifier>();
 
 // --- FluentValidation ---
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();

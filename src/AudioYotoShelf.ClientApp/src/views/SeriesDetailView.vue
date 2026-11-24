@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { libraryApi, transferApi } from '@/services/api'
 import { errorMessage } from '@/utils/errors'
+import CardPlanPanel, { type SeriesBookOption } from '@/components/cardsets/CardPlanPanel.vue'
 import type { AbsSeriesItem } from '@/types'
 
 const props = defineProps<{ seriesId: string; libraryId?: string }>()
@@ -16,6 +17,15 @@ const seriesDetail = ref<AbsSeriesItem | null>(null)
 const isLoading = ref(true)
 const isTransferring = ref(false)
 const transferMessage = ref<string | null>(null)
+
+const resolvedLibraryId = computed(() => props.libraryId ?? libraryStore.selectedLibraryId ?? null)
+const seriesBooks = computed<SeriesBookOption[]>(() =>
+  (seriesDetail.value?.books ?? []).map((b) => ({
+    id: b.id,
+    title: b.media?.metadata?.title ?? 'Unknown',
+    sequence: b.sequence ?? null,
+  })),
+)
 
 onMounted(async () => {
   if (!connectionStore.userConnectionId) return
@@ -63,21 +73,30 @@ async function transferSeries() {
   <div v-if="isLoading" class="text-center py-12 text-gray-400">Loading series...</div>
 
   <div v-else-if="seriesDetail" class="space-y-6">
-    <div class="flex items-center justify-between">
-      <div>
-        <h1 class="text-3xl font-bold text-gray-900">{{ seriesDetail.name }}</h1>
-        <p class="text-gray-500 mt-1">
-          {{ seriesDetail.books.length }} books · {{ formatDuration(seriesDetail.totalDuration) }}
-        </p>
-      </div>
-      <button
-        @click="transferSeries"
-        :disabled="isTransferring || !connectionStore.isYotoConnected"
-        class="btn-primary"
-      >
-        {{ isTransferring ? 'Queueing...' : 'Transfer Entire Series' }}
-      </button>
+    <div>
+      <h1 class="text-3xl font-bold text-gray-900">{{ seriesDetail.name }}</h1>
+      <p class="text-gray-500 mt-1">
+        {{ seriesDetail.books.length }} books · {{ formatDuration(seriesDetail.totalDuration) }}
+      </p>
     </div>
+
+    <CardPlanPanel
+      v-if="resolvedLibraryId"
+      :series-id="seriesId"
+      :library-id="resolvedLibraryId"
+      :series-books="seriesBooks"
+    >
+      <template #secondary-actions>
+        <button
+          @click="transferSeries"
+          :disabled="isTransferring || !connectionStore.isYotoConnected"
+          class="btn-secondary"
+          title="Send each book to a card of its own"
+        >
+          {{ isTransferring ? 'Queueing...' : 'One card per book' }}
+        </button>
+      </template>
+    </CardPlanPanel>
 
     <p
       v-if="transferMessage"

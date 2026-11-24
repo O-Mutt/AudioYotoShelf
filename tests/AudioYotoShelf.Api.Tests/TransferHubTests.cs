@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using AudioYotoShelf.Api.Hubs;
+using AudioYotoShelf.Core.DTOs.CardSet;
 using AudioYotoShelf.Core.DTOs.Transfer;
+using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Tests.Helpers;
 using AudioYotoShelf.Infrastructure.Data;
@@ -155,5 +157,60 @@ public class TransferHubTests : IDisposable
 
         clients.Verify(c => c.Group(Update.TransferId.ToString()), Times.Once);
         proxy.Verify(p => p.SendCoreAsync("TransferProgress", It.Is<object?[]>(a => a.Single() == (object)Update), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // =========================================================================
+    // Card sets: only your own set's progress, on a group that can't clash with a transfer's
+    // =========================================================================
+
+    private async Task<Guid> AddCardSetOwnedByAsync(Guid ownerId)
+    {
+        var set = new CardSet { UserConnectionId = ownerId, AbsSeriesId = "ser-1", AbsLibraryId = "lib-1", Name = "Dragons" };
+        _db.CardSets.Add(set);
+        await _db.SaveChangesAsync();
+        return set.Id;
+    }
+
+    [Fact]
+    public async Task JoinCardSetGroup_ForOwnSet_JoinsThatSetsGroup()
+    {
+        var caller = Guid.NewGuid();
+        var setId = await AddCardSetOwnedByAsync(caller);
+
+        await HubFor(caller).JoinCardSetGroup(setId);
+
+        _groups.Verify(g => g.AddToGroupAsync(ConnectionId, $"cardset:{setId}", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task JoinCardSetGroup_ForAnotherUsersSet_DoesNotJoin()
+    {
+        var setId = await AddCardSetOwnedByAsync(Guid.NewGuid());
+
+        await HubFor(Guid.NewGuid()).JoinCardSetGroup(setId);
+
+        _groups.Verify(g => g.AddToGroupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LeaveCardSetGroup_LeavesThatSetsGroup()
+    {
+        var setId = Guid.NewGuid();
+
+        await HubFor(Guid.NewGuid()).LeaveCardSetGroup(setId);
+
+        _groups.Verify(g => g.RemoveFromGroupAsync(ConnectionId, $"cardset:{setId}", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CardChangedAsync_SendsCardSetProgressToThatSetsGroupOnly()
+    {
+        var (hub, proxy, clients) = HubContext();
+        var update = new CardSetProgressUpdate(Guid.NewGuid(), Guid.NewGuid(), 2, PlaylistStatus.Transferred, null);
+
+        await new SignalRCardSetProgressNotifier(hub.Object).CardChangedAsync(update);
+
+        clients.Verify(c => c.Group($"cardset:{update.CardSetId}"), Times.Once);
+        proxy.Verify(p => p.SendCoreAsync("CardSetProgress", It.Is<object?[]>(a => a.Single() == (object)update), It.IsAny<CancellationToken>()), Times.Once);
     }
 }

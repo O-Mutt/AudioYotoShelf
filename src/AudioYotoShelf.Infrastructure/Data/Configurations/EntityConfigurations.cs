@@ -110,6 +110,33 @@ public class PlaylistConfiguration : IEntityTypeConfiguration<Playlist>
             .WithMany()
             .HasForeignKey(x => x.UserConnectionId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // Deleting a set keeps its cards as standalone playlists; nothing on Yoto changes.
+        builder.HasOne(x => x.CardSet)
+            .WithMany(x => x.Cards)
+            .HasForeignKey(x => x.CardSetId)
+            .OnDelete(DeleteBehavior.SetNull);
+        builder.HasIndex(x => new { x.CardSetId, x.SetIndex });
+    }
+}
+
+public class CardSetConfiguration : IEntityTypeConfiguration<CardSet>
+{
+    public void Configure(EntityTypeBuilder<CardSet> builder)
+    {
+        builder.HasKey(x => x.Id);
+        builder.HasIndex(x => new { x.UserConnectionId, x.AbsSeriesId }).IsUnique();
+
+        builder.Property(x => x.AbsSeriesId).HasMaxLength(256).IsRequired();
+        builder.Property(x => x.AbsLibraryId).HasMaxLength(256).IsRequired();
+        builder.Property(x => x.Name).HasMaxLength(256).IsRequired();
+        builder.Property(x => x.PackingMode).HasConversion<string>().HasMaxLength(32);
+        builder.PrimitiveCollection(x => x.ExcludedItemIds);
+
+        builder.HasOne(x => x.UserConnection)
+            .WithMany()
+            .HasForeignKey(x => x.UserConnectionId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }
 

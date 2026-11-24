@@ -290,7 +290,7 @@ public class TransferJobServiceTests
     // --- Registration
 
     [Fact]
-    public void AddTransferJobs_RegistersBothJobServicesAsScoped()
+    public void AddTransferJobs_RegistersEveryJobServiceAsScoped()
     {
         var services = new ServiceCollection().AddTransferJobs();
 
@@ -298,6 +298,7 @@ public class TransferJobServiceTests
         [
             (typeof(ITransferJobService), typeof(TransferJobService), ServiceLifetime.Scoped),
             (typeof(IPlaylistJobService), typeof(PlaylistJobService), ServiceLifetime.Scoped),
+            (typeof(ICardSetJobService), typeof(CardSetJobService), ServiceLifetime.Scoped),
         ]);
     }
 }

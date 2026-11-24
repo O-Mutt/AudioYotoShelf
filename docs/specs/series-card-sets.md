@@ -1,6 +1,6 @@
 # Spec: series card sets
 
-**Status:** Draft — design agreed (option C), not yet built ([#114](https://github.com/O-Mutt/AudioYotoShelf/issues/114))
+**Status:** Built, Phases 1 and 2 ([#114](https://github.com/O-Mutt/AudioYotoShelf/issues/114)). §13 lists where the build differs from this design.
 **Scope:** turn an Audiobookshelf series into an ordered set of Yoto Make Your Own (MYO) cards,
 each holding a run of whole books, packed under the card limits.
 
@@ -408,3 +408,70 @@ Mockups: the "Series MYO Cards" canvas (C1–C3). Built in Vue with a new `cardS
   break snapping back, locked cards disabled.
 - **Manual.** Make a Dragon Masters set, send it, play the first and last book of each card. Make a
   Harry Potter 1–4 set and check Goblet of Fire's second card starts at the chapter after the split.
+
+## 13. As built
+
+Where the code differs from the sections above, the code is right and this list says why.
+
+- **Planner input (§5.1).** `ICardSetPlanner.Plan` and `Apply` take each book's per-chapter tracks
+  (what `ITrackPlanner.Plan(media, Chapters)` returns) and the playlist grouping, and apply the
+  grouping themselves. Capacity therefore matches what a card's playlist sends, and the planner can
+  split a book on its chapters without a second input. Card playlists use `Auto` grouping, so short
+  books stay one track each and a long series fits the 100-track limit.
+- **`CardSetPlan.SplitChapters`.** The plan carries, per split book, the chapter list its ranges
+  index into: the book's chapters, or the one-track segments of a book without chapters. Each part's
+  `PlaylistItem.TrackDurations` stores that full list, so a part of a chapterless book knows its
+  segments; the transfer cuts segment *i* as `[total·i/n, total·(i+1)/n)`.
+- **Standalone books.** `Plan` takes an optional set of book indices that must sit alone. Re-packing
+  uses it for the rest of a split book whose first parts are on Yoto.
+- **Breaks around split books.** `Apply` adds the breaks on each side of a book that needs splitting
+  when the caller leaves them out, and splits a book without split points by the set's mode.
+- **Locked cards.** A card that is `Queued` or `Transferring` is locked as well as `Transferred`. Every card up
+  to the last locked one keeps its books (§5.5), so nothing slides under a sent card. Changing the
+  mode or exclusions (§7.4 `PATCH`) re-reads the series and re-packs only the cards after it,
+  continuing a partly sent split book from the chapter after its last sent part.
+- **Responses (§7.3).** `GET /api/cardsets/{id}` returns `books` and `cards` in the same shape as the
+  plan preview, each card adding `playlistId`, `status`, `locked`, `yotoCardId` and `errorMessage`,
+  so the UI draws a preview and a saved set the same way. Set `status` is
+  `Draft | Sending | NeedsAttention | Complete`. `GET /api/cardsets` takes `?seriesId=` so the series
+  page finds its set. Chapter titles of a saved split book are "Chapter *n*"; the playlist items
+  cache durations, not titles.
+- **Changed cards (§7.4 `PUT /breaks`).** A card whose books and range do not change keeps its title
+  and status; a changed card gets its default title back and returns to draft.
+- **Chapters changed in Audiobookshelf (§9).** Sending a part whose book no longer has the chapter
+  count it was planned with fails that card with a message asking to re-plan; the other cards still
+  send.
+- **Send (§7.5).** Sending marks the chosen cards with a new playlist status, `Queued`, before the
+  job is enqueued, so a second Send cannot queue cards an earlier job has not reached, which would
+  make two Yoto cards for one card. Asking to send a queued card again is a `409`. If the job cannot
+  be enqueued the cards go back to draft. The job has no automatic retry; when Hangfire re-runs one
+  after a restart it skips cards already on Yoto, a card that fails before sending starts is marked
+  `Failed` rather than left queued, and cancelling it puts the cards it had not reached back to
+  draft. Progress is pushed on the existing hub (below); the series page also re-reads the set
+  every 5 s while any card is queued or being sent, so a missed push only delays an update.
+- **Books that cannot be split (§5.4 step 4).** Creating a set, or re-packing one, is refused
+  (`422`) while a book has a chapter bigger than a card; the series page marks the book and asks for
+  it to be left out first. Saving would otherwise drop it from the set without a trace.
+- **Cards are not plain playlists.** The `/api/playlists` endpoints that change a playlist refuse
+  (`409`) one that belongs to a set; reading it still works.
+- **UI (§8).** Breaks and split points move with buttons (one book or one chapter either way)
+  instead of dragging. The chapter strip shows where each split falls.
+- **New books (§7.3, §7.4 refresh).** `GET /api/cardsets/{id}` returns `newBooks` (id, title,
+  sequence) rather than `newBookIds`, so the page can name them; `?newBooks=false` skips the
+  Audiobookshelf read for the re-reads while sending, and every other response leaves it `null`.
+  If Audiobookshelf can't be read the list is empty rather than the read failing.
+  `POST /refresh` puts new books on the last card when that card is not on Yoto, queued or a part
+  of a split book, and on new cards after it; every earlier card keeps its books. A new book whose
+  place in the series is before those cards goes on the first card that can change, with a message.
+  A new book that cannot be split is refused (`422`) like at create.
+- **Series grid (§7.3 status, §8).** `GET /api/cardsets/status?seriesIds=a,b,c` returns, per series
+  with a set, the card and sent counts, whether it is sending, the set status, and `knownBookIds`
+  (books on its cards or left out) instead of `newBookCount`: the grid already has each series' book
+  ids, so it counts new books itself and the endpoint makes no Audiobookshelf calls.
+  `GET /api/cardsets/limits` gives the card limits so the grid can show "Fits on 1 card" from a
+  series' total duration; that is a size estimate only, and the series page's plan is the answer.
+  The filter chips (All / Not on cards / New books since last cards) filter the page of series shown.
+- **Live progress (§7.5).** The hub has `JoinCardSetGroup` / `LeaveCardSetGroup` (owner only, group
+  `cardset:{id}`). The send job pushes `CardSetProgress { cardSetId, playlistId, cardIndex, status,
+  errorMessage }` when a card starts, lands or fails, and when a cancel returns cards to draft. The
+  series page re-reads its set on each push. Pushes are best effort: a failed push never stops a send.

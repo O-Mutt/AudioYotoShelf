@@ -41,6 +41,7 @@ public class PlaylistsController(
         Guid playlistId, [FromBody] UpdatePlaylistRequest request, CancellationToken ct)
     {
         if (!await OwnsPlaylistAsync(playlistId, ct)) return NotFound();
+        if (await IsCardSetCardAsync(playlistId, ct)) return CardSetCardConflict();
         return Ok(await playlists.UpdateAsync(playlistId, request, ct));
     }
 
@@ -48,6 +49,7 @@ public class PlaylistsController(
     public async Task<IActionResult> Delete(Guid playlistId, CancellationToken ct)
     {
         if (!await OwnsPlaylistAsync(playlistId, ct)) return NotFound();
+        if (await IsCardSetCardAsync(playlistId, ct)) return CardSetCardConflict();
         await playlists.DeleteAsync(playlistId, ct);
         return Ok(new { Message = "Playlist deleted" });
     }
@@ -57,6 +59,7 @@ public class PlaylistsController(
         Guid playlistId, [FromBody] AddPlaylistItemsRequest request, CancellationToken ct)
     {
         if (!await OwnsPlaylistAsync(playlistId, ct)) return NotFound();
+        if (await IsCardSetCardAsync(playlistId, ct)) return CardSetCardConflict();
         return Ok(await playlists.AddItemsAsync(playlistId, request.AbsLibraryItemIds, ct));
     }
 
@@ -65,6 +68,7 @@ public class PlaylistsController(
         Guid playlistId, [FromBody] AddPlaylistSeriesRequest request, CancellationToken ct)
     {
         if (!await OwnsPlaylistAsync(playlistId, ct)) return NotFound();
+        if (await IsCardSetCardAsync(playlistId, ct)) return CardSetCardConflict();
         return Ok(await playlists.AddSeriesAsync(playlistId, request.AbsSeriesId, ct));
     }
 
@@ -72,6 +76,7 @@ public class PlaylistsController(
     public async Task<IActionResult> RemoveItem(Guid playlistId, Guid itemId, CancellationToken ct)
     {
         if (!await OwnsPlaylistAsync(playlistId, ct)) return NotFound();
+        if (await IsCardSetCardAsync(playlistId, ct)) return CardSetCardConflict();
         return Ok(await playlists.RemoveItemAsync(playlistId, itemId, ct));
     }
 
@@ -80,6 +85,7 @@ public class PlaylistsController(
         Guid playlistId, [FromBody] ReorderPlaylistRequest request, CancellationToken ct)
     {
         if (!await OwnsPlaylistAsync(playlistId, ct)) return NotFound();
+        if (await IsCardSetCardAsync(playlistId, ct)) return CardSetCardConflict();
         return Ok(await playlists.ReorderAsync(playlistId, request.OrderedItemIds, ct));
     }
 
@@ -88,6 +94,7 @@ public class PlaylistsController(
         Guid playlistId, Guid itemId, [FromBody] UpdatePlaylistItemRequest request, CancellationToken ct)
     {
         if (!await OwnsPlaylistAsync(playlistId, ct)) return NotFound();
+        if (await IsCardSetCardAsync(playlistId, ct)) return CardSetCardConflict();
         return Ok(await playlists.SetItemGroupingAsync(playlistId, itemId, request.GroupingOverride, ct));
     }
 
@@ -99,6 +106,7 @@ public class PlaylistsController(
     public async Task<IActionResult> Transfer(Guid playlistId, CancellationToken ct)
     {
         if (!await OwnsPlaylistAsync(playlistId, ct)) return NotFound();
+        if (await IsCardSetCardAsync(playlistId, ct)) return CardSetCardConflict();
 
         var playlist = await playlists.GetAsync(playlistId, ct);
         if (playlist is null) return NotFound();
@@ -118,6 +126,16 @@ public class PlaylistsController(
         logger.LogInformation("Playlist transfer queued: {PlaylistId} -> Job {JobId}", playlistId, jobId);
         return Accepted(new { PlaylistId = playlistId, JobId = jobId, Message = "Playlist transfer queued" });
     }
+
+    /// <summary>
+    /// A card of a series card set changes only through /api/cardsets: editing its books here would
+    /// break the set's book order and the ranges it plans around.
+    /// </summary>
+    private async Task<bool> IsCardSetCardAsync(Guid playlistId, CancellationToken ct) =>
+        await db.Playlists.AnyAsync(p => p.Id == playlistId && p.CardSetId != null, ct);
+
+    private ConflictObjectResult CardSetCardConflict() =>
+        Conflict(new { Message = "This playlist is a card of a series card set; change it from the series page." });
 
     /// <summary>True when the playlist exists and belongs to the authenticated connection.</summary>
     private async Task<bool> OwnsPlaylistAsync(Guid playlistId, CancellationToken ct)

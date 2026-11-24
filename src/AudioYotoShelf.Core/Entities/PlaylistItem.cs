@@ -28,4 +28,14 @@ public class PlaylistItem : BaseEntity
 
     /// <summary>Per-source-track estimated sizes (bytes), aligned with <see cref="TrackDurations"/>.</summary>
     public List<long> TrackBytes { get; set; } = [];
+
+    // Set only when this item is one part of a book split across cards; null means the whole book.
+    // Inclusive indices into TrackDurations, which then holds the book's full chapter list (for a
+    // book without chapters, equal time segments).
+    public int? FirstChapterIndex { get; set; }
+    public int? LastChapterIndex { get; set; }
+    public int? PartNumber { get; set; }
+    public int? PartCount { get; set; }
+
+    public bool IsPart => FirstChapterIndex is not null && LastChapterIndex is not null;
 }

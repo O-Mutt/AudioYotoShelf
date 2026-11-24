@@ -9,7 +9,13 @@ import type {
   AbsSeriesResponse,
   BatchTransferResponse,
   BookDetailResponse,
+  CardLimits,
+  CardSetPlanResponse,
+  CardSetResponse,
+  CardSetSummary,
   ConnectionStatus,
+  PackingMode,
+  SeriesCardStatus,
   TransferResponse,
 } from '@/types'
 
@@ -183,6 +189,78 @@ export const cardsApi = {
 
   deleteCard(cardId: string) {
     return api.delete(`/cards/${cardId}`)
+  },
+}
+
+// --- Series card sets ---
+
+export interface CardSetPlanRequest {
+  absSeriesId: string
+  absLibraryId: string
+  mode: PackingMode
+  excludedItemIds?: string[]
+  breaks?: number[] | null
+  splitPoints?: Record<string, number[]> | null
+}
+
+export const cardSetApi = {
+  plan(request: CardSetPlanRequest) {
+    return api.post<CardSetPlanResponse>('/cardsets/plan', request)
+  },
+
+  create(request: CardSetPlanRequest & { name?: string; cardTitles?: string[] }) {
+    return api.post<CardSetResponse>('/cardsets', request)
+  },
+
+  list(seriesId?: string) {
+    return api.get<CardSetSummary[]>('/cardsets', { params: { seriesId: seriesId || undefined } })
+  },
+
+  /** newBooks: false skips reading Audiobookshelf, for frequent re-reads while sending. */
+  get(cardSetId: string, newBooks = true) {
+    return api.get<CardSetResponse>(`/cardsets/${cardSetId}`, {
+      params: newBooks ? undefined : { newBooks: false },
+    })
+  },
+
+  status(seriesIds: string[]) {
+    return api.get<SeriesCardStatus[]>('/cardsets/status', {
+      params: { seriesIds: seriesIds.join(',') },
+    })
+  },
+
+  limits() {
+    return api.get<CardLimits>('/cardsets/limits')
+  },
+
+  refresh(cardSetId: string) {
+    return api.post<CardSetResponse>(`/cardsets/${cardSetId}/refresh`)
+  },
+
+  updateBreaks(cardSetId: string, breaks: number[], splitPoints: Record<string, number[]>) {
+    return api.put<CardSetResponse>(`/cardsets/${cardSetId}/breaks`, { breaks, splitPoints })
+  },
+
+  update(
+    cardSetId: string,
+    changes: { name?: string; packingMode?: PackingMode; excludedItemIds?: string[] },
+  ) {
+    return api.patch<CardSetResponse>(`/cardsets/${cardSetId}`, changes)
+  },
+
+  renameCard(cardSetId: string, playlistId: string, name: string) {
+    return api.patch<CardSetResponse>(`/cardsets/${cardSetId}/cards/${playlistId}`, { name })
+  },
+
+  remove(cardSetId: string) {
+    return api.delete(`/cardsets/${cardSetId}`)
+  },
+
+  transfer(cardSetId: string, playlistIds?: string[]) {
+    return api.post<{ cardSetId: string; jobId?: string; playlistIds?: string[] }>(
+      `/cardsets/${cardSetId}/transfer`,
+      { playlistIds: playlistIds ?? null },
+    )
   },
 }
 

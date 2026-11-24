@@ -88,6 +88,30 @@ public class PlaylistsControllerTests : IDisposable
 
     [Theory]
     [MemberData(nameof(ActionsOnOnePlaylist))]
+    public async Task Action_OnACardOfACardSet_IsRefusedExceptReading(
+        string action, Func<PlaylistsController, Guid, Task<IActionResult>> call)
+    {
+        var caller = Guid.NewGuid();
+        var set = new CardSet { UserConnectionId = caller, AbsSeriesId = "ser-1", AbsLibraryId = "lib-1", Name = "Dragons" };
+        var playlist = new Playlist { UserConnectionId = caller, Name = "Dragons · Books 1–4", CardSet = set, SetIndex = 0 };
+        _db.Playlists.Add(playlist);
+        await _db.SaveChangesAsync();
+        _playlists.Setup(p => p.GetAsync(playlist.Id, It.IsAny<CancellationToken>())).ReturnsAsync(Response(playlist.Id));
+
+        var result = await call(_sut.AsUser(caller), playlist.Id);
+
+        if (action == "GetDetail")
+        {
+            result.Should().BeOfType<OkObjectResult>();
+            return;
+        }
+        result.Should().BeOfType<ConflictObjectResult>($"{action} must go through the card set");
+        _playlists.Invocations.Should().BeEmpty();
+        _backgroundJobs.VerifyNothingEnqueued();
+    }
+
+    [Theory]
+    [MemberData(nameof(ActionsOnOnePlaylist))]
     public async Task Action_OnAPlaylistThatDoesNotExist_Returns404AndTouchesNothing(
         string action, Func<PlaylistsController, Guid, Task<IActionResult>> call)
     {

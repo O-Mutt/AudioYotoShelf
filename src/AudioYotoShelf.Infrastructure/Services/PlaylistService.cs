@@ -224,22 +224,15 @@ public class PlaylistService(
             return new PlaylistItemResponse(
                 i.Id, i.AbsLibraryItemId, i.Position, i.BookTitle, i.BookAuthor,
                 i.SeriesName, i.SeriesSequence, i.GroupingOverride, effective,
-                projected, i.TrackDurations.Sum(),
+                projected, PlaylistCapacity.ChapterTracks(i).Sum(t => t.DurationSeconds),
                 calculator.Calculate([new BookTrackPlan(i.AbsLibraryItemId, i.BookTitle, grouped)]).Projected.Bytes);
         }).ToArray();
 
         return new PlaylistResponse(
             playlist.Id, playlist.Name, playlist.Status, playlist.DefaultGrouping,
             playlist.YotoCardId, playlist.ErrorMessage, playlist.CreatedAt, playlist.TransferredAt,
-            items, ToSummary(capacity));
+            items, PlaylistCapacity.ToSummary(capacity));
     }
-
-    private static CapacitySummary ToSummary(Core.DTOs.Playlist.CapacityResult r) => new(
-        r.Projected.Tracks, r.Limits.MaxTracks,
-        r.Projected.DurationSeconds, r.Limits.MaxTotalDurationSeconds,
-        r.Projected.Bytes, r.Limits.MaxTotalBytes,
-        r.WithinLimits, r.ExceedsTracks, r.ExceedsDuration, r.ExceedsBytes,
-        r.FirstOverflowItemId, r.Messages.ToArray());
 
     internal static float? ParseSequence(string? sequence)
     {
