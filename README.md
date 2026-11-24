@@ -167,7 +167,8 @@ and `REDIS_CONNECTION_STRING` also accept a `_FILE` variant naming a file to rea
 Setting both forms of one variable is a startup error.
 
 Advanced settings have only the ASP.NET form: `Yoto__ApiBase`, `Yoto__AuthBase`, and
-`Yoto__CardLimits__{MaxTracks,MaxTrackBytes,MaxTrackDurationSeconds,MaxTotalBytes,MaxTotalDurationSeconds}`.
+`Yoto__CardLimits__{MaxTracks,MaxTrackBytes,MaxTrackDurationSeconds,MaxTotalBytes,MaxTotalDurationSeconds,TranscodedBitrateKbps}`
+(defaults and reasoning: [docs/specs/yoto-card-limits.md](docs/specs/yoto-card-limits.md)).
 
 ### Setup
 

@@ -12,7 +12,10 @@ public class YotoCardLimits
 
     public int MaxTracks { get; set; } = 100;
 
-    /// <summary>Per-track cap, checked against the file we upload (untested against Yoto, so kept conservative).</summary>
+    /// <summary>
+    /// Per-track cap, checked against the file we upload. Yoto accepted 265 MB uploads, so this is
+    /// stricter than Yoto; it stays because the transfer splits tracks by the same rule (#121).
+    /// </summary>
     public long MaxTrackBytes { get; set; } = 100L * 1024 * 1024;     // 100 MB
 
     public double MaxTrackDurationSeconds { get; set; } = 3600;        // 1 hour
@@ -30,11 +33,36 @@ public class YotoCardLimits
     public double? MaxTotalDurationSeconds { get; set; }
 
     /// <summary>
-    /// Bitrate used to estimate Yoto's transcoded size. Measured 73–96 kbps opus on real cards;
-    /// 100 keeps the estimate slightly pessimistic so a card that passes here fits on Yoto.
+    /// Bitrate used to estimate Yoto's transcoded size. Measured 65–96 kbps opus on real cards, and
+    /// Yoto's bitrate does not follow the source's, so this is a best guess with a little headroom,
+    /// not a guarantee that Yoto stores less.
     /// </summary>
     public int TranscodedBitrateKbps { get; set; } = 100;
 
     public long EstimateTranscodedBytes(double durationSeconds) =>
         (long)(durationSeconds * TranscodedBitrateKbps * 1000 / 8);
+
+    /// <summary>
+    /// Fails startup on settings that would silently switch a check off: a bitrate of 0 makes every
+    /// card weigh nothing, and a zero or negative cap would refuse every card.
+    /// </summary>
+    public void Validate()
+    {
+        var problems = new List<string>();
+        if (TranscodedBitrateKbps <= 0)
+            problems.Add($"{nameof(TranscodedBitrateKbps)} must be greater than 0 (got {TranscodedBitrateKbps}).");
+        if (MaxTracks <= 0)
+            problems.Add($"{nameof(MaxTracks)} must be greater than 0 (got {MaxTracks}).");
+        if (MaxTrackBytes <= 0)
+            problems.Add($"{nameof(MaxTrackBytes)} must be greater than 0 (got {MaxTrackBytes}).");
+        if (MaxTrackDurationSeconds <= 0)
+            problems.Add($"{nameof(MaxTrackDurationSeconds)} must be greater than 0 (got {MaxTrackDurationSeconds}).");
+        if (MaxTotalBytes <= 0)
+            problems.Add($"{nameof(MaxTotalBytes)} must be greater than 0 (got {MaxTotalBytes}).");
+        if (MaxTotalDurationSeconds is <= 0)
+            problems.Add($"{nameof(MaxTotalDurationSeconds)} must be unset or greater than 0 (got {MaxTotalDurationSeconds}).");
+
+        if (problems.Count > 0)
+            throw new InvalidOperationException($"Invalid {SectionName} settings: {string.Join(" ", problems)}");
+    }
 }

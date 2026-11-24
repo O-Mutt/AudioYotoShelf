@@ -322,9 +322,10 @@ public class PlaylistServiceTests : IDisposable
         var stored = (await StoredPlaylistAsync(playlist.Id)).Items.Single();
         stored.TrackDurations.Should().Equal(100.0, 200.0, 300.0);
         stored.TrackBytes.Should().Equal(1_000L, 2_000L, 3_000L);
-        // The response sums the cached tracks rather than taking the largest one.
+        // The response sums the cached tracks rather than taking the largest one, and sizes the
+        // book the way the card total does: 600 s at 100 kbps, not the source bytes.
         (result.Items[0].DurationSeconds, result.Items[0].EstimatedBytes, result.Items[0].ProjectedTrackCount)
-            .Should().Be((600.0, 6_000L, 3));
+            .Should().Be((600.0, 7_500_000L, 3));
     }
 
     [Fact]

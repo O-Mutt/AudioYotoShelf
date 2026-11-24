@@ -86,6 +86,16 @@ public class CardCapacityCalculatorTests
     }
 
     [Fact]
+    public void Calculate_TrackWithoutDuration_CountsAtItsSourceSize()
+    {
+        // Audiobookshelf reports 0 for unscanned files; 600 MB of them must not weigh nothing.
+        var result = _sut.Calculate([Book("b1", Tracks(6, 0, 100L * 1024 * 1024))]);
+
+        result.Projected.Bytes.Should().Be(600L * 1024 * 1024);
+        result.ExceedsBytes.Should().BeTrue();
+    }
+
+    [Fact]
     public void Calculate_TooManyTracks_FlagsTracksOnly()
     {
         var result = _sut.Calculate([Book("b1", Tracks(101, 60, 1_000_000))]);

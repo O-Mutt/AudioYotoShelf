@@ -51,15 +51,21 @@ of an 11 h 34 m / 485 MB card playing agrees.
 | Key | Default | Checked against |
 |---|---|---|
 | `MaxTracks` | 100 | projected track count after per-track splitting |
-| `MaxTrackBytes` | 100 MB | source bytes of each track (kept conservative: untested) |
+| `MaxTrackBytes` | 100 MB | source bytes of each track. Stricter than Yoto, which accepted 265 MB uploads; kept because the transfer splits tracks by the same rule ([#121](https://github.com/O-Mutt/AudioYotoShelf/issues/121)) |
 | `MaxTrackDurationSeconds` | 3600 | each track's duration |
 | `MaxTotalBytes` | 500 MB | **estimated transcoded size**: total duration × `TranscodedBitrateKbps` |
 | `MaxTotalDurationSeconds` | unset (not enforced) | total duration, only when set |
-| `TranscodedBitrateKbps` | 100 | used for the size estimate; slightly above the measured 73–96 kbps so a card that passes here fits on Yoto |
+| `TranscodedBitrateKbps` | 100 | used for the size estimate; a little above the measured 65–96 kbps. A best guess, not a guarantee: Yoto's bitrate does not follow the source |
 
 At 100 kbps, 500 MB holds about 11.6 hours.
 
 To restore the documented 5-hour cap, set `Yoto__CardLimits__MaxTotalDurationSeconds=18000`.
+
+A track with no duration (Audiobookshelf reports 0 for files it has not scanned) counts at its
+source size, so an unscanned book cannot slip past the size check. Startup fails if any limit is
+zero or negative, or if `TranscodedBitrateKbps` is not greater than 0.
+
+Sizes in the app's messages are MiB (1,048,576 bytes), shown as "MB".
 
 ## 4. Open questions
 

@@ -224,7 +224,8 @@ public class PlaylistService(
             return new PlaylistItemResponse(
                 i.Id, i.AbsLibraryItemId, i.Position, i.BookTitle, i.BookAuthor,
                 i.SeriesName, i.SeriesSequence, i.GroupingOverride, effective,
-                projected, i.TrackDurations.Sum(), i.TrackBytes.Sum());
+                projected, i.TrackDurations.Sum(),
+                calculator.Calculate([new BookTrackPlan(i.AbsLibraryItemId, i.BookTitle, grouped)]).Projected.Bytes);
         }).ToArray();
 
         return new PlaylistResponse(

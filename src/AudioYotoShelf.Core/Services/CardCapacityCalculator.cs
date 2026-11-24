@@ -26,7 +26,11 @@ public class CardCapacityCalculator(YotoCardLimits limits) : ICardCapacityCalcul
             {
                 tracks += ProjectedTrackCount(track);
                 duration += track.DurationSeconds;
-                bytes += limits.EstimateTranscodedBytes(track.DurationSeconds);
+                // Audiobookshelf reports 0 for files it has not scanned yet; without a duration the
+                // source size is the only size signal left, so a large unscanned book still fails.
+                bytes += track.DurationSeconds > 0
+                    ? limits.EstimateTranscodedBytes(track.DurationSeconds)
+                    : track.EstimatedBytes;
             }
 
             if (firstOverflow is null && Exceeds(tracks, duration, bytes))

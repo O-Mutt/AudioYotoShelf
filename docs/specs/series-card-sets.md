@@ -328,7 +328,8 @@ Mockups: the "Series MYO Cards" canvas (C1–C3). Built in Vue with a new `cardS
 
 - **Series page (`SeriesDetailView.vue`)**: a "Card plan" panel above the book list.
   - One tile per card: card *n* of *k*, cover strip, editable title, size bar
-    ("≈ 448 MB of 500 MB"), book and track counts.
+    ("≈ 439 MB of 500 MB" for the §7.1 example's 460,500,000 bytes; MB here is MiB, as in the
+    calculator's messages), book and track counts.
   - Balance / Fill toggle, re-planning on change through `POST /plan`.
   - Book list grouped by card with a draggable break between groups. Dropping a break calls
     `POST /plan` with `breaks`; an invalid drop snaps back and shows which card overflowed.
