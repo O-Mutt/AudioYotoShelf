@@ -360,13 +360,15 @@ public class PlaylistTransferOrchestrator(
         var ext = Path.GetExtension(file.Metadata.Filename);
         if (string.IsNullOrEmpty(ext)) ext = ".mp3";
         var path = Path.Combine(TempDir, $"pl_{Guid.NewGuid():N}{ext}");
+        // Registered before the copy so a download that fails or is cancelled partway, which can
+        // already be several GB, is still deleted with the rest of the book's temp files.
+        temp.Add(path);
 
         await using var source = await absService.DownloadAudioFileAsync(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, itemId, file.Ino, ct);
         await using (var fileStream = File.Create(path))
             await source.CopyToAsync(fileStream, ct);
 
-        temp.Add(path);
         return path;
     }
 
