@@ -63,7 +63,6 @@ public class PlaylistTransferOrchestrator(
         playlist.ErrorMessage = null;
         await db.SaveChangesAsync(ct);
 
-        var temp = new List<string>();
         try
         {
             var yotoToken = await YotoTokens.EnsureValidAsync(db, yotoService, user, logger, ct);
@@ -83,8 +82,21 @@ public class PlaylistTransferOrchestrator(
                 firstAuthor ??= media.Metadata.Authors?.FirstOrDefault()?.Name;
 
                 var grouping = item.GroupingOverride ?? playlist.DefaultGrouping;
-                var chapter = await BuildBookChapterAsync(
-                    user, libraryItem, media, item.BookTitle, grouping, yotoToken, bookIndex + 1, temp, ct);
+
+                // Cards are sized by Yoto's stored audio, not the source, so one book's downloads can
+                // run to several GB. Dropping them once the book is uploaded keeps peak disk use to
+                // the largest single book instead of the whole playlist.
+                var bookTemp = new List<string>();
+                YotoChapter chapter;
+                try
+                {
+                    chapter = await BuildBookChapterAsync(
+                        user, libraryItem, media, item.BookTitle, grouping, yotoToken, bookIndex + 1, bookTemp, ct);
+                }
+                finally
+                {
+                    CleanupTempFiles(bookTemp);
+                }
                 chapters.Add(chapter);
 
                 logger.LogInformation("Playlist {PlaylistId}: book {Index}/{Total} '{Title}' -> {Tracks} tracks",
@@ -128,10 +140,6 @@ public class PlaylistTransferOrchestrator(
             playlist.ErrorMessage = ex.Message.Length > 4000 ? ex.Message[..4000] : ex.Message;
             await db.SaveChangesAsync(CancellationToken.None);
             throw;
-        }
-        finally
-        {
-            CleanupTempFiles(temp);
         }
     }
 

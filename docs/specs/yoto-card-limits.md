@@ -67,6 +67,23 @@ zero or negative, or if `TranscodedBitrateKbps` is not greater than 0.
 
 Sizes in the app's messages are MiB (1,048,576 bytes), shown as "MB".
 
+Because the card total is estimated from duration, source size no longer limits a transfer: a
+book Yoto stores as 566 MB was 6.3 GB of source. A playlist transfer deletes each book's temp files
+once that book's tracks are uploaded, so peak disk use is set by the largest single book, not the
+whole playlist ([#128](https://github.com/O-Mutt/AudioYotoShelf/issues/128)).
+
+Within a book, every copy stays on disk until the book is done: the downloaded files, the merged
+file or extracted chapters, and the split pieces of any track over the per-track limit. A book
+that is merged (or cut into chapters from one file) and then split peaks at about **3× its source
+size**; a multi-file book uploaded file by file peaks at 1×, or 2× when files need splitting.
+
+Two folders take this: downloads go to `Transfer:TempDirectory`, and ffmpeg's merged, chapter and
+split files go to the system temp folder (`TMPDIR`). The Docker image sets `TMPDIR=/app/temp`, so
+both land on the same volume there; outside the image, size both. Partial files left by a failed
+download or ffmpeg run are not cleaned up yet
+([#131](https://github.com/O-Mutt/AudioYotoShelf/issues/131),
+[#132](https://github.com/O-Mutt/AudioYotoShelf/issues/132)).
+
 ## 4. Open questions
 
 - Whether a card over 500 MB plays end to end (Goblet of Fire, 566 MB), and whether any larger
