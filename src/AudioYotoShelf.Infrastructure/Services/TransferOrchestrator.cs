@@ -64,17 +64,12 @@ public class TransferOrchestrator(
             if (transfer.Status == TransferStatus.Cancelled)
                 return MapToResponse(transfer);
 
-            // Reset the existing transfer for retry
+            // Reset the existing transfer for retry. Its track mappings stay: the ones already on
+            // Yoto are picked up again by CreateTrackMappingsAsync, the rest are replaced there.
             transfer.Status = TransferStatus.Pending;
             transfer.ErrorMessage = null;
             transfer.ProgressPercent = 0;
             transfer.CompletedAt = null;
-
-            // Clean up any track mappings from the previous attempt
-            var oldMappings = await db.TrackMappings
-                .Where(tm => tm.CardTransferId == transfer.Id)
-                .ToListAsync(ct);
-            db.TrackMappings.RemoveRange(oldMappings);
         }
         else
         {
@@ -242,10 +237,6 @@ public class TransferOrchestrator(
         transfer.ErrorMessage = null;
         transfer.ProgressPercent = 0;
         transfer.CompletedAt = null;
-        var oldMappings = await db.TrackMappings
-            .Where(tm => tm.CardTransferId == transfer.Id)
-            .ToListAsync(ct);
-        db.TrackMappings.RemoveRange(oldMappings);
         await db.SaveChangesAsync(ct);
 
         var request = new CreateTransferRequest(
@@ -331,6 +322,39 @@ public class TransferOrchestrator(
         if (media.AudioFiles.Length == 0)
             throw new InvalidOperationException("Item has no audio files to transfer");
 
+        // A retried transfer still has the mappings of its earlier attempt. A track that already
+        // reached Yoto keeps its row (and its SHA), so the retry neither re-extracts nor re-uploads
+        // it; everything else from the earlier attempt is dropped below.
+        var earlierAttempt = await db.TrackMappings
+            .Where(tm => tm.CardTransferId == transfer.Id)
+            .ToListAsync(ct);
+        db.TrackMappings.RemoveRange(earlierAttempt.Where(tm => tm.YotoTranscodedSha256 is null));
+        var previous = earlierAttempt.Where(tm => tm.YotoTranscodedSha256 is not null).ToList();
+        var kept = new HashSet<Guid>();
+
+        TrackMapping? FinishedEarlier(string fileIno, double start, double end)
+        {
+            var match = previous.FirstOrDefault(tm =>
+                !kept.Contains(tm.Id) &&
+                tm.AbsFileIno == fileIno && tm.StartTime == start && tm.EndTime == end);
+            if (match is not null) kept.Add(match.Id);
+            return match;
+        }
+
+        TrackMapping Track(TrackMapping fresh)
+        {
+            var earlier = FinishedEarlier(fresh.AbsFileIno, fresh.StartTime, fresh.EndTime);
+            if (earlier is null)
+            {
+                db.TrackMappings.Add(fresh);
+                return fresh;
+            }
+            earlier.ChapterTitle = fresh.ChapterTitle;
+            earlier.ChapterIndex = fresh.ChapterIndex;
+            earlier.FileSizeBytes = fresh.FileSizeBytes;
+            return earlier;
+        }
+
         if (media.NumAudioFiles > 1)
         {
             // Multi-file book: each audio file = one track
@@ -349,8 +373,7 @@ public class TransferOrchestrator(
                     FileSizeBytes = audioFile.Size
                 };
 
-                db.TrackMappings.Add(mapping);
-                mappings.Add(mapping);
+                mappings.Add(Track(mapping));
             }
         }
         else if (media.Chapters.Length > 0 && media.AudioFiles.Length == 1)
@@ -365,6 +388,15 @@ public class TransferOrchestrator(
             for (int i = 0; i < media.Chapters.Length; i++)
             {
                 var chapter = media.Chapters[i];
+                var finished = FinishedEarlier($"{singleFile.Ino}:ch{i}", chapter.Start, chapter.End);
+                if (finished is not null)
+                {
+                    finished.ChapterTitle = chapter.Title;
+                    finished.ChapterIndex = i;
+                    mappings.Add(finished);
+                    continue;
+                }
+
                 var chapterPath = await chapterExtractor.ExtractChapterAsync(
                     tempInputPath, chapter.Start, chapter.End, "m4a", ct);
 
@@ -399,10 +431,10 @@ public class TransferOrchestrator(
                 EndTime = singleFile.Duration,
                 FileSizeBytes = singleFile.Size
             };
-            db.TrackMappings.Add(mapping);
-            mappings.Add(mapping);
+            mappings.Add(Track(mapping));
         }
 
+        db.TrackMappings.RemoveRange(previous.Where(tm => !kept.Contains(tm.Id)));
         await db.SaveChangesAsync(ct);
         return mappings;
     }
@@ -431,6 +463,14 @@ public class TransferOrchestrator(
             // through every remaining track (about three minutes each at Yoto).
             await ThrowIfCancelledAsync(transfer, ct);
             mapping = mappings[i];
+
+            if (mapping.YotoTranscodedSha256 is not null)
+            {
+                logger.LogInformation("Track {Track}/{Total} reached Yoto in an earlier attempt; not uploading it again",
+                    i + 1, mappings.Count);
+                ReportTrack(TrackPhase.Reused, null, $"Track {i + 1}/{mappings.Count} is already on Yoto");
+                continue;
+            }
 
             // Check for existing SHA256 deduplication.
             // Scoped to the same user connection: Yoto media (yoto:#sha) is account-scoped and
