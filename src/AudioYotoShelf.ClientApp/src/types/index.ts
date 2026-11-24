@@ -318,3 +318,102 @@ export interface YotoTrack {
   duration: number | null
   fileSize: number | null
 }
+
+// --- Series card sets (docs/specs/series-card-sets.md) ---
+
+export type PackingMode = 'Balance' | 'Fill'
+export type PlaylistStatus = 'Draft' | 'Transferring' | 'Transferred' | 'Failed'
+export type CardSetStatus = 'Draft' | 'Sending' | 'NeedsAttention' | 'Complete'
+
+export interface CapacitySummary {
+  tracks: number
+  maxTracks: number
+  durationSeconds: number
+  maxDurationSeconds: number | null
+  bytes: number
+  maxBytes: number
+  withinLimits: boolean
+  exceedsTracks: boolean
+  exceedsDuration: boolean
+  exceedsBytes: boolean
+  firstOverflowItemId: string | null
+  messages: string[]
+}
+
+export interface CardSetChapter {
+  index: number
+  title: string
+  durationSeconds: number
+}
+
+export interface CardSetBook {
+  absLibraryItemId: string
+  title: string
+  sequence: number | null
+  durationSeconds: number
+  estimatedBytes: number
+  split: boolean
+  chapters: CardSetChapter[] | null
+}
+
+export interface CardSetCard {
+  index: number
+  firstBookIndex: number
+  lastBookIndex: number
+  firstChapterIndex: number | null
+  lastChapterIndex: number | null
+  partNumber: number | null
+  partCount: number | null
+  title: string
+  capacity: CapacitySummary
+  playlistId: string | null
+  status: PlaylistStatus | null
+  locked: boolean
+  yotoCardId: string | null
+  errorMessage: string | null
+}
+
+export interface ExcludedBook {
+  absLibraryItemId: string
+  title: string
+  sequence: number | null
+}
+
+export interface CardSetPlanResponse {
+  seriesName: string
+  books: CardSetBook[]
+  excludedBooks: ExcludedBook[]
+  cards: CardSetCard[]
+  withinLimits: boolean
+  unsplittableBookIds: string[]
+  messages: string[]
+}
+
+export interface CardSetResponse {
+  id: string
+  name: string
+  absSeriesId: string
+  absLibraryId: string
+  packingMode: PackingMode
+  excludedItemIds: string[]
+  status: CardSetStatus
+  books: CardSetBook[]
+  cards: CardSetCard[]
+  withinLimits: boolean
+  messages: string[]
+}
+
+export interface CardSetSummary {
+  id: string
+  name: string
+  absSeriesId: string
+  cardCount: number
+  sentCount: number
+  status: CardSetStatus
+}
+
+/** Breaks: index of the first book on each card after the first. Split points: per split book, index of the first chapter of each part after the first. */
+export interface CardSetLayout {
+  breaks: number[]
+  splitPoints: Record<string, number[]>
+}
