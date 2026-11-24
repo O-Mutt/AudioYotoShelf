@@ -18,10 +18,57 @@ namespace AudioYotoShelf.Infrastructure.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.13")
+                .HasAnnotation("ProductVersion", "10.0.15")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("AudioYotoShelf.Core.Entities.CardSet", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AbsLibraryId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("AbsSeriesId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.PrimitiveCollection<List<string>>("ExcludedItemIds")
+                        .IsRequired()
+                        .HasColumnType("text[]");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("PackingMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserConnectionId", "AbsSeriesId")
+                        .IsUnique();
+
+                    b.ToTable("CardSets");
+                });
 
             modelBuilder.Entity("AudioYotoShelf.Core.Entities.CardTransfer", b =>
                 {
@@ -215,6 +262,9 @@ namespace AudioYotoShelf.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("CardSetId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -231,6 +281,9 @@ namespace AudioYotoShelf.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
+
+                    b.Property<int?>("SetIndex")
+                        .HasColumnType("integer");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -253,6 +306,8 @@ namespace AudioYotoShelf.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("UserConnectionId");
+
+                    b.HasIndex("CardSetId", "SetIndex");
 
                     b.ToTable("Playlists");
                 });
@@ -280,9 +335,21 @@ namespace AudioYotoShelf.Infrastructure.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("FirstChapterIndex")
+                        .HasColumnType("integer");
+
                     b.Property<string>("GroupingOverride")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<int?>("LastChapterIndex")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("PartCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("PartNumber")
+                        .HasColumnType("integer");
 
                     b.Property<Guid>("PlaylistId")
                         .HasColumnType("uuid");
@@ -469,6 +536,17 @@ namespace AudioYotoShelf.Infrastructure.Migrations
                     b.ToTable("UserConnections");
                 });
 
+            modelBuilder.Entity("AudioYotoShelf.Core.Entities.CardSet", b =>
+                {
+                    b.HasOne("AudioYotoShelf.Core.Entities.UserConnection", "UserConnection")
+                        .WithMany()
+                        .HasForeignKey("UserConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("UserConnection");
+                });
+
             modelBuilder.Entity("AudioYotoShelf.Core.Entities.CardTransfer", b =>
                 {
                     b.HasOne("AudioYotoShelf.Core.Entities.UserConnection", "UserConnection")
@@ -504,11 +582,18 @@ namespace AudioYotoShelf.Infrastructure.Migrations
 
             modelBuilder.Entity("AudioYotoShelf.Core.Entities.Playlist", b =>
                 {
+                    b.HasOne("AudioYotoShelf.Core.Entities.CardSet", "CardSet")
+                        .WithMany("Cards")
+                        .HasForeignKey("CardSetId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("AudioYotoShelf.Core.Entities.UserConnection", "UserConnection")
                         .WithMany()
                         .HasForeignKey("UserConnectionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("CardSet");
 
                     b.Navigation("UserConnection");
                 });
@@ -540,6 +625,11 @@ namespace AudioYotoShelf.Infrastructure.Migrations
                     b.Navigation("CardTransfer");
 
                     b.Navigation("GeneratedIcon");
+                });
+
+            modelBuilder.Entity("AudioYotoShelf.Core.Entities.CardSet", b =>
+                {
+                    b.Navigation("Cards");
                 });
 
             modelBuilder.Entity("AudioYotoShelf.Core.Entities.CardTransfer", b =>

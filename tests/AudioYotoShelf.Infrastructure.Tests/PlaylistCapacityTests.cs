@@ -69,4 +69,22 @@ public class PlaylistCapacityTests
         PlaylistCapacity.GroupedTracks(playlist, overridden, _planner).Should().HaveCount(1);
         PlaylistCapacity.GroupedTracks(playlist, inherited, _planner).Should().HaveCount(2);
     }
+    [Fact]
+    public void ChapterTracks_ForOnePartOfASplitBook_CountsOnlyTheChaptersInItsRange()
+    {
+        var part = Item("big", 0, [100, 200, 300, 400], [1, 2, 3, 4]);
+        part.FirstChapterIndex = 1;
+        part.LastChapterIndex = 2;
+        part.PartNumber = 1;
+        part.PartCount = 2;
+
+        PlaylistCapacity.ChapterTracks(part).Select(t => t.DurationSeconds).Should().Equal(200, 300);
+        PlaylistCapacity.ChapterTracks(part).Select(t => t.EstimatedBytes).Should().Equal(2, 3);
+    }
+
+    [Fact]
+    public void ChapterTracks_ForAWholeBook_CountsEveryChapter()
+    {
+        PlaylistCapacity.ChapterTracks(Item("whole", 0, [100, 200, 300], [1, 2, 3])).Should().HaveCount(3);
+    }
 }

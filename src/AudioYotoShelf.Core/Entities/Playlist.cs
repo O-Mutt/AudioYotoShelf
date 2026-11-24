@@ -22,5 +22,12 @@ public class Playlist : BaseEntity
     public string? ErrorMessage { get; set; }
     public DateTimeOffset? TransferredAt { get; set; }
 
+    /// <summary>Set when this playlist is one card of a series card set.</summary>
+    public Guid? CardSetId { get; set; }
+    public CardSet? CardSet { get; set; }
+
+    /// <summary>0-based position of this card within its card set.</summary>
+    public int? SetIndex { get; set; }
+
     public ICollection<PlaylistItem> Items { get; set; } = [];
 }

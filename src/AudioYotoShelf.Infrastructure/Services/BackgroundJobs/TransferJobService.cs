@@ -163,6 +163,7 @@ public static class HangfireJobRegistration
     {
         services.AddScoped<ITransferJobService, TransferJobService>();
         services.AddScoped<IPlaylistJobService, PlaylistJobService>();
+        services.AddScoped<ICardSetJobService, CardSetJobService>();
         return services;
     }
 }

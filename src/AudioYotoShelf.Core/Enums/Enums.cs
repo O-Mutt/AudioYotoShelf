@@ -69,6 +69,28 @@ public enum TrackGrouping
     Auto
 }
 
+/// <summary>How a card set packs a series' books onto cards.</summary>
+public enum PackingMode
+{
+    /// <summary>Fewest cards, then breaks chosen so the fullest card is as empty as possible.</summary>
+    Balance,
+    /// <summary>Fewest cards, each filled as far as it goes before the next starts.</summary>
+    Fill
+}
+
+/// <summary>A card set's state, derived from its cards' playlist statuses.</summary>
+public enum CardSetStatus
+{
+    /// <summary>Some or all cards are not on Yoto yet, and none is failing or being sent.</summary>
+    Draft,
+    /// <summary>At least one card is being sent.</summary>
+    Sending,
+    /// <summary>A card failed to send and needs a retry.</summary>
+    NeedsAttention,
+    /// <summary>Every card is on Yoto.</summary>
+    Complete
+}
+
 /// <summary>Lifecycle of a multi-book playlist.</summary>
 public enum PlaylistStatus
 {
