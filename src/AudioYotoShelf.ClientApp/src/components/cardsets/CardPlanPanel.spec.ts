@@ -156,4 +156,26 @@ describe('CardPlanPanel', () => {
     expect(wrapper.find('[data-testid="break-1-later"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-testid="send-cards"]').text()).toBe('Send 1 card')
   })
+  it('will not make cards while a book cannot be split', async () => {
+    api.list.mockReturnValue(ok([]))
+    api.plan.mockReturnValue(
+      ok({
+        seriesName: 'Dragons',
+        books: books.slice(0, 3),
+        excludedBooks: [],
+        cards: [card(0, 0, 2)],
+        withinLimits: true,
+        unsplittableBookIds: ['b3'],
+        messages: [
+          'Book 4 has a chapter longer than one card holds, so it cannot be split; it was left out.',
+        ],
+      }),
+    )
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="make-cards"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="unsplittable-b3"]').exists()).toBe(true)
+  })
 })

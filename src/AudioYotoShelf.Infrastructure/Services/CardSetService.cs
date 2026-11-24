@@ -61,10 +61,7 @@ public class CardSetService(
     public async Task<CardSetResponse> CreateAsync(
         Guid userConnectionId, CreateCardSetRequest request, CancellationToken ct = default)
     {
-        var existingId = await db.CardSets
-            .Where(s => s.UserConnectionId == userConnectionId && s.AbsSeriesId == request.AbsSeriesId)
-            .Select(s => (Guid?)s.Id)
-            .FirstOrDefaultAsync(ct);
+        var existingId = await ExistingSetIdAsync(userConnectionId, request.AbsSeriesId, ct);
         if (existingId is not null)
             throw new CardSetConflictException("A card set already exists for this series", existingId);
 
@@ -83,9 +80,7 @@ public class CardSetService(
             ExcludedItemIds = request.ExcludedItemIds?.Distinct().ToList() ?? [],
         };
 
-        if (!plan.WithinLimits)
-            throw new CardSetPlanException("A card in this plan does not fit.",
-                ToPlanResponse(set.Name, books, excluded, plan));
+        RequireSavable(plan, () => ToPlanResponse(set.Name, books, excluded, plan));
 
         db.CardSets.Add(set);
         var specs = Specs(books, plan, offset: 0);
@@ -95,7 +90,18 @@ public class CardSetService(
             AddCard(set, specs[i], i, string.IsNullOrWhiteSpace(title) ? null : title.Trim());
         }
 
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            // A second request for the same series got past the check above first; the unique index stopped this one.
+            db.ChangeTracker.Clear();
+            if (await ExistingSetIdAsync(userConnectionId, request.AbsSeriesId, ct) is { } raced)
+                throw new CardSetConflictException("A card set already exists for this series", raced);
+            throw;
+        }
         logger.LogInformation("Created card set {CardSetId} '{Name}' with {Cards} cards for series {SeriesId}",
             set.Id, set.Name, specs.Count, set.AbsSeriesId);
         return ToResponse(set);
@@ -146,8 +152,7 @@ public class CardSetService(
                 throw new CardSetConflictException($"That change moves card {i + 1}, which is already on Yoto.", set.Id);
         }
 
-        if (!plan.WithinLimits)
-            throw new CardSetPlanException("A card in this plan does not fit.", ToPlanResponse(set.Name, books, [], plan));
+        RequireSavable(plan, () => ToPlanResponse(set.Name, books, [], plan));
 
         ReplaceCards(set, cards, fixedCount, specs.Skip(fixedCount).ToList());
         await db.SaveChangesAsync(ct);
@@ -228,8 +233,8 @@ public class CardSetService(
 
         foreach (var card in chosen)
         {
-            if (card.Status == PlaylistStatus.Transferring)
-                throw new CardSetConflictException($"{card.Name} is being sent already.", set.Id);
+            if (card.Status is PlaylistStatus.Transferring or PlaylistStatus.Queued)
+                throw new CardSetConflictException($"{card.Name} is queued or being sent already.", set.Id);
 
             var capacity = calculator.Calculate(PlaylistCapacity.BuildPlans(card, trackPlanner));
             if (!capacity.WithinLimits)
@@ -237,7 +242,23 @@ public class CardSetService(
                     $"{card.Name} exceeds Yoto card capacity.", card.Id, PlaylistCapacity.ToSummary(capacity));
         }
 
+        foreach (var card in chosen)
+        {
+            card.Status = PlaylistStatus.Queued;
+            card.ErrorMessage = null;
+        }
+        await db.SaveChangesAsync(ct);
         return chosen.Select(c => c.Id).ToArray();
+    }
+
+    public async Task ReleaseQueuedAsync(IReadOnlyList<Guid> playlistIds, CancellationToken ct = default)
+    {
+        var queued = await db.Playlists
+            .Where(p => playlistIds.Contains(p.Id) && p.Status == PlaylistStatus.Queued)
+            .ToListAsync(ct);
+        foreach (var card in queued)
+            card.Status = PlaylistStatus.Draft;
+        await db.SaveChangesAsync(ct);
     }
 
     // =========================================================================
@@ -278,11 +299,15 @@ public class CardSetService(
 
         var plan = planner.Plan(tail.Select(b => b.Plan).ToList(), set.PackingMode, CardGrouping,
             remainder is null ? null : new HashSet<int> { 0 });
-        var specs = Specs(tail, plan, offset: placed.Count);
+        RequireSavable(plan, () => ToPlanResponse(set.Name, tail, [], plan));
+
+        // The continued split book is already counted in `placed`, and it is also tail[0].
+        var specs = Specs(tail, plan, offset: remainder is null ? placed.Count : placed.Count - 1);
 
         if (remainder is { } r)
         {
-            specs = specs.Select(s => s.FirstIndex != placed.Count ? s : s.IsPart
+            var continued = placed.Count - 1;
+            specs = specs.Select(s => s.FirstIndex != continued ? s : s.IsPart
                     ? s with
                     {
                         PartChapters = r.Chapters,
@@ -301,9 +326,6 @@ public class CardSetService(
                     })
                 .ToList();
         }
-
-        foreach (var message in plan.Messages)
-            logger.LogWarning("Card set {CardSetId}: {Message}", set.Id, message);
 
         ReplaceCards(set, cards, fixedCount, specs);
     }
@@ -607,12 +629,31 @@ public class CardSetService(
         return user;
     }
 
+    /// <summary>
+    /// Refuses a plan with a card that does not fit, or one that leaves out a book it cannot split:
+    /// saving it would drop that book from the set without a trace, so it has to be excluded first.
+    /// </summary>
+    private static void RequireSavable(CardSetPlan plan, Func<CardSetPlanResponse> response)
+    {
+        if (plan.UnsplittableBookIds.Count > 0)
+            throw new CardSetPlanException(
+                "A book has a chapter longer than one card holds; leave it out of the plan first.", response());
+        if (!plan.WithinLimits)
+            throw new CardSetPlanException("A card in this plan does not fit.", response());
+    }
+
+    private async Task<Guid?> ExistingSetIdAsync(Guid userConnectionId, string absSeriesId, CancellationToken ct) =>
+        await db.CardSets
+            .Where(s => s.UserConnectionId == userConnectionId && s.AbsSeriesId == absSeriesId)
+            .Select(s => (Guid?)s.Id)
+            .FirstOrDefaultAsync(ct);
+
     private static List<Playlist> Ordered(CardSet set) =>
         set.Cards.OrderBy(c => c.SetIndex ?? int.MaxValue).ToList();
 
-    /// <summary>A card on Yoto, or being sent, never changes.</summary>
+    /// <summary>A card on Yoto, queued to send or being sent never changes.</summary>
     private static bool IsLocked(Playlist card) =>
-        card.Status is PlaylistStatus.Transferred or PlaylistStatus.Transferring;
+        card.Status is PlaylistStatus.Transferred or PlaylistStatus.Transferring or PlaylistStatus.Queued;
 
     /// <summary>Cards up to the last locked one stay as they are, so nothing slides under a sent card.</summary>
     private static int FixedCount(List<Playlist> cards) => cards.FindLastIndex(IsLocked) + 1;
@@ -620,7 +661,8 @@ public class CardSetService(
     private static CardSetStatus StatusOf(IEnumerable<Playlist> cards)
     {
         var statuses = cards.Select(c => c.Status).ToList();
-        if (statuses.Contains(PlaylistStatus.Transferring)) return CardSetStatus.Sending;
+        if (statuses.Contains(PlaylistStatus.Transferring) || statuses.Contains(PlaylistStatus.Queued))
+            return CardSetStatus.Sending;
         if (statuses.Contains(PlaylistStatus.Failed)) return CardSetStatus.NeedsAttention;
         if (statuses.Count > 0 && statuses.All(s => s == PlaylistStatus.Transferred)) return CardSetStatus.Complete;
         return CardSetStatus.Draft;

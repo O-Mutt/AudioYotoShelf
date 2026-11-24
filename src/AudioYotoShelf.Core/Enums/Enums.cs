@@ -97,5 +97,7 @@ public enum PlaylistStatus
     Draft,
     Transferring,
     Transferred,
-    Failed
+    Failed,
+    /// <summary>Waiting in a card set's send job; it must not be queued a second time.</summary>
+    Queued
 }

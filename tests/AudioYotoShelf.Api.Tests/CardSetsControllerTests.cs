@@ -244,4 +244,20 @@ public class CardSetsControllerTests : IDisposable
         result.Should().BeOfType<OkObjectResult>();
         _backgroundJobs.VerifyNothingEnqueued();
     }
+    [Fact]
+    public async Task Transfer_WhenTheJobCannotBeQueued_PutsTheCardsBackToDraft()
+    {
+        var caller = Guid.NewGuid();
+        var id = await AddCardSetOwnedByAsync(caller);
+        var cards = new[] { Guid.NewGuid() };
+        _cardSets.Setup(s => s.PrepareTransferAsync(id, null, It.IsAny<CancellationToken>())).ReturnsAsync(cards);
+        _backgroundJobs
+            .Setup(b => b.Create(It.IsAny<Hangfire.Common.Job>(), It.IsAny<IState>()))
+            .Throws(new InvalidOperationException("storage down"));
+
+        var act = () => _sut.AsUser(caller).Transfer(id, null, default);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        _cardSets.Verify(s => s.ReleaseQueuedAsync(cards, It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

@@ -89,6 +89,8 @@ function statusLabel(card: CardSetCard) {
       return 'On Yoto'
     case 'Transferring':
       return 'Sending…'
+    case 'Queued':
+      return 'Queued'
     case 'Failed':
       return 'Failed'
     default:
@@ -242,7 +244,8 @@ async function deleteSet() {
               class="shrink-0 px-2 py-0.5 rounded-full text-xs font-medium"
               :class="{
                 'bg-green-100 text-green-700': card.status === 'Transferred',
-                'bg-blue-100 text-blue-700': card.status === 'Transferring',
+                'bg-blue-100 text-blue-700':
+                  card.status === 'Transferring' || card.status === 'Queued',
                 'bg-red-100 text-red-700': card.status === 'Failed',
                 'bg-gray-100 text-gray-600': card.status === 'Draft',
               }"
@@ -307,7 +310,7 @@ async function deleteSet() {
     </div>
 
     <!-- Books in or out of the plan -->
-    <details class="text-sm">
+    <details class="text-sm" :open="store.unsplittable.length > 0">
       <summary class="cursor-pointer text-gray-600">Books in the plan</summary>
       <ul class="mt-2 space-y-1">
         <li v-for="book in seriesBooks" :key="book.id" class="flex items-center gap-2">
@@ -328,6 +331,13 @@ async function deleteSet() {
           >
             duplicate?
           </span>
+          <span
+            v-if="store.unsplittable.includes(book.id)"
+            class="text-xs text-red-600"
+            :data-testid="`unsplittable-${book.id}`"
+          >
+            a chapter is longer than one card; leave it out to make the cards
+          </span>
         </li>
       </ul>
     </details>
@@ -341,6 +351,7 @@ async function deleteSet() {
         :disabled="
           !store.cards.length ||
           !store.withinLimits ||
+          store.unsplittable.length > 0 ||
           store.isSaving ||
           !connectionStore.isYotoConnected
         "

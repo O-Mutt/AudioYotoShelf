@@ -119,6 +119,20 @@ public partial class PlaylistTransferOrchestratorTests
     }
 
     [Fact]
+    public async Task TransferPlaylist_PartOfASingleFileBookWithOneChapter_ExtractsItsTimeSegments()
+    {
+        // Many .m4b files carry one chapter spanning the whole book; the planner cuts those by time too.
+        SetupBook("big", TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", duration: 7200)],
+            chapters: [TestData.CreateAbsChapter(0, "Whole book", 0, 7200)]));
+        var extracted = RecordExtractions();
+
+        await SendPartAsync(Part([3600, 3600], first: 0, last: 0, part: 1, parts: 2));
+
+        extracted.Should().Equal((0, 3600));
+    }
+
+    [Fact]
     public async Task TransferPlaylist_PartWhoseBookChangedChapters_FailsAndAsksToReplan()
     {
         SetupBook("big", TestData.CreateAbsMedia(audioFiles:

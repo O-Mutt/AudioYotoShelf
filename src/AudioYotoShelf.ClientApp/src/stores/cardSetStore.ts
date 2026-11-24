@@ -14,6 +14,9 @@ import type {
 
 const POLL_MS = 5000
 
+/** Cards the server has queued or is sending; the set is re-read until none are left. */
+const inFlight = (card: CardSetCard) => card.status === 'Queued' || card.status === 'Transferring'
+
 /** The breaks and split points that produce these cards (spec §5.5). */
 export function layoutOf(cards: CardSetCard[], books: CardSetBook[]): CardSetLayout {
   const breaks: number[] = []
@@ -51,7 +54,6 @@ export const useCardSetStore = defineStore('cardSet', () => {
   const isLoading = ref(false)
   const isSaving = ref(false)
   const error = ref<string | null>(null)
-  const pending = ref<Set<string>>(new Set())
   let pollTimer: ReturnType<typeof setInterval> | null = null
 
   const view = computed(() => cardSet.value ?? preview.value)
@@ -61,7 +63,9 @@ export const useCardSetStore = defineStore('cardSet', () => {
   const messages = computed(() => view.value?.messages ?? [])
   const isSaved = computed(() => cardSet.value !== null)
   const unsentCards = computed(() => cards.value.filter((c) => !c.locked))
-  const isSending = computed(() => pending.value.size > 0 || cardSet.value?.status === 'Sending')
+  const isSending = computed(() => cards.value.some(inFlight))
+  /** Books the planner had to leave out because one chapter is bigger than a card. */
+  const unsplittable = computed(() => preview.value?.unsplittableBookIds ?? [])
 
   async function load(series: string, library: string) {
     stopPolling()
@@ -78,8 +82,7 @@ export const useCardSetStore = defineStore('cardSet', () => {
       if (existing) {
         const { data } = await cardSetApi.get(existing.id)
         setSaved(data)
-        if (data.status === 'Sending')
-          startPolling(data.cards.filter((c) => !c.locked).map((c) => c.playlistId!))
+        if (data.cards.some(inFlight)) startPolling()
       } else {
         await replan()
       }
@@ -242,7 +245,12 @@ export const useCardSetStore = defineStore('cardSet', () => {
   async function sendNow(playlistIds?: string[]) {
     if (!cardSet.value) return
     const { data } = await cardSetApi.transfer(cardSet.value.id, playlistIds)
-    if (data.playlistIds?.length) startPolling(data.playlistIds)
+    // The server marks the cards Queued before it answers, so re-reading now shows them as queued
+    // (a retried card stops reading Failed) and polling runs until they have all landed.
+    if (data.playlistIds?.length) {
+      await refresh()
+      startPolling()
+    }
   }
 
   function renameCard(playlistId: string, name: string) {
@@ -263,10 +271,9 @@ export const useCardSetStore = defineStore('cardSet', () => {
     })
   }
 
-  /** Re-reads the set until every card that was sent has reached Yoto or failed. */
-  function startPolling(playlistIds: string[]) {
-    pending.value = new Set([...pending.value, ...playlistIds])
-    if (pollTimer) return
+  /** Re-reads the set while any card is queued or being sent. */
+  function startPolling() {
+    if (pollTimer || !cards.value.some(inFlight)) return
     pollTimer = setInterval(refresh, POLL_MS)
   }
 
@@ -275,11 +282,7 @@ export const useCardSetStore = defineStore('cardSet', () => {
     try {
       const { data } = await cardSetApi.get(cardSet.value.id)
       setSaved(data)
-      const done = data.cards
-        .filter((c) => c.status === 'Transferred' || c.status === 'Failed')
-        .map((c) => c.playlistId)
-      pending.value = new Set([...pending.value].filter((id) => !done.includes(id)))
-      if (pending.value.size === 0) stopPolling()
+      if (!data.cards.some(inFlight)) stopPolling()
     } catch (err) {
       error.value = errorMessage(err)
       stopPolling()
@@ -289,7 +292,6 @@ export const useCardSetStore = defineStore('cardSet', () => {
   function stopPolling() {
     if (pollTimer) clearInterval(pollTimer)
     pollTimer = null
-    pending.value = new Set()
   }
 
   return {
@@ -308,6 +310,7 @@ export const useCardSetStore = defineStore('cardSet', () => {
     isSaved,
     unsentCards,
     isSending,
+    unsplittable,
     load,
     setMode,
     toggleExcluded,

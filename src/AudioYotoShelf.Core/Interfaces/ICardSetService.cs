@@ -31,10 +31,16 @@ public interface ICardSetService
     Task DeleteAsync(Guid cardSetId, CancellationToken ct = default);
 
     /// <summary>
-    /// The cards to send, in set order: the given ones, or every card not on Yoto or being sent.
+    /// Marks the cards to send as queued and returns them in set order: the given ones, or every card
+    /// that is not on Yoto, queued or being sent. Queuing them here is what stops a second Send from
+    /// picking up cards an earlier job has not reached yet.
     /// </summary>
     /// <exception cref="CardSetCapacityException">A requested card is over the card limits.</exception>
+    /// <exception cref="CardSetConflictException">A requested card is queued or being sent already.</exception>
     Task<Guid[]> PrepareTransferAsync(Guid cardSetId, IReadOnlyList<Guid>? playlistIds, CancellationToken ct = default);
+
+    /// <summary>Puts cards that were queued back to draft, for when the send job could not be enqueued.</summary>
+    Task ReleaseQueuedAsync(IReadOnlyList<Guid> playlistIds, CancellationToken ct = default);
 }
 
 /// <summary>409: the set already exists, or a change would move a card already on Yoto.</summary>

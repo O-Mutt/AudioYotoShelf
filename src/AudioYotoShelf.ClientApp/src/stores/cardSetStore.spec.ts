@@ -248,11 +248,14 @@ describe('cardSetStore', () => {
     expect(api.updateBreaks).not.toHaveBeenCalled()
   })
 
-  it('makes the cards and sends them all', async () => {
+  it('makes the cards and sends them all, then shows them queued', async () => {
     api.list.mockReturnValue(ok([]))
     api.plan.mockReturnValue(ok(plan([card(0, 0, 3)])))
     api.create.mockReturnValue(ok(saved([card(0, 0, 3, { playlistId: 'p1', status: 'Draft' })])))
     api.transfer.mockReturnValue(ok({ cardSetId: 'set-1', playlistIds: ['p1'] }))
+    api.get.mockReturnValue(
+      ok(saved([card(0, 0, 3, { playlistId: 'p1', status: 'Queued', locked: true })])),
+    )
     const store = useCardSetStore()
     await store.load('ser-1', 'lib-1')
 
@@ -263,6 +266,95 @@ describe('cardSetStore', () => {
     )
     expect(api.transfer).toHaveBeenCalledWith('set-1', undefined)
     expect(store.isSaved).toBe(true)
+    expect(store.cards[0]!.status).toBe('Queued')
     expect(store.isSending).toBe(true)
+  })
+
+  describe('while cards are sending', () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    it('after a reload, keeps reading the set until the card being sent lands', async () => {
+      api.list.mockReturnValue(ok([{ id: 'set-1' }]))
+      api.get.mockReturnValueOnce(
+        ok(
+          saved([
+            card(0, 0, 1, { playlistId: 'p1', status: 'Transferred', locked: true }),
+            card(1, 2, 3, { playlistId: 'p2', status: 'Transferring', locked: true }),
+          ]),
+        ),
+      )
+      api.get.mockReturnValue(
+        ok(
+          saved([
+            card(0, 0, 1, { playlistId: 'p1', status: 'Transferred', locked: true }),
+            card(1, 2, 3, { playlistId: 'p2', status: 'Transferred', locked: true }),
+          ]),
+        ),
+      )
+      const store = useCardSetStore()
+      await store.load('ser-1', 'lib-1')
+      expect(store.isSending).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(store.cards[1]!.status).toBe('Transferred')
+      expect(store.isSending).toBe(false)
+      await vi.advanceTimersByTimeAsync(15000)
+      expect(api.get).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not poll a draft card nobody sent', async () => {
+      api.list.mockReturnValue(ok([{ id: 'set-1' }]))
+      api.get.mockReturnValue(ok(saved([card(0, 0, 3, { playlistId: 'p1', status: 'Draft' })])))
+      const store = useCardSetStore()
+      await store.load('ser-1', 'lib-1')
+
+      await vi.advanceTimersByTimeAsync(15000)
+
+      expect(api.get).toHaveBeenCalledTimes(1)
+    })
+
+    it('a retried card keeps being read until it is sent', async () => {
+      api.list.mockReturnValue(ok([{ id: 'set-1' }]))
+      api.get.mockReturnValueOnce(
+        ok(
+          saved([
+            card(0, 0, 3, { playlistId: 'p1', status: 'Failed', errorMessage: 'Yoto said no' }),
+          ]),
+        ),
+      )
+      api.transfer.mockReturnValue(ok({ cardSetId: 'set-1', playlistIds: ['p1'] }))
+      api.get.mockReturnValueOnce(
+        ok(saved([card(0, 0, 3, { playlistId: 'p1', status: 'Queued', locked: true })])),
+      )
+      api.get.mockReturnValueOnce(
+        ok(saved([card(0, 0, 3, { playlistId: 'p1', status: 'Queued', locked: true })])),
+      )
+      api.get.mockReturnValue(
+        ok(saved([card(0, 0, 3, { playlistId: 'p1', status: 'Transferred', locked: true })])),
+      )
+      const store = useCardSetStore()
+      await store.load('ser-1', 'lib-1')
+
+      await store.send(['p1'])
+      expect(store.cards[0]!.status).toBe('Queued')
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(store.isSending).toBe(true)
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(store.cards[0]!.status).toBe('Transferred')
+      expect(store.isSending).toBe(false)
+    })
+  })
+
+  it('reports books the planner could not split', async () => {
+    api.list.mockReturnValue(ok([]))
+    api.plan.mockReturnValue(ok({ ...plan([card(0, 0, 2)]), unsplittableBookIds: ['b3'] }))
+    const store = useCardSetStore()
+
+    await store.load('ser-1', 'lib-1')
+
+    expect(store.unsplittable).toEqual(['b3'])
   })
 })

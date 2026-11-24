@@ -322,7 +322,7 @@ export interface YotoTrack {
 // --- Series card sets (docs/specs/series-card-sets.md) ---
 
 export type PackingMode = 'Balance' | 'Fill'
-export type PlaylistStatus = 'Draft' | 'Transferring' | 'Transferred' | 'Failed'
+export type PlaylistStatus = 'Draft' | 'Queued' | 'Transferring' | 'Transferred' | 'Failed'
 export type CardSetStatus = 'Draft' | 'Sending' | 'NeedsAttention' | 'Complete'
 
 export interface CapacitySummary {

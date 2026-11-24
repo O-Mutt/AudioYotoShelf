@@ -130,8 +130,18 @@ public class CardSetsController(
         if (playlistIds.Length == 0)
             return Ok(new { CardSetId = cardSetId, Message = "Every card is already on Yoto" });
 
-        var jobId = backgroundJobs.Enqueue<ICardSetJobService>(
-            svc => svc.ExecuteCardSetTransferAsync(cardSetId, playlistIds, CancellationToken.None));
+        string jobId;
+        try
+        {
+            jobId = backgroundJobs.Enqueue<ICardSetJobService>(
+                svc => svc.ExecuteCardSetTransferAsync(cardSetId, playlistIds, CancellationToken.None));
+        }
+        catch
+        {
+            // The cards were marked Queued; without a job nothing would ever move them on.
+            await cardSets.ReleaseQueuedAsync(playlistIds, CancellationToken.None);
+            throw;
+        }
 
         logger.LogInformation("Card set transfer queued: {CardSetId} ({Count} cards) -> Job {JobId}",
             cardSetId, playlistIds.Length, jobId);

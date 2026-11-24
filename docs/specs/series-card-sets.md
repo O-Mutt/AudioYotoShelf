@@ -426,7 +426,7 @@ Where the code differs from the sections above, the code is right and this list 
   uses it for the rest of a split book whose first parts are on Yoto.
 - **Breaks around split books.** `Apply` adds the breaks on each side of a book that needs splitting
   when the caller leaves them out, and splits a book without split points by the set's mode.
-- **Locked cards.** A card that is `Transferring` is locked as well as `Transferred`. Every card up
+- **Locked cards.** A card that is `Queued` or `Transferring` is locked as well as `Transferred`. Every card up
   to the last locked one keeps its books (§5.5), so nothing slides under a sent card. Changing the
   mode or exclusions (§7.4 `PATCH`) re-reads the series and re-packs only the cards after it,
   continuing a partly sent split book from the chapter after its last sent part.
@@ -441,9 +441,19 @@ Where the code differs from the sections above, the code is right and this list 
 - **Chapters changed in Audiobookshelf (§9).** Sending a part whose book no longer has the chapter
   count it was planned with fails that card with a message asking to re-plan; the other cards still
   send.
-- **Send (§7.5).** The job has no automatic retry, so a retry never re-sends a card already on Yoto.
-  Progress is not added to the SignalR hub yet: the series page re-reads the set every 5 s until the
-  cards it sent are on Yoto or failed.
+- **Send (§7.5).** Sending marks the chosen cards with a new playlist status, `Queued`, before the
+  job is enqueued, so a second Send cannot queue cards an earlier job has not reached, which would
+  make two Yoto cards for one card. Asking to send a queued card again is a `409`. If the job cannot
+  be enqueued the cards go back to draft. The job has no automatic retry; when Hangfire re-runs one
+  after a restart it skips cards already on Yoto, a card that fails before sending starts is marked
+  `Failed` rather than left queued, and cancelling it puts the cards it had not reached back to
+  draft. Progress is not added to the SignalR hub yet: the series page re-reads the set every 5 s
+  while any card is queued or being sent.
+- **Books that cannot be split (§5.4 step 4).** Creating a set, or re-packing one, is refused
+  (`422`) while a book has a chapter bigger than a card; the series page marks the book and asks for
+  it to be left out first. Saving would otherwise drop it from the set without a trace.
+- **Cards are not plain playlists.** The `/api/playlists` endpoints that change a playlist refuse
+  (`409`) one that belongs to a set; reading it still works.
 - **UI (§8).** Breaks and split points move with buttons (one book or one chapter either way)
   instead of dragging. The chapter strip shows where each split falls.
 - **Not built (Phase 2):** `refresh`, `newBookIds`, `GET /status`, the series grid badges and

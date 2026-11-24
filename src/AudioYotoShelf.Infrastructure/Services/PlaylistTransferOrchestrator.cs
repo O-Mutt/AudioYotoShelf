@@ -263,8 +263,10 @@ public class PlaylistTransferOrchestrator(
         var last = item.LastChapterIndex!.Value;
         var planned = item.TrackDurations.Count;
         var files = media.AudioFiles.OrderBy(f => f.Index).ToList();
-        var chapterless = files.Count == 1 && media.Chapters.Length == 0;
-        var current = files.Count > 1 ? files.Count : chapterless ? planned : media.Chapters.Length;
+        // The planner cuts a book with a single entry in its chapter list into equal time segments, and a
+        // single file with one embedded chapter has a single entry just as one with none does.
+        var timeSegments = files.Count == 1 && media.Chapters.Length <= 1;
+        var current = files.Count > 1 ? files.Count : timeSegments ? planned : media.Chapters.Length;
 
         if (files.Count == 0 || current != planned || first < 0 || last >= planned || first > last)
             throw new InvalidOperationException(
@@ -285,7 +287,7 @@ public class PlaylistTransferOrchestrator(
             var total = files[0].Duration > 0 ? files[0].Duration : media.Duration;
             for (var i = first; i <= last; i++)
             {
-                var (start, end, title) = chapterless
+                var (start, end, title) = timeSegments
                     ? (total * i / planned, total * (i + 1) / planned, $"{item.BookTitle} ({i + 1})")
                     : (media.Chapters[i].Start, media.Chapters[i].End, media.Chapters[i].Title);
                 var chapterPath = await chapterExtractor.ExtractChapterAsync(inputPath, start, end, "m4a", ct);

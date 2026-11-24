@@ -494,4 +494,96 @@ public class CardSetServiceTests : IDisposable
 
         await act.Should().ThrowAsync<KeyNotFoundException>();
     }
+    [Fact]
+    public async Task PrepareTransfer_QueuesTheCards_SoASecondSendPicksNoneOfThem()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(12));
+        var set = await _sut.CreateAsync(userId, Create());
+
+        var first = await _sut.PrepareTransferAsync(set.Id, null);
+        var second = await _sut.PrepareTransferAsync(set.Id, null);
+
+        first.Should().HaveCount(2);
+        second.Should().BeEmpty();
+        (await CardsAsync(set.Id)).Should().OnlyContain(c => c.Status == PlaylistStatus.Queued);
+        (await _sut.GetAsync(set.Id))!.Status.Should().Be(CardSetStatus.Sending);
+    }
+
+    [Fact]
+    public async Task PrepareTransfer_AQueuedCardAskedForAgain_Conflicts()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(3));
+        var set = await _sut.CreateAsync(userId, Create());
+        var card = set.Cards[0].PlaylistId!.Value;
+        await _sut.PrepareTransferAsync(set.Id, [card]);
+
+        var act = () => _sut.PrepareTransferAsync(set.Id, [card]);
+
+        await act.Should().ThrowAsync<CardSetConflictException>();
+    }
+
+    [Fact]
+    public async Task PrepareTransfer_AFailedCard_CanBeSentAgain()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(3));
+        var set = await _sut.CreateAsync(userId, Create());
+        var cardId = set.Cards[0].PlaylistId!.Value;
+        var card = await _fixture.DbContext.Playlists.FirstAsync(p => p.Id == cardId);
+        card.Status = PlaylistStatus.Failed;
+        card.ErrorMessage = "Yoto said no";
+        await _fixture.DbContext.SaveChangesAsync();
+
+        (await _sut.PrepareTransferAsync(set.Id, [cardId])).Should().Equal(cardId);
+        card.Status.Should().Be(PlaylistStatus.Queued);
+        card.ErrorMessage.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReleaseQueued_PutsQueuedCardsBackToDraft()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(HourBooks(3));
+        var set = await _sut.CreateAsync(userId, Create());
+        var ids = await _sut.PrepareTransferAsync(set.Id, null);
+
+        await _sut.ReleaseQueuedAsync(ids);
+
+        (await CardsAsync(set.Id)).Should().OnlyContain(c => c.Status == PlaylistStatus.Draft);
+    }
+
+    [Fact]
+    public async Task Create_WithABookThatCannotBeSplit_IsRefusedUntilItIsLeftOut()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(new SeriesBookSpec("b1", "1", 1), new SeriesBookSpec("huge", "2", 12, 1));
+
+        var refused = () => _sut.CreateAsync(userId, Create());
+        var thrown = await refused.Should().ThrowAsync<CardSetPlanException>();
+        thrown.Which.Plan.UnsplittableBookIds.Should().Equal("huge");
+
+        var set = await _sut.CreateAsync(userId, Create(excluded: ["huge"]));
+        set.Books.Select(b => b.AbsLibraryItemId).Should().Equal("b1");
+    }
+
+    [Fact]
+    public async Task Update_AfterAPartWasSent_NumbersTheLaterBooksByTheirPlaceInTheSet()
+    {
+        var userId = await SeedUserAsync();
+        SetupSeries(
+            new SeriesBookSpec("b0", null, 1), new SeriesBookSpec("b1", null, 1), new SeriesBookSpec("b2", null, 1),
+            new SeriesBookSpec("big", null, Enumerable.Repeat(1.0, 25).ToArray()),
+            new SeriesBookSpec("c0", null, 1), new SeriesBookSpec("c1", null, 1), new SeriesBookSpec("c2", null, 1));
+        var set = await _sut.CreateAsync(userId, Create());
+        await LockAsync(set.Cards[0].PlaylistId!.Value);
+        await LockAsync(set.Cards[1].PlaylistId!.Value);
+
+        // Leaving c0 out changes the last card, so its title is worked out again: c1 and c2 are now
+        // books 5 and 6 of the set.
+        var updated = await _sut.UpdateAsync(set.Id, new UpdateCardSetRequest(ExcludedItemIds: ["c0"]));
+
+        updated.Cards.Last().Title.Should().Be("Dragons · Books 5–6");
+    }
 }
