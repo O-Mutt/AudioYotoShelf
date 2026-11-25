@@ -4,6 +4,7 @@ using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Tests.Helpers;
+using AudioYotoShelf.Infrastructure.Services;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Moq;
@@ -328,6 +329,72 @@ public partial class PlaylistTransferOrchestratorTests
             ("0101", "Long Book (Part 1)", 3600.0, 60L),
             ("0102", "Long Book (Part 2)", 3600.0, 60L));
         TempDirShouldBeEmpty();
+    }
+
+    // An unscanned file (Audiobookshelf reports duration 0) over the per-track cap, at 1/100 scale:
+    // 1.1 MB on disk against a 1 MB cap, with a 1 kbps estimate so its stored size stays under it.
+    private double? _requestedSegmentSeconds;
+
+    private PlaylistTransferOrchestrator UnscannedOversizedBook(double? probedSeconds)
+    {
+        var sut = CreateSut(_tempDir, new YotoCardLimits { MaxTrackBytes = 1_000_000, TranscodedBitrateKbps = 1 });
+        _absService.Setup(s => s.DownloadAudioFileAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new MemoryStream(new byte[1_100_000]));
+        _chapterExtractor.Setup(c => c.ProbeDurationAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(probedSeconds);
+        _chapterExtractor.Setup(c => c.SplitAsync(
+                It.IsAny<string>(), It.IsAny<double>(), "m4a", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, double seconds, string _, CancellationToken _) =>
+            {
+                _requestedSegmentSeconds = seconds;
+                return (IReadOnlyList<string>)[MakeTempFile("part1.m4a", 60), MakeTempFile("part2.m4a", 60)];
+            });
+        SetupBook("book-1", TestData.CreateAbsMedia(audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", 0)], chapters: []));
+        return sut;
+    }
+
+    [Fact]
+    public async Task TransferPlaylist_UnscannedTrackOverTheCap_IsSplitByItsProbedLength()
+    {
+        var card = CaptureCard();
+        var sut = UnscannedOversizedBook(probedSeconds: 7200);
+        var playlistId = await SeedPlaylistAsync(grouping: TrackGrouping.Chapters,
+            items: [Item("book-1", 0, "Unscanned", [0])]);
+
+        await sut.TransferPlaylistAsync(playlistId);
+
+        _requestedSegmentSeconds.Should().Be(3600);   // 7200 s probed, over the 1 h limit: 2 parts
+        card.Content!.Chapters.Single().Tracks.Select(t => t.Duration).Should().Equal(3600.0, 3600.0);
+        TempDirShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TransferPlaylist_UnscannedTrackWhoseLengthCantBeRead_IsUploadedWhole()
+    {
+        var uploads = CaptureUploads();
+        var sut = UnscannedOversizedBook(probedSeconds: null);
+        var playlistId = await SeedPlaylistAsync(grouping: TrackGrouping.Chapters,
+            items: [Item("book-1", 0, "Unscanned", [0])]);
+
+        await sut.TransferPlaylistAsync(playlistId);
+
+        _chapterExtractor.Verify(c => c.SplitAsync(
+            It.IsAny<string>(), It.IsAny<double>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        uploads.Should().ContainSingle().Which.Length.Should().Be(1_100_000);
+        TempDirShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TransferPlaylist_ScannedTrack_IsNotProbed()
+    {
+        var playlistId = await SeedPlaylistAsync(grouping: TrackGrouping.Chapters,
+            items: [Item("book-1", 0, "Scanned", [3600])]);
+        SetupBook("book-1", TestData.CreateAbsMedia(audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", 3600)], chapters: []));
+
+        await _sut.TransferPlaylistAsync(playlistId);
+
+        _chapterExtractor.Verify(c => c.ProbeDurationAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

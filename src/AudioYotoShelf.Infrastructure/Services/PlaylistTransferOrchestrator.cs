@@ -311,6 +311,20 @@ public class PlaylistTransferOrchestrator(
 
     private async Task<List<LocalTrack>> SplitIfNeededAsync(LocalTrack track, List<string> temp, CancellationToken ct)
     {
+        // Audiobookshelf reports 0 for a file it hasn't scanned, and a split needs a length to divide:
+        // cutting by 0 / parts asks ffmpeg for zero-length segments and fails the book. The file is on
+        // disk now, so read its real length; if that fails, upload it whole rather than guess.
+        if (track.DurationSeconds <= 0)
+        {
+            var probed = await chapterExtractor.ProbeDurationAsync(track.Path, ct);
+            if (probed is null)
+            {
+                logger.LogWarning("Uploading '{Title}' unsplit: its length is unknown", track.Title);
+                return [track];
+            }
+            track = track with { DurationSeconds = probed.Value };
+        }
+
         // The calculator decides the parts so the split matches the capacity projection. It weighs a
         // track with a duration by Yoto's stored size; the size on disk counts only when the duration
         // is unknown.

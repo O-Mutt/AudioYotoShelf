@@ -26,6 +26,12 @@ public interface IChapterExtractor
     Task<IReadOnlyList<string>> SplitAsync(string inputFilePath, double segmentSeconds, string outputFormat = "m4a", CancellationToken ct = default);
 
     /// <summary>
+    /// Reads an audio file's length in seconds with ffprobe, or null when it can't be read. Used for
+    /// a file Audiobookshelf hasn't scanned yet, whose reported duration is 0.
+    /// </summary>
+    Task<double?> ProbeDurationAsync(string filePath, CancellationToken ct = default);
+
+    /// <summary>
     /// Check if FFmpeg is available on the system.
     /// </summary>
     Task<bool> IsFfmpegAvailableAsync(CancellationToken ct = default);

@@ -627,6 +627,55 @@ public class FfmpegChapterExtractorTests : IDisposable
 
     private sealed record Call(string FileName, string Arguments, bool CaptureStandardError, CancellationToken Token);
 
+    // --- Reading a file's length with ffprobe (for files Audiobookshelf hasn't scanned)
+
+    [Fact]
+    public async Task ProbeDurationAsync_ReadsTheDurationFfprobePrints()
+    {
+        var runner = new FakeProcessRunner { Result = new ProcessResult(0, "", "7213.418000\n") };
+        var sut = new FfmpegChapterExtractor(Mock.Of<ILogger<FfmpegChapterExtractor>>(), runner);
+
+        var seconds = await sut.ProbeDurationAsync("/tmp/book.m4b");
+
+        seconds.Should().Be(7213.418);
+        var call = runner.Calls.Should().ContainSingle().Subject;
+        call.FileName.Should().Be("ffprobe");
+        call.Arguments.Should().Contain("format=duration").And.EndWith("\"/tmp/book.m4b\"");
+    }
+
+    [Theory]
+    [InlineData(0, "N/A\n")]      // a stream ffprobe can't time
+    [InlineData(0, "")]
+    [InlineData(0, "0.000000\n")]
+    [InlineData(1, "")]            // ffprobe failed, e.g. not an audio file
+    public async Task ProbeDurationAsync_WithoutAUsableDuration_ReturnsNull(int exitCode, string output)
+    {
+        var runner = new FakeProcessRunner { Result = new ProcessResult(exitCode, "Invalid data", output) };
+        var sut = new FfmpegChapterExtractor(Mock.Of<ILogger<FfmpegChapterExtractor>>(), runner);
+
+        (await sut.ProbeDurationAsync("/tmp/book.m4b")).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ProbeDurationAsync_WhenFfprobeCannotStart_ReturnsNull()
+    {
+        var runner = new FakeProcessRunner { Failure = new System.ComponentModel.Win32Exception("ffprobe not found") };
+        var sut = new FfmpegChapterExtractor(Mock.Of<ILogger<FfmpegChapterExtractor>>(), runner);
+
+        (await sut.ProbeDurationAsync("/tmp/book.m4b")).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ProbeDurationAsync_Cancelled_Throws()
+    {
+        var runner = new FakeProcessRunner { Failure = new OperationCanceledException() };
+        var sut = new FfmpegChapterExtractor(Mock.Of<ILogger<FfmpegChapterExtractor>>(), runner);
+
+        var act = () => sut.ProbeDurationAsync("/tmp/book.m4b");
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
     private sealed class FakeProcessRunner : IProcessRunner
     {
         public List<Call> Calls { get; } = [];
