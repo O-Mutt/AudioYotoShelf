@@ -300,6 +300,13 @@ using (var scope = app.Services.CreateScope())
         await AbsServerLock.RepointConnectionsAsync(db, configuredAbsUrl, absLockLogger);
     }
 
+    // Before app.RunAsync starts the Hangfire server: a job resumed after a hard stop must not
+    // have its fresh files swept away.
+    TempFileSweeper.Sweep(
+        [app.Configuration.GetValue("Transfer:TempDirectory", "/app/temp")!, Path.GetTempPath()],
+        DateTime.UtcNow,
+        scope.ServiceProvider.GetRequiredService<ILogger<Program>>());
+
     var ffmpeg = scope.ServiceProvider.GetRequiredService<IChapterExtractor>();
     var ffmpegAvailable = await ffmpeg.IsFfmpegAvailableAsync();
     Log.Information("FFmpeg available: {Available}", ffmpegAvailable);
