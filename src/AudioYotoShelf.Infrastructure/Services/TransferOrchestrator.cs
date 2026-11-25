@@ -369,12 +369,15 @@ public class TransferOrchestrator(
 
         // A retried transfer still has the mappings of its earlier attempt. A track that already
         // reached Yoto keeps its row (and its SHA), so the retry neither re-extracts nor re-uploads
-        // it; everything else from the earlier attempt is dropped below.
+        // it; everything else from the earlier attempt is dropped below. A row without a format
+        // counts as unfinished: rows saved before formats were recorded have none, and the card
+        // would then declare "aac" for what may be opus, which breaks playback.
         var earlierAttempt = await db.TrackMappings
             .Where(tm => tm.CardTransferId == transfer.Id)
             .ToListAsync(ct);
-        db.TrackMappings.RemoveRange(earlierAttempt.Where(tm => tm.YotoTranscodedSha256 is null));
-        var previous = earlierAttempt.Where(tm => tm.YotoTranscodedSha256 is not null).ToList();
+        static bool ReachedYoto(TrackMapping tm) => tm.YotoTranscodedSha256 is not null && tm.TranscodedFormat is not null;
+        db.TrackMappings.RemoveRange(earlierAttempt.Where(tm => !ReachedYoto(tm)));
+        var previous = earlierAttempt.Where(ReachedYoto).ToList();
         var kept = new HashSet<Guid>();
 
         TrackMapping? FinishedEarlier(string fileIno, double start, double end)
@@ -426,9 +429,10 @@ public class TransferOrchestrator(
             // Single-file book: extract chapters via FFmpeg
             var singleFile = media.AudioFiles[0];
 
-            // Download the single file to temp
+            // Downloaded only when a chapter still has to be cut: a retry whose chapters are all
+            // on Yoto must not wait on (or fail over) hundreds of MB it will not use.
             var tempInputPath = Path.Combine(TempDir, $"{TempFilePrefix(transfer.Id)}_input{Path.GetExtension(singleFile.Metadata.Filename)}");
-            await DownloadToFileAsync(user, item.Id, singleFile.Ino, tempInputPath, ct);
+            var downloaded = false;
 
             for (int i = 0; i < media.Chapters.Length; i++)
             {
@@ -440,6 +444,12 @@ public class TransferOrchestrator(
                     finished.ChapterIndex = i;
                     mappings.Add(finished);
                     continue;
+                }
+
+                if (!downloaded)
+                {
+                    await DownloadToFileAsync(user, item.Id, singleFile.Ino, tempInputPath, ct);
+                    downloaded = true;
                 }
 
                 var chapterPath = await chapterExtractor.ExtractChapterAsync(
@@ -513,6 +523,7 @@ public class TransferOrchestrator(
             {
                 logger.LogInformation("Track {Track}/{Total} reached Yoto in an earlier attempt; not uploading it again",
                     i + 1, mappings.Count);
+                transfer.ProgressPercent = UploadPhaseProgress(i + 1, mappings.Count);
                 ReportTrack(TrackPhase.Reused, null, $"Track {i + 1}/{mappings.Count} is already on Yoto");
                 continue;
             }
@@ -538,6 +549,7 @@ public class TransferOrchestrator(
                 mapping.TranscodedFormat = existing.TranscodedFormat;
                 mapping.TranscodedDuration = existing.TranscodedDuration;
                 mapping.TranscodedFileSize = existing.TranscodedFileSize;
+                transfer.ProgressPercent = UploadPhaseProgress(i + 1, mappings.Count);
                 ReportTrack(TrackPhase.Reused, null, $"Track {i + 1}/{mappings.Count} is already on Yoto");
                 continue;
             }
@@ -591,6 +603,8 @@ public class TransferOrchestrator(
             }
         }
     }
+
+    private static int UploadPhaseProgress(int tracksDone, int trackCount) => 20 + tracksDone * 50 / trackCount;
 
     private readonly record struct TrackUpdate(Guid TrackId, TrackPhase Phase, int? Percent);
 

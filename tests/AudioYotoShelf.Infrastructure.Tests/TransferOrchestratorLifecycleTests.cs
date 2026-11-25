@@ -413,6 +413,7 @@ public partial class TransferOrchestratorTests
         var mapping = TestData.CreateTrackMapping(transferId, fileIno, $"Chapter {index + 1}", index, sha);
         mapping.StartTime = start;
         mapping.EndTime = end;
+        mapping.TranscodedFormat = sha is null ? null : "opus";
         return mapping;
     }
 
@@ -446,6 +447,50 @@ public partial class TransferOrchestratorTests
         mappings.Select(m => (m.AbsFileIno, m.YotoTranscodedSha256)).Should().Equal(
             ("ino-1:ch0", "sha-done"), ("ino-1:ch1", "sha256_test_hash"), ("ino-1:ch2", "sha256_test_hash"));
         mappings[0].Id.Should().Be(done.Id);
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_Retry_EveryChapterAlreadyOnYotoNeedsNoDownload()
+    {
+        var user = await SeedUserAsync();
+        var failed = TestData.CreateCardTransfer(user.Id, status: TransferStatus.Failed);
+        _db.CardTransfers.Add(failed);
+        _db.TrackMappings.AddRange(
+            EarlierTrack(failed.Id, "ino-1:ch0", 0, 0, 300, "sha-0"),
+            EarlierTrack(failed.Id, "ino-1:ch1", 1, 300, 600, "sha-1"),
+            EarlierTrack(failed.Id, "ino-1:ch2", 2, 600, 900, "sha-2"));
+        await _db.SaveChangesAsync();
+        ServeItemWith(ThreeChapterBook());
+
+        await _sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest(), failed.Id);
+
+        _absService.Verify(s => s.DownloadAudioFileWithMetadataAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never());
+        VerifyTrackUploads(Times.Never());
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_Retry_ATrackSavedWithoutItsFormatIsUploadedAgain()
+    {
+        var user = await SeedUserAsync();
+        var failed = TestData.CreateCardTransfer(user.Id, status: TransferStatus.Failed);
+        _db.CardTransfers.Add(failed);
+        var beforeFormats = EarlierTrack(failed.Id, "ino-a", 0, 0, 300, "sha-a");
+        beforeFormats.TranscodedFormat = null;
+        _db.TrackMappings.Add(beforeFormats);
+        await _db.SaveChangesAsync();
+        ServeItemWith(TestData.CreateAbsLibraryItem(media: TestData.CreateAbsMedia(audioFiles:
+        [
+            TestData.CreateAbsAudioFile(0, "ino-a", duration: 300),
+            TestData.CreateAbsAudioFile(1, "ino-b", duration: 400),
+        ])));
+
+        await _sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest(), failed.Id);
+
+        VerifyTrackUploads(Times.Exactly(2));
+        (await ReadTransferAsync(failed.Id)).TrackMappings.Select(m => m.YotoTranscodedSha256)
+            .Should().OnlyContain(sha => sha == "sha256_test_hash");
     }
 
     [Fact]
