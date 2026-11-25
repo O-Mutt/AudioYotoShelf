@@ -60,7 +60,8 @@ public interface IAudiobookshelfService
 
     // Books
     Task<AbsLibraryItem> GetLibraryItemAsync(string baseUrl, string token, string itemId, CancellationToken ct = default);
-    Task<Stream> GetCoverImageAsync(string baseUrl, string token, string itemId, CancellationToken ct = default);
+    /// <summary>The item's cover image, or null when Audiobookshelf has none for it (it answers 404).</summary>
+    Task<Stream?> GetCoverImageAsync(string baseUrl, string token, string itemId, CancellationToken ct = default);
 
     // Series
     Task<AbsSeriesResponse> GetSeriesAsync(string baseUrl, string token, string libraryId, int page = 0, int limit = 20, CancellationToken ct = default);

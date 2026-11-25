@@ -239,10 +239,15 @@ public class AudiobookshelfService(
             ?? throw new InvalidOperationException($"Failed to deserialize library item {itemId}");
     }
 
-    public async Task<Stream> GetCoverImageAsync(string baseUrl, string token, string itemId, CancellationToken ct = default)
+    public async Task<Stream?> GetCoverImageAsync(string baseUrl, string token, string itemId, CancellationToken ct = default)
     {
         using var client = CreateClient(baseUrl, token);
         var response = await client.GetAsync($"/api/items/{itemId}/cover", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            response.Dispose();
+            return null;
+        }
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStreamAsync(ct);
     }

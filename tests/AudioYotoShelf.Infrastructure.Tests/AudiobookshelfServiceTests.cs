@@ -581,14 +581,24 @@ public class AudiobookshelfServiceTests
 
         _handler.LastRequestUri.Should().Be("/api/items/book-7/cover");
         var copy = new MemoryStream();
-        await stream.CopyToAsync(copy);
+        await stream!.CopyToAsync(copy);
         copy.ToArray().Should().Equal(1, 2, 3);
+    }
+
+    [Fact]
+    public async Task GetCoverImageAsync_ItemWithoutACover_ReturnsNull()
+    {
+        _handler.SetupResponse(HttpStatusCode.NotFound, "no cover");
+
+        var stream = await _sut.GetCoverImageAsync("http://abs.local", "token", "book-7");
+
+        stream.Should().BeNull();
     }
 
     [Fact]
     public async Task GetCoverImageAsync_ServerError_Throws()
     {
-        _handler.SetupResponse(HttpStatusCode.NotFound, "no cover");
+        _handler.SetupResponse(HttpStatusCode.InternalServerError, "boom");
 
         var act = () => _sut.GetCoverImageAsync("http://abs.local", "token", "book-7");
 

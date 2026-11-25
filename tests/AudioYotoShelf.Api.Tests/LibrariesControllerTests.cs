@@ -444,6 +444,18 @@ public class LibrariesControllerTests : IDisposable
         (file.ContentType, file.FileStream).Should().Be(("image/jpeg", (Stream)image));
     }
 
+    [Fact]
+    public async Task GetCover_ItemWithoutACover_Returns404()
+    {
+        var user = await AddUserAsync("alice");
+        _absService.Setup(s => s.GetCoverImageAsync(user.AudiobookshelfUrl, "alice-abs-token", "item-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Stream?)null);
+
+        var result = await _sut.AsUser(user.Id).GetCover("item-1", CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
     // ---- a series without a library: search the user's book libraries
 
     private void SetupBookLibraries(params string[] libraryIds) =>

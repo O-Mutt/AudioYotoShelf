@@ -349,7 +349,9 @@ public class PlaylistTransferOrchestrator(
         {
             var coverStream = await absService.GetCoverImageAsync(
                 user.AudiobookshelfUrl, user.AudiobookshelfToken!, itemId, ct);
-            return await yotoService.UploadCoverImageAsync(yotoToken, coverStream, ct);
+            if (coverStream is null) return null;
+            await using (coverStream)
+                return await yotoService.UploadCoverImageAsync(yotoToken, coverStream, ct);
         }
         catch (Exception ex)
         {

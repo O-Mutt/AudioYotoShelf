@@ -625,6 +625,26 @@ public partial class PlaylistTransferOrchestratorTests
     }
 
     [Fact]
+    public async Task TransferPlaylist_SingleBookWithoutACover_BuildsTheCardWithoutUploadingOne()
+    {
+        var card = CaptureCard();
+        _absService.Setup(s => s.GetCoverImageAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Stream?)null);
+        var playlistId = await SeedPlaylistAsync(grouping: TrackGrouping.Chapters,
+            items: [Item("book-1", 0, "Coverless Book", [60])]);
+        SetupBook("book-1", TestData.CreateAbsMedia(audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", 60)], chapters: []));
+
+        await _sut.TransferPlaylistAsync(playlistId);
+
+        _yotoService.Verify(s => s.UploadCoverImageAsync(
+            It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<CancellationToken>()), Times.Never);
+        card.Metadata!.Cover.Should().BeNull();
+        card.Content.Should().NotBeNull();
+        TempDirShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task TransferPlaylist_WhenTheCoverUploadFails_StillBuildsTheCardWithoutACover()
     {
         var card = CaptureCard();
