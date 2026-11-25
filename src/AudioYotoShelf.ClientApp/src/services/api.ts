@@ -12,6 +12,8 @@ import type {
   CardLimits,
   CardSetPlanResponse,
   CardSetResponse,
+  CardSetSend,
+  CardSetStatus,
   CardSetSummary,
   ConnectionStatus,
   PackingMode,
@@ -228,6 +230,11 @@ export const cardSetApi = {
     return api.get<SeriesCardStatus[]>('/cardsets/status', {
       params: { seriesIds: seriesIds.join(',') },
     })
+  },
+
+  /** Sets that were sent or are sending, for the Transfers page; status filters on set status. */
+  sends(status?: CardSetStatus) {
+    return api.get<CardSetSend[]>('/cardsets/sends', { params: { status: status || undefined } })
   },
 
   limits() {

@@ -1,16 +1,28 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { transferApi } from '@/services/api'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cardSetApi, transferApi } from '@/services/api'
 import { useConnectionStore } from '@/stores/connectionStore'
-import type { TransferProgressUpdate, TransferResponse, TransferStatus } from '@/types'
+import type {
+  CardSetProgressUpdate,
+  CardSetSend,
+  TransferProgressUpdate,
+  TransferResponse,
+  TransferStatus,
+} from '@/types'
 import TransfersView from '@/views/TransfersView.vue'
+
+// The SignalR refs are shared, so a page left mounted by one test would react to the next test's pushes.
+enableAutoUnmount(afterEach)
 
 const signalR = vi.hoisted(() => ({
   progressUpdates: null as never,
   trackStates: null as never,
   listChangedAt: null as never,
+  cardSetUpdate: null as never,
+  joinCardSet: vi.fn(),
+  leaveCardSet: vi.fn(),
 }))
 
 vi.mock('@/composables/useSignalR', async () => {
@@ -18,11 +30,15 @@ vi.mock('@/composables/useSignalR', async () => {
   signalR.progressUpdates = ref(new Map()) as never
   signalR.trackStates = ref({}) as never
   signalR.listChangedAt = ref(0) as never
+  signalR.cardSetUpdate = ref(null) as never
   return {
     useSignalR: () => ({
       progressUpdates: signalR.progressUpdates,
       trackStates: signalR.trackStates,
       listChangedAt: signalR.listChangedAt,
+      cardSetUpdate: signalR.cardSetUpdate,
+      joinCardSet: signalR.joinCardSet,
+      leaveCardSet: signalR.leaveCardSet,
       connect: vi.fn(() => Promise.resolve()),
       joinTransfer: vi.fn(() => Promise.resolve()),
     }),
@@ -30,7 +46,8 @@ vi.mock('@/composables/useSignalR', async () => {
 })
 
 vi.mock('@/services/api', () => ({
-  transferApi: { getTransfers: vi.fn() },
+  transferApi: { getTransfers: vi.fn(), clearCompleted: vi.fn() },
+  cardSetApi: { sends: vi.fn() },
   authApi: { getConnectionStatus: vi.fn(), logout: vi.fn() },
 }))
 
@@ -68,13 +85,52 @@ function transfer(status: TransferStatus, uploadedTracks = 1, trackCount = 3): T
   } as TransferResponse
 }
 
-async function mountWith(t: TransferResponse) {
+async function mountWith(t: TransferResponse | null, sets: CardSetSend[] = []) {
   vi.mocked(transferApi.getTransfers).mockResolvedValue({
-    data: { results: [t], total: 1 },
+    data: { results: t ? [t] : [], total: t ? 1 : 0 },
   } as never)
+  vi.mocked(cardSetApi.sends).mockResolvedValue({ data: sets } as never)
   const wrapper = mount(TransfersView, { global: { stubs: { 'router-link': true } } })
   await flushPromises()
   return wrapper
+}
+
+const SET_ID = 'set-1'
+
+function cardSet(status: CardSetSend['status'], extra: Partial<CardSetSend> = {}): CardSetSend {
+  return {
+    id: SET_ID,
+    name: 'PAW Patrol',
+    absSeriesId: 'ser-1',
+    absLibraryId: 'lib-1',
+    status,
+    cardCount: 2,
+    sentCount: 0,
+    lastActivityAt: new Date().toISOString(),
+    cards: [
+      {
+        playlistId: 'card-1',
+        index: 0,
+        title: 'PAW Patrol · Books 1–5',
+        status: 'Transferring',
+        yotoCardId: null,
+        errorMessage: null,
+        transferredAt: null,
+        bookTitles: ['Pups Save the Day', 'Ready for Action'],
+      },
+      {
+        playlistId: 'card-2',
+        index: 1,
+        title: 'PAW Patrol · Books 6–9',
+        status: 'Queued',
+        yotoCardId: null,
+        errorMessage: null,
+        transferredAt: null,
+        bookTitles: ['Pups Save Christmas'],
+      },
+    ],
+    ...extra,
+  }
 }
 
 function pushLiveUpdate(update: Partial<TransferProgressUpdate>) {
@@ -173,5 +229,147 @@ describe('TransfersView', () => {
     const wrapper = await mountWith(transfer('Failed'))
 
     expect(wrapper.find('[data-test="transfer-step"]').exists()).toBe(false)
+  })
+})
+
+describe('TransfersView card sets', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    useConnectionStore().userConnectionId = 'c1'
+    ;(signalR.cardSetUpdate as unknown as { value: unknown }).value = null
+  })
+
+  function pushCardUpdate(update: Partial<CardSetProgressUpdate>) {
+    ;(signalR.cardSetUpdate as unknown as { value: CardSetProgressUpdate }).value = {
+      cardSetId: SET_ID,
+      playlistId: 'card-1',
+      cardIndex: 0,
+      status: 'Transferred',
+      errorMessage: null,
+      ...update,
+    }
+  }
+
+  it('hides the section when no set was ever sent', async () => {
+    const wrapper = await mountWith(transfer('Completed'))
+
+    expect(wrapper.find('[data-test="card-sets"]').exists()).toBe(false)
+  })
+
+  it('lists a sending set next to the book transfers, with how many cards are sent', async () => {
+    const wrapper = await mountWith(transfer('Completed'), [cardSet('Sending')])
+
+    const row = wrapper.find('[data-test="card-set"]')
+    expect(row.text()).toContain('PAW Patrol')
+    expect(row.find('[data-test="card-set-count"]').text()).toBe('0 of 2 cards sent')
+    expect(row.find('[data-test="card-set-status"]').text()).toBe('Sending')
+    expect(wrapper.text()).toContain("Harry Potter and the Philosopher's Stone")
+  })
+
+  it('shows a set even when there are no book transfers', async () => {
+    const wrapper = await mountWith(null, [cardSet('Complete')])
+
+    expect(wrapper.find('[data-test="card-set"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('No transfers yet')
+  })
+
+  it('opens a set to show each card with its books, its Yoto card and its error', async () => {
+    const set = cardSet('NeedsAttention')
+    set.cards[0] = { ...set.cards[0], status: 'Transferred', yotoCardId: 'hLH5V' }
+    set.cards[1] = { ...set.cards[1], status: 'Failed', errorMessage: 'Yoto said no' }
+    const wrapper = await mountWith(null, [set])
+
+    expect(wrapper.find('[data-test="card-set-cards"]').exists()).toBe(false)
+    await wrapper.find('[data-test="card-set"] button').trigger('click')
+
+    const cards = wrapper.findAll('[data-test="card-set-card"]')
+    expect(cards).toHaveLength(2)
+    expect(cards[0].text()).toContain('hLH5V')
+    expect(cards[0].text()).toContain('Pups Save the Day · Ready for Action')
+    expect(cards[0].find('[data-test="card-status"]').text()).toBe('On Yoto')
+    expect(cards[1].find('[data-test="card-error"]').text()).toBe('Yoto said no')
+  })
+
+  it('listens for progress on a sending set, and only on that one', async () => {
+    await mountWith(null, [cardSet('Sending'), cardSet('Complete', { id: 'set-2' })])
+
+    expect(signalR.joinCardSet).toHaveBeenCalledTimes(1)
+    expect(signalR.joinCardSet).toHaveBeenCalledWith(SET_ID)
+  })
+
+  it('updates a card in place when its progress is pushed', async () => {
+    const wrapper = await mountWith(null, [cardSet('Sending')])
+    await wrapper.find('[data-test="card-set"] button').trigger('click')
+
+    pushCardUpdate({ playlistId: 'card-1', status: 'Transferred' })
+    await flushPromises()
+
+    const first = wrapper.findAll('[data-test="card-set-card"]')[0]
+    expect(first.find('[data-test="card-status"]').text()).toBe('On Yoto')
+    expect(wrapper.find('[data-test="card-set-count"]').text()).toBe('1 of 2 cards sent')
+  })
+
+  it('shows a pushed failure with its message', async () => {
+    const wrapper = await mountWith(null, [cardSet('Sending')])
+    await wrapper.find('[data-test="card-set"] button').trigger('click')
+
+    pushCardUpdate({
+      playlistId: 'card-2',
+      status: 'Failed',
+      errorMessage: 'No valid Yoto connection',
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="card-error"]').text()).toBe('No valid Yoto connection')
+  })
+
+  it('ignores progress for a set it does not show', async () => {
+    const wrapper = await mountWith(null, [cardSet('Sending')])
+
+    pushCardUpdate({ cardSetId: 'another-set', status: 'Transferred' })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="card-set-count"]').text()).toBe('0 of 2 cards sent')
+  })
+
+  it('re-reads the sets when the list changes, and stops listening to a set that finished', async () => {
+    await mountWith(null, [cardSet('Sending')])
+    vi.mocked(cardSetApi.sends).mockResolvedValue({ data: [cardSet('Complete')] } as never)
+
+    ;(signalR.listChangedAt as unknown as { value: number }).value = Date.now()
+    await flushPromises()
+
+    expect(cardSetApi.sends).toHaveBeenCalledTimes(2)
+    expect(signalR.leaveCardSet).toHaveBeenCalledWith(SET_ID)
+  })
+
+  it('leaves the set groups it joined when the page closes', async () => {
+    const wrapper = await mountWith(null, [cardSet('Sending')])
+
+    wrapper.unmount()
+    await flushPromises()
+
+    expect(signalR.leaveCardSet).toHaveBeenCalledWith(SET_ID)
+  })
+
+  it('maps the status filter onto set status', async () => {
+    const wrapper = await mountWith(null, [cardSet('Sending')])
+
+    await wrapper.find('select').setValue('Failed')
+    await flushPromises()
+    expect(cardSetApi.sends).toHaveBeenLastCalledWith('NeedsAttention')
+
+    vi.mocked(cardSetApi.sends).mockClear()
+    await wrapper.find('select').setValue('Cancelled')
+    await flushPromises()
+    expect(cardSetApi.sends).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="card-sets"]').exists()).toBe(false)
+  })
+
+  it('asks for every set when the filter is cleared', async () => {
+    await mountWith(null, [])
+
+    expect(cardSetApi.sends).toHaveBeenCalledWith(undefined)
   })
 })

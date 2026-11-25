@@ -5,11 +5,27 @@ import { useSignalR } from '@/composables/useSignalR'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import TransferTracks from '@/components/transfers/TransferTracks.vue'
-import { transferApi } from '@/services/api'
-import type { TransferResponse, TransferStatus } from '@/types'
+import { cardSetApi, transferApi } from '@/services/api'
+import { cardSetQueryFor, timeAgo } from '@/utils/cardSetSends'
+import type {
+  CardSetSend,
+  CardSetStatus,
+  PlaylistStatus,
+  TransferResponse,
+  TransferStatus,
+} from '@/types'
 
 const connectionStore = useConnectionStore()
-const { progressUpdates, trackStates, joinTransfer, connect, listChangedAt } = useSignalR()
+const {
+  progressUpdates,
+  trackStates,
+  joinTransfer,
+  connect,
+  listChangedAt,
+  cardSetUpdate,
+  joinCardSet,
+  leaveCardSet,
+} = useSignalR()
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -18,6 +34,11 @@ const totalTransfers = ref(0)
 const currentPage = ref(0)
 const isLoading = ref(true)
 const filterStatus = ref<TransferStatus | ''>('')
+
+// Series card sets send as playlists, not CardTransfers, so they are read and shown separately.
+const cardSets = ref<CardSetSend[]>([])
+const expandedSets = ref<Record<string, boolean>>({})
+const joinedSets = new Set<string>()
 
 // Track last SignalR update time per transfer for the activity indicator
 const lastUpdateTime = ref<Record<string, number>>({})
@@ -29,18 +50,39 @@ let nowTimer: ReturnType<typeof setInterval>
 onMounted(async () => {
   // Connect up front so we receive list-changed broadcasts even with no active transfers.
   await connect()
-  await loadTransfers()
+  await Promise.all([loadTransfers(), loadCardSets()])
   nowTimer = setInterval(() => {
     now.value = Date.now()
   }, 10_000)
 })
 
-// A transfer was queued (possibly from another page) — refresh the list.
-watch(listChangedAt, () => loadTransfers(currentPage.value))
+// A transfer or a card set send was queued or ended (possibly from another page) — refresh both.
+watch(listChangedAt, () => {
+  void loadTransfers(currentPage.value)
+  void loadCardSets()
+})
 
 onUnmounted(() => {
   clearInterval(nowTimer)
+  for (const id of [...joinedSets]) void leaveSet(id)
 })
+
+watch(cardSetUpdate, (update) => {
+  if (!update) return
+  const set = cardSets.value.find((s) => s.id === update.cardSetId)
+  const card = set?.cards.find((c) => c.playlistId === update.playlistId)
+  if (!set || !card) return
+  card.status = update.status
+  card.errorMessage = update.errorMessage
+  set.sentCount = set.cards.filter((c) => c.status === 'Transferred').length
+  set.lastActivityAt = new Date().toISOString()
+  now.value = Date.now()
+})
+
+function onFilterChange() {
+  void loadTransfers(0)
+  void loadCardSets()
+}
 
 watch(
   progressUpdates,
@@ -76,6 +118,89 @@ async function loadTransfers(page = 0) {
   } finally {
     isLoading.value = false
   }
+}
+
+async function loadCardSets() {
+  if (!connectionStore.userConnectionId) return
+  const query = cardSetQueryFor(filterStatus.value)
+  try {
+    cardSets.value = query ? (await cardSetApi.sends(query.status)).data : []
+  } catch {
+    // The book transfers still load; the sets show again on the next list change.
+    return
+  }
+  const sending = new Set(cardSets.value.filter((s) => s.status === 'Sending').map((s) => s.id))
+  for (const id of sending) {
+    if (!joinedSets.has(id)) await joinSet(id)
+  }
+  for (const id of [...joinedSets]) {
+    if (!sending.has(id)) await leaveSet(id)
+  }
+}
+
+async function joinSet(cardSetId: string) {
+  try {
+    await joinCardSet(cardSetId)
+    joinedSets.add(cardSetId)
+  } catch {
+    /* the list still refreshes when the send ends */
+  }
+}
+
+async function leaveSet(cardSetId: string) {
+  joinedSets.delete(cardSetId)
+  try {
+    await leaveCardSet(cardSetId)
+  } catch {
+    /* nothing to undo */
+  }
+}
+
+function toggleSet(cardSetId: string) {
+  expandedSets.value[cardSetId] = !expandedSets.value[cardSetId]
+}
+
+function setStatusColor(status: CardSetStatus): string {
+  const map: Record<CardSetStatus, string> = {
+    Sending: 'bg-blue-100 text-blue-700',
+    NeedsAttention: 'bg-red-100 text-red-700',
+    Complete: 'bg-green-100 text-green-700',
+    Draft: 'bg-gray-100 text-gray-600',
+  }
+  return map[status]
+}
+
+function setStatusLabel(status: CardSetStatus): string {
+  const map: Record<CardSetStatus, string> = {
+    Sending: 'Sending',
+    NeedsAttention: 'Needs attention',
+    Complete: 'Complete',
+    // Only sets with a card sent are listed, so a draft set here is part-way onto Yoto.
+    Draft: 'Partly sent',
+  }
+  return map[status]
+}
+
+function cardStatusLabel(status: PlaylistStatus): string {
+  const map: Record<PlaylistStatus, string> = {
+    Draft: 'Not sent',
+    Queued: 'Queued',
+    Transferring: 'Sending…',
+    Transferred: 'On Yoto',
+    Failed: 'Failed',
+  }
+  return map[status]
+}
+
+function cardStatusColor(status: PlaylistStatus): string {
+  const map: Record<PlaylistStatus, string> = {
+    Draft: 'text-gray-400',
+    Queued: 'text-gray-600',
+    Transferring: 'text-blue-700',
+    Transferred: 'text-green-700',
+    Failed: 'text-red-700',
+  }
+  return map[status]
 }
 
 async function handleRetry(transferId: string, title: string) {
@@ -255,7 +380,7 @@ function formatDate(iso: string): string {
           </svg>
           Clear completed
         </button>
-        <select v-model="filterStatus" @change="loadTransfers(0)" class="input-field w-auto">
+        <select v-model="filterStatus" @change="onFilterChange" class="input-field w-auto">
           <option value="">All Statuses</option>
           <option value="Pending">Pending</option>
           <option value="DownloadingAudio">Downloading</option>
@@ -268,9 +393,92 @@ function formatDate(iso: string): string {
       </div>
     </div>
 
+    <section v-if="cardSets.length > 0" data-test="card-sets" class="space-y-3">
+      <h2 class="text-lg font-semibold text-gray-900">Series card sets</h2>
+      <div v-for="set in cardSets" :key="set.id" data-test="card-set" class="card p-4">
+        <div class="flex items-start justify-between gap-4">
+          <button
+            type="button"
+            class="flex-1 min-w-0 text-left"
+            :aria-expanded="!!expandedSets[set.id]"
+            @click="toggleSet(set.id)"
+          >
+            <div class="flex items-center gap-2 flex-wrap">
+              <span
+                v-if="set.status === 'Sending'"
+                class="inline-block w-2 h-2 rounded-full bg-yoto-blue animate-pulse flex-shrink-0"
+              />
+              <h3 class="font-medium text-gray-900 truncate">{{ set.name }}</h3>
+              <span
+                data-test="card-set-status"
+                class="px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0"
+                :class="setStatusColor(set.status)"
+              >
+                {{ setStatusLabel(set.status) }}
+              </span>
+            </div>
+            <div class="flex items-center flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400 mt-2">
+              <span data-test="card-set-count">
+                {{ set.sentCount }} of {{ set.cardCount }}
+                {{ set.cardCount === 1 ? 'card' : 'cards' }} sent
+              </span>
+              <span :title="formatDate(set.lastActivityAt)">
+                {{ timeAgo(set.lastActivityAt, now) }}
+              </span>
+            </div>
+          </button>
+          <router-link
+            :to="{
+              name: 'series-detail',
+              params: { seriesId: set.absSeriesId },
+              query: { libraryId: set.absLibraryId },
+            }"
+            class="text-xs text-yoto-blue hover:underline flex-shrink-0"
+          >
+            View series →
+          </router-link>
+        </div>
+
+        <ol v-if="expandedSets[set.id]" data-test="card-set-cards" class="mt-3 space-y-2">
+          <li
+            v-for="card in set.cards"
+            :key="card.playlistId"
+            data-test="card-set-card"
+            class="border-t border-gray-100 pt-2"
+          >
+            <div class="flex items-center justify-between gap-3 text-sm">
+              <span class="text-gray-900 truncate">{{ card.title }}</span>
+              <span class="flex items-center gap-3 flex-shrink-0 text-xs">
+                <span v-if="card.yotoCardId" class="text-gray-400 font-mono">
+                  {{ card.yotoCardId }}
+                </span>
+                <span
+                  data-test="card-status"
+                  class="font-medium"
+                  :class="cardStatusColor(card.status)"
+                >
+                  {{ cardStatusLabel(card.status) }}
+                </span>
+              </span>
+            </div>
+            <p v-if="card.bookTitles.length" class="text-xs text-gray-500 mt-1">
+              {{ card.bookTitles.join(' · ') }}
+            </p>
+            <p
+              v-if="card.status === 'Failed' && card.errorMessage"
+              data-test="card-error"
+              class="mt-1 text-sm text-red-600 bg-red-50 rounded p-2"
+            >
+              {{ card.errorMessage }}
+            </p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
     <div v-if="isLoading" class="text-center py-12 text-gray-400">Loading transfers...</div>
 
-    <div v-else-if="transfers.length === 0" class="text-center py-12">
+    <div v-else-if="transfers.length === 0 && cardSets.length === 0" class="text-center py-12">
       <p class="text-gray-400">
         No transfers yet. Browse your library to start transferring books to Yoto cards.
       </p>

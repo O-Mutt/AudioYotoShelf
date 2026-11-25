@@ -159,6 +159,32 @@ public class CardSetService(
             .ToArray();
     }
 
+    public async Task<CardSetSendResponse[]> SendsAsync(
+        Guid userConnectionId, CardSetStatus? status = null, CancellationToken ct = default)
+    {
+        var sets = await db.CardSets
+            .AsNoTracking()
+            .Include(s => s.Cards).ThenInclude(c => c.Items)
+            .Where(s => s.UserConnectionId == userConnectionId && s.Cards.Any(c => c.Status != PlaylistStatus.Draft))
+            .ToListAsync(ct);
+
+        return sets
+            .Select(s =>
+            {
+                var cards = Ordered(s);
+                return new CardSetSendResponse(
+                    s.Id, s.Name, s.AbsSeriesId, s.AbsLibraryId, StatusOf(cards), cards.Count,
+                    cards.Count(c => c.Status == PlaylistStatus.Transferred),
+                    cards.Where(c => c.Status != PlaylistStatus.Draft).Max(c => c.UpdatedAt),
+                    cards.Select((c, i) => new CardSetSendCardResponse(
+                        c.Id, c.SetIndex ?? i, c.Name, c.Status, c.YotoCardId, c.ErrorMessage, c.TransferredAt,
+                        c.Items.OrderBy(item => item.Position).Select(item => item.BookTitle).ToArray())).ToArray());
+            })
+            .Where(s => status is null || s.Status == status)
+            .OrderByDescending(s => s.LastActivityAt)
+            .ToArray();
+    }
+
     public CardLimitsResponse Limits() => new(
         limits.MaxTracks, limits.MaxTotalBytes, limits.MaxTotalDurationSeconds, limits.TranscodedBitrateKbps);
 

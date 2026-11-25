@@ -29,48 +29,56 @@ public class CardSetJobService(
     {
         logger.LogInformation("Hangfire: sending {Count} cards of card set {CardSetId}", playlistIds.Length, cardSetId);
 
-        var failed = 0;
-        for (var i = 0; i < playlistIds.Length; i++)
+        await SendsChangedAsync(cardSetId);
+        try
         {
-            if (ct.IsCancellationRequested)
+            var failed = 0;
+            for (var i = 0; i < playlistIds.Length; i++)
             {
-                await SetStatusAsync(playlistIds[i..], PlaylistStatus.Queued, PlaylistStatus.Draft, null);
-                await NotifyAsync(cardSetId, playlistIds[i..]);
-                ct.ThrowIfCancellationRequested();
+                if (ct.IsCancellationRequested)
+                {
+                    await SetStatusAsync(playlistIds[i..], PlaylistStatus.Queued, PlaylistStatus.Draft, null);
+                    await NotifyAsync(cardSetId, playlistIds[i..]);
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                // Send only a card this job still owns: Queued, or Transferring when a restart cut the last
+                // run short. Hangfire re-runs an interrupted job, and by then a card may be on Yoto, back
+                // to draft, re-packed, or queued again by a newer send that will send it itself.
+                if (await StatusOfAsync(playlistIds[i]) is not (PlaylistStatus.Queued or PlaylistStatus.Transferring))
+                    continue;
+
+                try
+                {
+                    await NotifyAsync(cardSetId, [playlistIds[i]], PlaylistStatus.Transferring);
+                    await orchestrator.TransferPlaylistAsync(playlistIds[i], ct);
+                    await NotifyAsync(cardSetId, [playlistIds[i]]);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    await SetStatusAsync(playlistIds[i..], PlaylistStatus.Queued, PlaylistStatus.Draft, null);
+                    await NotifyAsync(cardSetId, playlistIds[i..]);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    // The orchestrator marks a card Failed once it starts sending it. A card that failed
+                    // before that (no connection, missing playlist) would otherwise stay Queued for good.
+                    await SetStatusAsync([playlistIds[i]], PlaylistStatus.Queued, PlaylistStatus.Failed, ex.Message);
+                    await NotifyAsync(cardSetId, [playlistIds[i]]);
+                    failed++;
+                    logger.LogError(ex, "Card set {CardSetId}: card {Index}/{Total} ({PlaylistId}) failed",
+                        cardSetId, i + 1, playlistIds.Length, playlistIds[i]);
+                }
             }
 
-            // Send only a card this job still owns: Queued, or Transferring when a restart cut the last
-            // run short. Hangfire re-runs an interrupted job, and by then a card may be on Yoto, back
-            // to draft, re-packed, or queued again by a newer send that will send it itself.
-            if (await StatusOfAsync(playlistIds[i]) is not (PlaylistStatus.Queued or PlaylistStatus.Transferring))
-                continue;
-
-            try
-            {
-                await NotifyAsync(cardSetId, [playlistIds[i]], PlaylistStatus.Transferring);
-                await orchestrator.TransferPlaylistAsync(playlistIds[i], ct);
-                await NotifyAsync(cardSetId, [playlistIds[i]]);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                await SetStatusAsync(playlistIds[i..], PlaylistStatus.Queued, PlaylistStatus.Draft, null);
-                await NotifyAsync(cardSetId, playlistIds[i..]);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                // The orchestrator marks a card Failed once it starts sending it. A card that failed
-                // before that (no connection, missing playlist) would otherwise stay Queued for good.
-                await SetStatusAsync([playlistIds[i]], PlaylistStatus.Queued, PlaylistStatus.Failed, ex.Message);
-                await NotifyAsync(cardSetId, [playlistIds[i]]);
-                failed++;
-                logger.LogError(ex, "Card set {CardSetId}: card {Index}/{Total} ({PlaylistId}) failed",
-                    cardSetId, i + 1, playlistIds.Length, playlistIds[i]);
-            }
+            logger.LogInformation("Card set {CardSetId}: {Sent} of {Total} cards sent",
+                cardSetId, playlistIds.Length - failed, playlistIds.Length);
         }
-
-        logger.LogInformation("Card set {CardSetId}: {Sent} of {Total} cards sent",
-            cardSetId, playlistIds.Length - failed, playlistIds.Length);
+        finally
+        {
+            await SendsChangedAsync(cardSetId);
+        }
     }
 
     /// <summary>
@@ -92,6 +100,19 @@ public class CardSetJobService(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Card set {CardSetId}: could not push card progress", cardSetId);
+        }
+    }
+
+    /// <summary>Tells the Transfers page the set started or stopped sending. Best effort, like <see cref="NotifyAsync"/>.</summary>
+    private async Task SendsChangedAsync(Guid cardSetId)
+    {
+        try
+        {
+            await notifier.SendsChangedAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Card set {CardSetId}: could not push that the sends changed", cardSetId);
         }
     }
 

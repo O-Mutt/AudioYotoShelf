@@ -141,6 +141,51 @@ public class CardSetJobServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task TellsTheTransfersPage_WhenTheSendStartsAndWhenItEnds()
+    {
+        var ids = await SeedCardsAsync(PlaylistStatus.Queued);
+        var events = new List<string>();
+        _notifier.Setup(n => n.SendsChangedAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => events.Add("list"))
+            .Returns(Task.CompletedTask);
+        _orchestrator.Setup(o => o.TransferPlaylistAsync(ids[0], It.IsAny<CancellationToken>()))
+            .Callback(() => events.Add("send"))
+            .Returns(Task.CompletedTask);
+
+        await _sut.ExecuteCardSetTransferAsync(Guid.NewGuid(), ids, CancellationToken.None);
+
+        events.Should().Equal("list", "send", "list");
+    }
+
+    [Fact]
+    public async Task TellsTheTransfersPage_WhenACancelledSendEnds()
+    {
+        var ids = await SeedCardsAsync(PlaylistStatus.Queued, PlaylistStatus.Queued);
+        using var cts = new CancellationTokenSource();
+        _orchestrator.Setup(o => o.TransferPlaylistAsync(ids[0], It.IsAny<CancellationToken>()))
+            .Callback(cts.Cancel)
+            .Returns(Task.CompletedTask);
+
+        var act = () => _sut.ExecuteCardSetTransferAsync(Guid.NewGuid(), ids, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _notifier.Verify(n => n.SendsChangedAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task AListPushThatFails_DoesNotStopTheSend()
+    {
+        var ids = await SeedCardsAsync(PlaylistStatus.Queued);
+        _notifier.Setup(n => n.SendsChangedAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("hub down"));
+
+        var act = () => _sut.ExecuteCardSetTransferAsync(Guid.NewGuid(), ids, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        _orchestrator.Verify(o => o.TransferPlaylistAsync(ids[0], It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task APushThatFails_DoesNotStopTheSend()
     {
         var ids = await SeedCardsAsync(PlaylistStatus.Queued);

@@ -108,6 +108,32 @@ public record CardSetSummaryResponse(
     int SentCount,
     CardSetStatus Status);
 
+/// <summary>One card of a set on the Transfers page, with the titles of the books it holds in card order.</summary>
+public record CardSetSendCardResponse(
+    Guid PlaylistId,
+    int Index,
+    string Title,
+    PlaylistStatus Status,
+    string? YotoCardId,
+    string? ErrorMessage,
+    DateTimeOffset? TransferredAt,
+    string[] BookTitles);
+
+/// <summary>
+/// A set that has been sent, or is being sent, for the Transfers page. <see cref="LastActivityAt"/> is
+/// the latest change to any of its cards that is not a draft.
+/// </summary>
+public record CardSetSendResponse(
+    Guid Id,
+    string Name,
+    string AbsSeriesId,
+    string AbsLibraryId,
+    CardSetStatus Status,
+    int CardCount,
+    int SentCount,
+    DateTimeOffset LastActivityAt,
+    CardSetSendCardResponse[] Cards);
+
 /// <summary>
 /// Card-set state for one series, for the series grid. <see cref="KnownBookIds"/> are the books on
 /// the set's cards or left out of it; any other book of the series is new since the set was made.

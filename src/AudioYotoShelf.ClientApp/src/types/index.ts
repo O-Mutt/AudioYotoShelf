@@ -415,6 +415,31 @@ export interface CardSetSummary {
   status: CardSetStatus
 }
 
+/** One card of a sent set on the Transfers page; bookTitles are in card order. */
+export interface CardSetSendCard {
+  playlistId: string
+  index: number
+  title: string
+  status: PlaylistStatus
+  yotoCardId: string | null
+  errorMessage: string | null
+  transferredAt: string | null
+  bookTitles: string[]
+}
+
+/** A set with a card that was ever queued or sent, for the Transfers page. */
+export interface CardSetSend {
+  id: string
+  name: string
+  absSeriesId: string
+  absLibraryId: string
+  status: CardSetStatus
+  cardCount: number
+  sentCount: number
+  lastActivityAt: string
+  cards: CardSetSendCard[]
+}
+
 /** Breaks: index of the first book on each card after the first. Split points: per split book, index of the first chapter of each part after the first. */
 export interface CardSetLayout {
   breaks: number[]

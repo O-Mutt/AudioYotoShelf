@@ -213,4 +213,14 @@ public class TransferHubTests : IDisposable
         clients.Verify(c => c.Group($"cardset:{update.CardSetId}"), Times.Once);
         proxy.Verify(p => p.SendCoreAsync("CardSetProgress", It.Is<object?[]>(a => a.Single() == (object)update), It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task SendsChangedAsync_TellsEveryClientTheTransferListChanged()
+    {
+        var (hub, proxy, _) = HubContext();
+
+        await new SignalRCardSetProgressNotifier(hub.Object).SendsChangedAsync();
+
+        proxy.Verify(p => p.SendCoreAsync("TransferListChanged", It.IsAny<object?[]>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
 }
