@@ -175,14 +175,14 @@ public class CardSetsControllerTests : IDisposable
     public async Task Sends_ListsTheCallersSetsWithTheStatusFilter()
     {
         var caller = Guid.NewGuid();
-        CardSetSendResponse[] sends =
+        var sends = new CardSetSendsResponse(
         [
             new(Guid.NewGuid(), "Dragons", "ser-1", "lib-1", CardSetStatus.Sending, 2, 0, DateTimeOffset.UtcNow,
                 [new(Guid.NewGuid(), 0, "Dragons · Books 1–6", PlaylistStatus.Transferring, null, null, null, ["Book 1"])]),
-        ];
-        _cardSets.Setup(s => s.SendsAsync(caller, CardSetStatus.Sending, It.IsAny<CancellationToken>())).ReturnsAsync(sends);
+        ], OlderCount: 0);
+        _cardSets.Setup(s => s.SendsAsync(caller, CardSetStatus.Sending, false, It.IsAny<CancellationToken>())).ReturnsAsync(sends);
 
-        var result = await _sut.AsUser(caller).Sends(CardSetStatus.Sending, default);
+        var result = await _sut.AsUser(caller).Sends(CardSetStatus.Sending, includeOlder: false, default);
 
         result.Should().BeOfType<OkObjectResult>().Which.Value.Should().BeSameAs(sends);
     }
@@ -191,12 +191,25 @@ public class CardSetsControllerTests : IDisposable
     public async Task Sends_WithoutAFilter_AsksForEveryStatus()
     {
         var caller = Guid.NewGuid();
-        _cardSets.Setup(s => s.SendsAsync(caller, null, It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _cardSets.Setup(s => s.SendsAsync(caller, null, false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CardSetSendsResponse([], 0));
 
-        var result = await _sut.AsUser(caller).Sends(null, default);
+        var result = await _sut.AsUser(caller).Sends(null, includeOlder: false, default);
 
         result.Should().BeOfType<OkObjectResult>();
-        _cardSets.Verify(s => s.SendsAsync(caller, null, It.IsAny<CancellationToken>()), Times.Once);
+        _cardSets.Verify(s => s.SendsAsync(caller, null, false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Sends_IncludeOlder_IsPassedThrough()
+    {
+        var caller = Guid.NewGuid();
+        _cardSets.Setup(s => s.SendsAsync(caller, null, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CardSetSendsResponse([], 0));
+
+        await _sut.AsUser(caller).Sends(null, includeOlder: true, default);
+
+        _cardSets.Verify(s => s.SendsAsync(caller, null, true, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // =========================================================================
