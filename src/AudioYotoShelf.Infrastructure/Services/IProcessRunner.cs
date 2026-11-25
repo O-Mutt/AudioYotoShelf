@@ -1,7 +1,10 @@
 namespace AudioYotoShelf.Infrastructure.Services;
 
-/// <summary>Exit code of a finished process, and its standard error when the caller asked for it.</summary>
-public sealed record ProcessResult(int ExitCode, string StandardError);
+/// <summary>
+/// Exit code of a finished process, its standard error when the caller asked for it, and its
+/// standard output.
+/// </summary>
+public sealed record ProcessResult(int ExitCode, string StandardError, string StandardOutput = "");
 
 /// <summary>
 /// Starts an external program and waits for it to exit. Exists so code that shells out (ffmpeg) can be

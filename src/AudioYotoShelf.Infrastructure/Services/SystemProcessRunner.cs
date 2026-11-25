@@ -33,10 +33,10 @@ public sealed class SystemProcessRunner(ILogger<SystemProcessRunner> logger) : I
             var stdout = process.StandardOutput.ReadToEndAsync(ct);
             var stderr = process.StandardError.ReadToEndAsync(ct);
             await process.WaitForExitAsync(ct);
-            await stdout;
+            var standardOutput = await stdout;
             var standardError = await stderr;
 
-            return new ProcessResult(process.ExitCode, captureStandardError ? standardError : "");
+            return new ProcessResult(process.ExitCode, captureStandardError ? standardError : "", standardOutput);
         }
         catch
         {

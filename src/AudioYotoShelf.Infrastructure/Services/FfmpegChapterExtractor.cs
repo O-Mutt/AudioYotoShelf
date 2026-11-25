@@ -154,6 +154,34 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger, IPro
         }
     }
 
+    public async Task<double?> ProbeDurationAsync(string filePath, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(filePath, nameof(filePath));
+        try
+        {
+            var result = await processRunner.RunAsync(
+                "ffprobe",
+                $"-v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{filePath}\"",
+                captureStandardError: true, ct);
+
+            // ffprobe prints "N/A" for a stream it can't time, which is as good as no answer here.
+            if (result.ExitCode == 0 &&
+                double.TryParse(result.StandardOutput.Trim(), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var seconds) &&
+                seconds > 0 && double.IsFinite(seconds))
+                return seconds;
+
+            logger.LogWarning("ffprobe could not read the duration of {File} (exit {ExitCode}): {Error}",
+                filePath, result.ExitCode, result.StandardError.Trim());
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "ffprobe failed on {File}", filePath);
+            return null;
+        }
+    }
+
     public async Task<bool> IsFfmpegAvailableAsync(CancellationToken ct = default)
     {
         try

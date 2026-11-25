@@ -80,6 +80,13 @@ is never split again. At 100 kbps a 60-minute track is about 43 MB, so with the 
 or scanned ones if the limits are configured lower. A 50-minute, 260 MB source track is one card
 track, where the source-size rule made it three.
 
+**Unscanned tracks in a playlist transfer.** A split needs a length to divide, and an unscanned
+track's is 0, so before deciding its pieces the playlist transfer reads the downloaded file's real
+length with `ffprobe` and splits by that ([#144](https://github.com/O-Mutt/AudioYotoShelf/issues/144)).
+If `ffprobe` can't read it, the track is uploaded whole rather than cut at a guess. The capacity
+projection, made before anything is downloaded, still counts the track at its source size, so it
+can count more pieces than the transfer makes; it never counts fewer.
+
 Sizes in the app's messages are MiB (1,048,576 bytes), shown as "MB".
 
 Because the card total is estimated from duration, source size no longer limits a transfer: a

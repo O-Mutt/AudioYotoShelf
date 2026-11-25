@@ -30,6 +30,15 @@ public class SystemProcessRunnerTests : IDisposable
     }
 
     [UnixFact]
+    public async Task RunAsync_ReturnsStandardOutput()
+    {
+        // ffprobe prints the duration it reads on stdout.
+        var result = await _sut.RunAsync("sh", "-c \"echo 7213.418\"", captureStandardError: false, default);
+
+        result.Should().Be(new ProcessResult(0, "", "7213.418\n"));
+    }
+
+    [UnixFact]
     public async Task RunAsync_NotCapturing_ReturnsEmptyStandardError()
     {
         var result = await _sut.RunAsync("sh", "-c \"echo oops >&2\"", captureStandardError: false, default);
