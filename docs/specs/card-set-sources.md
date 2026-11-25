@@ -1,6 +1,6 @@
 # Spec: card set sources
 
-**Status:** Proposed ([#149](https://github.com/O-Mutt/AudioYotoShelf/issues/149)).
+**Status:** Agreed, not built ([#149](https://github.com/O-Mutt/AudioYotoShelf/issues/149)).
 **Scope:** build a card set from an Audiobookshelf collection or from books picked in
 AudioYotoShelf, not only from an Audiobookshelf series. The cards, the planner and sending stay as
 [series-card-sets.md](series-card-sets.md) describes.
@@ -233,16 +233,27 @@ refresh when either list is non-empty.
 2. **Custom sets.**
    - §6.4, the multi-select "New card set…", the custom set page and "Add to card set…" on the book
      page.
-   - Retire `PlaylistsController`'s standalone endpoints (§10).
+   - Remove `PlaylistsController` (§10).
 
-## 10. Open questions
+## 10. Decisions
 
-1. **`PlaylistsController`.** Once custom sets exist, the standalone endpoints (`POST /api/playlists`,
-   `/items`, `/series`, `/order`, `/transfer`) duplicate a one-card custom set. The proposal is to
-   remove them in phase 2 and keep `Playlist` as the card entity. Nothing in the client uses them.
-2. **Custom set library.** Taken from the first picked book. If a later "Add to card set…" names a
-   book from another library, it answers 400. The alternative, cross-library sets, conflicts with
-   the one-library rule for collections, so the proposal is to refuse.
+Both were open questions in review, and both are now settled.
+
+1. **`PlaylistsController` is removed in phase 2.**
+   - Once custom sets exist, its standalone endpoints duplicate a one-card custom set:
+     `POST`/`GET /api/playlists`, `GET /detail/{id}`, `DELETE`, `/items`, `/series`, `/order` and
+     `/transfer`.
+   - Nothing in the client calls them.
+   - The controller and its tests go, along with any `PlaylistService` members that only it uses.
+     `PlaylistService.ParseSequence` stays, because `CardSetService` uses it.
+   - `Playlist` stays as the card entity, and `PlaylistTransferOrchestrator` still sends cards.
+   - A one-card send for loose books is now a one-card custom set.
+2. **A custom set can't span libraries.**
+   - Its library comes from the first picked book.
+   - Creating a set with books from more than one library answers 400.
+   - So does adding a book from another library (`PUT /api/cardsets/{id}/books` or "Add to card
+     set…" on the book page).
+   - This keeps the one-library rule that collections already follow.
 
 ## 11. Test plan
 
