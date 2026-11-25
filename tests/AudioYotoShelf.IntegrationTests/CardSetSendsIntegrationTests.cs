@@ -30,7 +30,11 @@ public class CardSetSendsIntegrationTests(IntegrationTestFactory factory) : ICla
         return (client, userId);
     }
 
-    private async Task<Guid> SeedSetAsync(Guid userId, string seriesId, params PlaylistStatus[] cards)
+    private Task<Guid> SeedSetAsync(Guid userId, string seriesId, params PlaylistStatus[] cards)
+        => SeedSetAsync(userId, seriesId, statusChangedAt: null, cards);
+
+    private async Task<Guid> SeedSetAsync(
+        Guid userId, string seriesId, DateTimeOffset? statusChangedAt, params PlaylistStatus[] cards)
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AudioYotoShelfDbContext>();
@@ -40,6 +44,7 @@ public class CardSetSendsIntegrationTests(IntegrationTestFactory factory) : ICla
             UserConnectionId = userId,
             Name = $"{seriesId} card {i + 1}",
             Status = status,
+            StatusChangedAt = statusChangedAt,
             SetIndex = i,
             Items = [new PlaylistItem { AbsLibraryItemId = $"{seriesId}-{i}", BookTitle = $"Book {i + 1}", Position = 0 }],
         }).ToList();
@@ -69,11 +74,28 @@ public class CardSetSendsIntegrationTests(IntegrationTestFactory factory) : ICla
         var all = await client.GetFromJsonAsync<JsonElement>("/api/cardsets/sends");
         var filtered = await client.GetFromJsonAsync<JsonElement>("/api/cardsets/sends?status=Sending");
 
-        all.EnumerateArray().Select(s => s.GetProperty("id").GetGuid()).Should().BeEquivalentTo([sending, complete]);
-        var one = filtered.EnumerateArray().Should().ContainSingle().Subject;
+        all.GetProperty("sets").EnumerateArray().Select(s => s.GetProperty("id").GetGuid())
+            .Should().BeEquivalentTo([sending, complete]);
+        var one = filtered.GetProperty("sets").EnumerateArray().Should().ContainSingle().Subject;
         one.GetProperty("id").GetGuid().Should().Be(sending);
         one.GetProperty("status").GetString().Should().Be("Sending");
         one.GetProperty("sentCount").GetInt32().Should().Be(1);
         one.GetProperty("cards")[0].GetProperty("bookTitles")[0].GetString().Should().Be("Book 1");
+    }
+
+    [Fact]
+    public async Task Sends_HideCompleteSetsIdlePastTheWindow_UnlessIncludeOlder()
+    {
+        var (client, userId) = await ConnectAsync("sendsolder");
+        var recent = await SeedSetAsync(userId, "ser-recent", PlaylistStatus.Transferred);
+        var old = await SeedSetAsync(userId, "ser-old", DateTimeOffset.UtcNow.AddDays(-30), PlaylistStatus.Transferred);
+
+        var shown = await client.GetFromJsonAsync<JsonElement>("/api/cardsets/sends");
+        var everything = await client.GetFromJsonAsync<JsonElement>("/api/cardsets/sends?includeOlder=true");
+
+        shown.GetProperty("sets").EnumerateArray().Select(s => s.GetProperty("id").GetGuid()).Should().Equal(recent);
+        shown.GetProperty("olderCount").GetInt32().Should().Be(1);
+        everything.GetProperty("sets").EnumerateArray().Select(s => s.GetProperty("id").GetGuid())
+            .Should().Equal(recent, old);
     }
 }

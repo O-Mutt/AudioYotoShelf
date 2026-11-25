@@ -85,11 +85,11 @@ function transfer(status: TransferStatus, uploadedTracks = 1, trackCount = 3): T
   } as TransferResponse
 }
 
-async function mountWith(t: TransferResponse | null, sets: CardSetSend[] = []) {
+async function mountWith(t: TransferResponse | null, sets: CardSetSend[] = [], olderCount = 0) {
   vi.mocked(transferApi.getTransfers).mockResolvedValue({
     data: { results: t ? [t] : [], total: t ? 1 : 0 },
   } as never)
-  vi.mocked(cardSetApi.sends).mockResolvedValue({ data: sets } as never)
+  vi.mocked(cardSetApi.sends).mockResolvedValue({ data: { sets, olderCount } } as never)
   const wrapper = mount(TransfersView, { global: { stubs: { 'router-link': true } } })
   await flushPromises()
   return wrapper
@@ -335,7 +335,9 @@ describe('TransfersView card sets', () => {
 
   it('re-reads the sets when the list changes, and stops listening to a set that finished', async () => {
     await mountWith(null, [cardSet('Sending')])
-    vi.mocked(cardSetApi.sends).mockResolvedValue({ data: [cardSet('Complete')] } as never)
+    vi.mocked(cardSetApi.sends).mockResolvedValue({
+      data: { sets: [cardSet('Complete')], olderCount: 0 },
+    } as never)
 
     ;(signalR.listChangedAt as unknown as { value: number }).value = Date.now()
     await flushPromises()
@@ -358,7 +360,7 @@ describe('TransfersView card sets', () => {
 
     await wrapper.find('select').setValue('Failed')
     await flushPromises()
-    expect(cardSetApi.sends).toHaveBeenLastCalledWith('NeedsAttention')
+    expect(cardSetApi.sends).toHaveBeenLastCalledWith('NeedsAttention', false)
 
     vi.mocked(cardSetApi.sends).mockClear()
     await wrapper.find('select').setValue('Cancelled')
@@ -370,6 +372,32 @@ describe('TransfersView card sets', () => {
   it('asks for every set when the filter is cleared', async () => {
     await mountWith(null, [])
 
-    expect(cardSetApi.sends).toHaveBeenCalledWith(undefined)
+    expect(cardSetApi.sends).toHaveBeenCalledWith(undefined, false)
+  })
+
+  it('offers the older complete sets it left out, and fetches them on request', async () => {
+    const wrapper = await mountWith(null, [cardSet('Sending')], 3)
+
+    const toggle = wrapper.find('[data-test="older-card-sets"]')
+    expect(toggle.text()).toBe('Show 3 older complete sets')
+
+    await toggle.trigger('click')
+    await flushPromises()
+
+    expect(cardSetApi.sends).toHaveBeenLastCalledWith(undefined, true)
+    expect(wrapper.find('[data-test="older-card-sets"]').text()).toBe('Hide older complete sets')
+  })
+
+  it('keeps the section, not the empty message, when only older sets exist', async () => {
+    const wrapper = await mountWith(null, [], 1)
+
+    expect(wrapper.find('[data-test="older-card-sets"]').text()).toBe('Show 1 older complete set')
+    expect(wrapper.text()).not.toContain('No transfers yet')
+  })
+
+  it('has no older-sets toggle when nothing was left out', async () => {
+    const wrapper = await mountWith(null, [cardSet('Complete')])
+
+    expect(wrapper.find('[data-test="older-card-sets"]').exists()).toBe(false)
   })
 })

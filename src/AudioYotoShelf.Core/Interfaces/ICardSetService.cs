@@ -26,9 +26,11 @@ public interface ICardSetService
 
     /// <summary>
     /// The user's sets with a card that was ever queued or sent, latest activity first, for the
-    /// Transfers page. <paramref name="status"/> keeps only sets in that state.
+    /// Transfers page. <paramref name="status"/> keeps only sets in that state. A complete set with
+    /// no activity in the recent window is counted but left out unless <paramref name="includeOlder"/>.
     /// </summary>
-    Task<CardSetSendResponse[]> SendsAsync(Guid userConnectionId, CardSetStatus? status = null, CancellationToken ct = default);
+    Task<CardSetSendsResponse> SendsAsync(
+        Guid userConnectionId, CardSetStatus? status = null, bool includeOlder = false, CancellationToken ct = default);
 
     CardLimitsResponse Limits();
 

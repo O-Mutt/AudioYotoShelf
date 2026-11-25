@@ -22,6 +22,12 @@ public class Playlist : BaseEntity
     public string? ErrorMessage { get; set; }
     public DateTimeOffset? TransferredAt { get; set; }
 
+    /// <summary>
+    /// When <see cref="Status"/> last changed. Set on save, so it tracks sending only; renaming or
+    /// editing a card moves <see cref="BaseEntity.UpdatedAt"/> but not this.
+    /// </summary>
+    public DateTimeOffset? StatusChangedAt { get; set; }
+
     /// <summary>Set when this playlist is one card of a series card set.</summary>
     public Guid? CardSetId { get; set; }
     public CardSet? CardSet { get; set; }

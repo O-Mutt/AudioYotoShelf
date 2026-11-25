@@ -27,6 +27,9 @@ public class CardSetService(
     private const int AbsFetchConcurrency = 4;
     private const int MaxNameLength = 256;
 
+    /// <summary>How long a complete set stays on the Transfers page without asking for older sets.</summary>
+    public static readonly TimeSpan RecentCompleteWindow = TimeSpan.FromDays(7);
+
     // Two Send requests for one set must not both see a card as unsent and both queue it; that makes
     // two Yoto cards. The app runs as one process (Hangfire in-process), so a per-set lock here is
     // enough to make the check-and-queue below atomic.
@@ -159,8 +162,8 @@ public class CardSetService(
             .ToArray();
     }
 
-    public async Task<CardSetSendResponse[]> SendsAsync(
-        Guid userConnectionId, CardSetStatus? status = null, CancellationToken ct = default)
+    public async Task<CardSetSendsResponse> SendsAsync(
+        Guid userConnectionId, CardSetStatus? status = null, bool includeOlder = false, CancellationToken ct = default)
     {
         var sets = await db.CardSets
             .AsNoTracking()
@@ -168,22 +171,32 @@ public class CardSetService(
             .Where(s => s.UserConnectionId == userConnectionId && s.Cards.Any(c => c.Status != PlaylistStatus.Draft))
             .ToListAsync(ct);
 
-        return sets
+        var sends = sets
             .Select(s =>
             {
                 var cards = Ordered(s);
                 return new CardSetSendResponse(
                     s.Id, s.Name, s.AbsSeriesId, s.AbsLibraryId, StatusOf(cards), cards.Count,
                     cards.Count(c => c.Status == PlaylistStatus.Transferred),
-                    cards.Where(c => c.Status != PlaylistStatus.Draft).Max(c => c.UpdatedAt),
+                    cards.Where(c => c.Status != PlaylistStatus.Draft).Max(LastStatusChange),
                     cards.Select((c, i) => new CardSetSendCardResponse(
                         c.Id, c.SetIndex ?? i, c.Name, c.Status, c.YotoCardId, c.ErrorMessage, c.TransferredAt,
                         c.Items.OrderBy(item => item.Position).Select(item => item.BookTitle).ToArray())).ToArray());
             })
             .Where(s => status is null || s.Status == status)
             .OrderByDescending(s => s.LastActivityAt)
-            .ToArray();
+            .ToList();
+
+        var cutoff = DateTimeOffset.UtcNow - RecentCompleteWindow;
+        bool IsOlder(CardSetSendResponse s) => s.Status == CardSetStatus.Complete && s.LastActivityAt < cutoff;
+        var shown = includeOlder ? sends : sends.Where(s => !IsOlder(s));
+        return new CardSetSendsResponse(shown.ToArray(), sends.Count(IsOlder));
     }
+
+    // Rows sent before StatusChangedAt existed were backfilled by the migration; the fallbacks keep a
+    // row that somehow missed it from sorting as never active.
+    private static DateTimeOffset LastStatusChange(Playlist card)
+        => card.StatusChangedAt ?? card.TransferredAt ?? card.UpdatedAt;
 
     public CardLimitsResponse Limits() => new(
         limits.MaxTracks, limits.MaxTotalBytes, limits.MaxTotalDurationSeconds, limits.TranscodedBitrateKbps);

@@ -50,6 +50,58 @@ public class DbContextTests : IDisposable
         user.UpdatedAt.Should().BeOnOrAfter(originalUpdatedAt);
     }
 
+    [Fact]
+    public async Task SaveChangesAsync_PlaylistStatusChange_StampsStatusChangedAt()
+    {
+        var user = TestData.CreateUserConnection();
+        var playlist = new Playlist { UserConnection = user, Name = "Card 1" };
+        _fixture.DbContext.Playlists.Add(playlist);
+        await _fixture.DbContext.SaveChangesAsync();
+        playlist.StatusChangedAt.Should().BeNull("a new draft has not been sent");
+
+        playlist.Status = PlaylistStatus.Queued;
+        await _fixture.DbContext.SaveChangesAsync();
+
+        playlist.StatusChangedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_PlaylistRenamed_LeavesStatusChangedAt()
+    {
+        var sentAt = DateTimeOffset.UtcNow.AddDays(-3);
+        var user = TestData.CreateUserConnection();
+        var playlist = new Playlist
+        {
+            UserConnection = user,
+            Name = "Card 1",
+            Status = PlaylistStatus.Transferred,
+            StatusChangedAt = sentAt,
+        };
+        _fixture.DbContext.Playlists.Add(playlist);
+        await _fixture.DbContext.SaveChangesAsync();
+
+        playlist.Name = "Bedtime card";
+        await _fixture.DbContext.SaveChangesAsync();
+
+        playlist.StatusChangedAt.Should().Be(sentAt);
+        playlist.UpdatedAt.Should().BeAfter(sentAt);
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_PlaylistAddedAlreadySent_StampsStatusChangedAt()
+    {
+        var playlist = new Playlist
+        {
+            UserConnection = TestData.CreateUserConnection(),
+            Name = "Card 1",
+            Status = PlaylistStatus.Queued,
+        };
+        _fixture.DbContext.Playlists.Add(playlist);
+        await _fixture.DbContext.SaveChangesAsync();
+
+        playlist.StatusChangedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
     // =========================================================================
     // UserConnection CRUD
     // =========================================================================

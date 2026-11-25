@@ -440,6 +440,12 @@ export interface CardSetSend {
   cards: CardSetSendCard[]
 }
 
+/** olderCount: complete sets idle past the recent window; in sets only when asked for. */
+export interface CardSetSends {
+  sets: CardSetSend[]
+  olderCount: number
+}
+
 /** Breaks: index of the first book on each card after the first. Split points: per split book, index of the first chapter of each part after the first. */
 export interface CardSetLayout {
   breaks: number[]
