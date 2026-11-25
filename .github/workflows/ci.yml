@@ -130,13 +130,23 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # The integration project isn't in AudioYotoShelf.sln (so the Backend job's `dotnet test`
+      # doesn't start Testcontainers), which also keeps it out of the Backend format check.
+      - name: Restore
+        run: dotnet restore tests/AudioYotoShelf.IntegrationTests/AudioYotoShelf.IntegrationTests.csproj
+
+      - name: Format check
+        run: >
+          dotnet format tests/AudioYotoShelf.IntegrationTests/AudioYotoShelf.IntegrationTests.csproj
+          --verify-no-changes --no-restore
+
       # Testcontainers spins real Postgres + Redis via the runner's Docker daemon, so the app's
       # startup migrations and the cookie/auth/admin pipeline run for real (the in-memory unit
       # tests can't cover these).
       - name: Integration tests
         run: >
           dotnet test tests/AudioYotoShelf.IntegrationTests/AudioYotoShelf.IntegrationTests.csproj
-          -c Release
+          -c Release --no-restore
           --results-directory ./TestResults
           --logger "trx;LogFileName=integration.trx"
 
