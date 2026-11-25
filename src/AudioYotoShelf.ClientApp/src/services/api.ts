@@ -12,7 +12,7 @@ import type {
   CardLimits,
   CardSetPlanResponse,
   CardSetResponse,
-  CardSetSend,
+  CardSetSends,
   CardSetStatus,
   CardSetSummary,
   ConnectionStatus,
@@ -232,9 +232,14 @@ export const cardSetApi = {
     })
   },
 
-  /** Sets that were sent or are sending, for the Transfers page; status filters on set status. */
-  sends(status?: CardSetStatus) {
-    return api.get<CardSetSend[]>('/cardsets/sends', { params: { status: status || undefined } })
+  /**
+   * Sets that were sent or are sending, for the Transfers page; status filters on set status, and
+   * includeOlder adds complete sets with no recent activity.
+   */
+  sends(status?: CardSetStatus, includeOlder = false) {
+    return api.get<CardSetSends>('/cardsets/sends', {
+      params: { status: status || undefined, includeOlder: includeOlder || undefined },
+    })
   },
 
   limits() {

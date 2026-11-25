@@ -1,4 +1,5 @@
 using AudioYotoShelf.Core.Entities;
+using AudioYotoShelf.Core.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace AudioYotoShelf.Infrastructure.Data;
@@ -25,11 +26,22 @@ public class AudioYotoShelfDbContext(DbContextOptions<AudioYotoShelfDbContext> o
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        var now = DateTimeOffset.UtcNow;
         foreach (var entry in ChangeTracker.Entries<BaseEntity>())
         {
             if (entry.State == EntityState.Modified)
             {
-                entry.Entity.UpdatedAt = DateTimeOffset.UtcNow;
+                entry.Entity.UpdatedAt = now;
+            }
+        }
+
+        foreach (var entry in ChangeTracker.Entries<Playlist>())
+        {
+            if ((entry.State == EntityState.Modified && entry.Property(p => p.Status).IsModified)
+                || (entry.State == EntityState.Added && entry.Entity.Status != PlaylistStatus.Draft
+                    && entry.Entity.StatusChangedAt is null))
+            {
+                entry.Entity.StatusChangedAt = now;
             }
         }
 

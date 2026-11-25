@@ -674,7 +674,11 @@ public class CardSetServiceTests : IDisposable
     // Sends, for the Transfers page
     // =========================================================================
 
-    private record SeedCard(PlaylistStatus Status, DateTimeOffset UpdatedAt, params string[] BookTitles);
+    /// <summary><paramref name="At"/> is when the card's status last changed; <see cref="EditedAt"/>, when set, is a later edit.</summary>
+    private record SeedCard(PlaylistStatus Status, DateTimeOffset At, params string[] BookTitles)
+    {
+        public DateTimeOffset? EditedAt { get; init; }
+    }
 
     /// <summary>A set stored as it is after sending, without going through Audiobookshelf.</summary>
     private async Task<Guid> SeedSentSetAsync(Guid userId, string seriesId, params SeedCard[] cards)
@@ -686,7 +690,8 @@ public class CardSetServiceTests : IDisposable
             Name = $"{seriesId} card {i + 1}",
             Status = c.Status,
             SetIndex = i,
-            UpdatedAt = c.UpdatedAt,
+            StatusChangedAt = c.Status == PlaylistStatus.Draft ? null : c.At,
+            UpdatedAt = c.EditedAt ?? c.At,
             YotoCardId = c.Status == PlaylistStatus.Transferred ? $"yoto-{i}" : null,
             ErrorMessage = c.Status == PlaylistStatus.Failed ? "Yoto said no" : null,
             // Stored out of order so the read has to sort them.
@@ -702,7 +707,8 @@ public class CardSetServiceTests : IDisposable
         return set.Id;
     }
 
-    private static readonly DateTimeOffset T0 = new(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+    // Relative to now, so a complete set seeded at T0 is inside the recent window whenever the tests run.
+    private static readonly DateTimeOffset T0 = DateTimeOffset.UtcNow.AddDays(-1);
 
     [Fact]
     public async Task Sends_LeaveOutSetsThatWereNeverSent()
@@ -711,7 +717,7 @@ public class CardSetServiceTests : IDisposable
         await SeedSentSetAsync(userId, "drafts", new SeedCard(PlaylistStatus.Draft, T0), new SeedCard(PlaylistStatus.Draft, T0));
         var sent = await SeedSentSetAsync(userId, "sent", new SeedCard(PlaylistStatus.Transferred, T0), new SeedCard(PlaylistStatus.Draft, T0));
 
-        var sends = await _sut.SendsAsync(userId);
+        var sends = (await _sut.SendsAsync(userId)).Sets;
 
         var one = sends.Should().ContainSingle().Subject;
         one.Id.Should().Be(sent);
@@ -726,12 +732,12 @@ public class CardSetServiceTests : IDisposable
     {
         var userId = await SeedUserAsync();
         var older = await SeedSentSetAsync(userId, "older",
-            new SeedCard(PlaylistStatus.Transferred, T0.AddHours(1)),
-            // A draft edited later is not sending activity.
+            // Renaming a sent card is not sending activity, and neither is editing a draft.
+            new SeedCard(PlaylistStatus.Transferred, T0.AddHours(1)) { EditedAt = T0.AddHours(6) },
             new SeedCard(PlaylistStatus.Draft, T0.AddHours(5)));
         var newer = await SeedSentSetAsync(userId, "newer", new SeedCard(PlaylistStatus.Failed, T0.AddHours(2)));
 
-        var sends = await _sut.SendsAsync(userId);
+        var sends = (await _sut.SendsAsync(userId)).Sets;
 
         sends.Select(s => s.Id).Should().Equal(newer, older);
         sends[1].LastActivityAt.Should().Be(T0.AddHours(1));
@@ -746,10 +752,54 @@ public class CardSetServiceTests : IDisposable
         var failed = await SeedSentSetAsync(userId, "failed", new SeedCard(PlaylistStatus.Failed, T0));
         var complete = await SeedSentSetAsync(userId, "complete", new SeedCard(PlaylistStatus.Transferred, T0));
 
-        (await _sut.SendsAsync(userId, CardSetStatus.Sending)).Select(s => s.Id).Should().Equal(sending);
-        (await _sut.SendsAsync(userId, CardSetStatus.NeedsAttention)).Select(s => s.Id).Should().Equal(failed);
-        (await _sut.SendsAsync(userId, CardSetStatus.Complete)).Select(s => s.Id).Should().Equal(complete);
-        (await _sut.SendsAsync(userId, CardSetStatus.Draft)).Should().BeEmpty();
+        (await _sut.SendsAsync(userId, CardSetStatus.Sending)).Sets.Select(s => s.Id).Should().Equal(sending);
+        (await _sut.SendsAsync(userId, CardSetStatus.NeedsAttention)).Sets.Select(s => s.Id).Should().Equal(failed);
+        (await _sut.SendsAsync(userId, CardSetStatus.Complete)).Sets.Select(s => s.Id).Should().Equal(complete);
+        (await _sut.SendsAsync(userId, CardSetStatus.Draft)).Sets.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Sends_LeaveOutCompleteSetsIdlePastTheWindow_ButCountThem()
+    {
+        var userId = await SeedUserAsync();
+        var now = DateTimeOffset.UtcNow;
+        var longAgo = now - CardSetService.RecentCompleteWindow - TimeSpan.FromDays(1);
+        var recent = await SeedSentSetAsync(userId, "recent", new SeedCard(PlaylistStatus.Transferred, now.AddDays(-1)));
+        await SeedSentSetAsync(userId, "old", new SeedCard(PlaylistStatus.Transferred, longAgo));
+        // Sets still needing something stay, however long ago they last moved.
+        var failed = await SeedSentSetAsync(userId, "failed", new SeedCard(PlaylistStatus.Failed, longAgo));
+        var partly = await SeedSentSetAsync(userId, "partly",
+            new SeedCard(PlaylistStatus.Transferred, longAgo), new SeedCard(PlaylistStatus.Draft, longAgo));
+
+        var sends = await _sut.SendsAsync(userId);
+
+        sends.Sets.Select(s => s.Id).Should().BeEquivalentTo([recent, failed, partly]);
+        sends.OlderCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Sends_IncludeOlder_ListsEveryCompleteSet()
+    {
+        var userId = await SeedUserAsync();
+        var longAgo = DateTimeOffset.UtcNow - CardSetService.RecentCompleteWindow - TimeSpan.FromDays(1);
+        var recent = await SeedSentSetAsync(userId, "recent", new SeedCard(PlaylistStatus.Transferred, T0));
+        var old = await SeedSentSetAsync(userId, "old", new SeedCard(PlaylistStatus.Transferred, longAgo));
+
+        var sends = await _sut.SendsAsync(userId, includeOlder: true);
+
+        sends.Sets.Select(s => s.Id).Should().Equal(recent, old);
+        sends.OlderCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Sends_OlderCount_FollowsTheStatusFilter()
+    {
+        var userId = await SeedUserAsync();
+        var longAgo = DateTimeOffset.UtcNow - CardSetService.RecentCompleteWindow - TimeSpan.FromDays(1);
+        await SeedSentSetAsync(userId, "old", new SeedCard(PlaylistStatus.Transferred, longAgo));
+
+        (await _sut.SendsAsync(userId, CardSetStatus.NeedsAttention)).OlderCount.Should().Be(0);
+        (await _sut.SendsAsync(userId, CardSetStatus.Complete)).OlderCount.Should().Be(1);
     }
 
     [Fact]
@@ -759,7 +809,7 @@ public class CardSetServiceTests : IDisposable
         var otherId = await SeedUserAsync();
         await SeedSentSetAsync(otherId, "theirs", new SeedCard(PlaylistStatus.Transferred, T0));
 
-        (await _sut.SendsAsync(userId)).Should().BeEmpty();
+        (await _sut.SendsAsync(userId)).Sets.Should().BeEmpty();
     }
 
     [Fact]
@@ -770,7 +820,7 @@ public class CardSetServiceTests : IDisposable
             new SeedCard(PlaylistStatus.Transferred, T0, "Rise of the Earth Dragon", "Saving the Sun Dragon"),
             new SeedCard(PlaylistStatus.Failed, T0, "Secret of the Water Dragon"));
 
-        var cards = (await _sut.SendsAsync(userId)).Single().Cards;
+        var cards = (await _sut.SendsAsync(userId)).Sets.Single().Cards;
 
         cards.Select(c => c.Index).Should().Equal(0, 1);
         cards[0].BookTitles.Should().Equal("Rise of the Earth Dragon", "Saving the Sun Dragon");

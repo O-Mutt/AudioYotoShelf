@@ -63,10 +63,14 @@ public class CardSetsController(
         return Ok(ids.Length == 0 ? [] : await cardSets.StatusAsync(CurrentUserConnectionId, ids, ct));
     }
 
-    /// <summary>Sets that were sent or are sending, for the Transfers page: <c>?status=Sending</c> filters on set status.</summary>
+    /// <summary>
+    /// Sets that were sent or are sending, for the Transfers page: <c>?status=Sending</c> filters on set
+    /// status, <c>?includeOlder=true</c> adds complete sets with no recent activity.
+    /// </summary>
     [HttpGet("sends")]
-    public async Task<IActionResult> Sends([FromQuery] CardSetStatus? status, CancellationToken ct)
-        => Ok(await cardSets.SendsAsync(CurrentUserConnectionId, status, ct));
+    public async Task<IActionResult> Sends(
+        [FromQuery] CardSetStatus? status, [FromQuery] bool includeOlder, CancellationToken ct)
+        => Ok(await cardSets.SendsAsync(CurrentUserConnectionId, status, includeOlder, ct));
 
     [HttpGet("limits")]
     public IActionResult Limits() => Ok(cardSets.Limits());

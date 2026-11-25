@@ -121,7 +121,7 @@ public record CardSetSendCardResponse(
 
 /// <summary>
 /// A set that has been sent, or is being sent, for the Transfers page. <see cref="LastActivityAt"/> is
-/// the latest change to any of its cards that is not a draft.
+/// the latest status change of any of its cards that is not a draft.
 /// </summary>
 public record CardSetSendResponse(
     Guid Id,
@@ -133,6 +133,12 @@ public record CardSetSendResponse(
     int SentCount,
     DateTimeOffset LastActivityAt,
     CardSetSendCardResponse[] Cards);
+
+/// <summary>
+/// The Transfers page's card sets. <see cref="OlderCount"/> is how many complete sets with no activity
+/// in the recent window match the filter; they are in <see cref="Sets"/> only when asked for.
+/// </summary>
+public record CardSetSendsResponse(CardSetSendResponse[] Sets, int OlderCount);
 
 /// <summary>
 /// Card-set state for one series, for the series grid. <see cref="KnownBookIds"/> are the books on

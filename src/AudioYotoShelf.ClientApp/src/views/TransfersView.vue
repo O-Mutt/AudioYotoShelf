@@ -37,6 +37,9 @@ const filterStatus = ref<TransferStatus | ''>('')
 
 // Series card sets send as playlists, not CardTransfers, so they are read and shown separately.
 const cardSets = ref<CardSetSend[]>([])
+// Complete sets idle past the server's recent window are only counted until asked for.
+const olderSetCount = ref(0)
+const showOlderSets = ref(false)
 const expandedSets = ref<Record<string, boolean>>({})
 const joinedSets = new Set<string>()
 
@@ -124,7 +127,9 @@ async function loadCardSets() {
   if (!connectionStore.userConnectionId) return
   const query = cardSetQueryFor(filterStatus.value)
   try {
-    cardSets.value = query ? (await cardSetApi.sends(query.status)).data : []
+    const data = query ? (await cardSetApi.sends(query.status, showOlderSets.value)).data : null
+    cardSets.value = data?.sets ?? []
+    olderSetCount.value = data?.olderCount ?? 0
   } catch {
     // The book transfers still load; the sets show again on the next list change.
     return
@@ -154,6 +159,11 @@ async function leaveSet(cardSetId: string) {
   } catch {
     /* nothing to undo */
   }
+}
+
+function toggleOlderSets() {
+  showOlderSets.value = !showOlderSets.value
+  void loadCardSets()
 }
 
 function toggleSet(cardSetId: string) {
@@ -393,7 +403,11 @@ function formatDate(iso: string): string {
       </div>
     </div>
 
-    <section v-if="cardSets.length > 0" data-test="card-sets" class="space-y-3">
+    <section
+      v-if="cardSets.length > 0 || olderSetCount > 0"
+      data-test="card-sets"
+      class="space-y-3"
+    >
       <h2 class="text-lg font-semibold text-gray-900">Series card sets</h2>
       <div v-for="set in cardSets" :key="set.id" data-test="card-set" class="card p-4">
         <div class="flex items-start justify-between gap-4">
@@ -474,11 +488,27 @@ function formatDate(iso: string): string {
           </li>
         </ol>
       </div>
+      <button
+        v-if="olderSetCount > 0"
+        type="button"
+        data-test="older-card-sets"
+        class="text-xs text-yoto-blue hover:underline"
+        @click="toggleOlderSets"
+      >
+        {{
+          showOlderSets
+            ? 'Hide older complete sets'
+            : `Show ${olderSetCount} older complete ${olderSetCount === 1 ? 'set' : 'sets'}`
+        }}
+      </button>
     </section>
 
     <div v-if="isLoading" class="text-center py-12 text-gray-400">Loading transfers...</div>
 
-    <div v-else-if="transfers.length === 0 && cardSets.length === 0" class="text-center py-12">
+    <div
+      v-else-if="transfers.length === 0 && cardSets.length === 0 && olderSetCount === 0"
+      class="text-center py-12"
+    >
       <p class="text-gray-400">
         No transfers yet. Browse your library to start transferring books to Yoto cards.
       </p>

@@ -293,6 +293,9 @@ namespace AudioYotoShelf.Infrastructure.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<DateTimeOffset?>("StatusChangedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset?>("TransferredAt")
                         .HasColumnType("timestamp with time zone");
 

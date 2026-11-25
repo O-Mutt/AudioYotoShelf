@@ -293,13 +293,18 @@ Creates the `CardSet` and one draft `Playlist` per card, adding books with the e
 - `GET /api/cardsets/status?seriesIds=a,b,c` →
   `[{ "absSeriesId", "cardSetId", "cardCount", "sentCount", "sending": false, "newBookCount": 1 }]`
   for the series grid badges, in one call per page.
-- `GET /api/cardsets/sends?status=Sending` → the caller's sets with at least one card ever queued or
-  sent (any card not `Draft`), most recent activity first, for the Transfers page:
-  `[{ "id", "name", "absSeriesId", "absLibraryId", "status", "cardCount", "sentCount",
+- `GET /api/cardsets/sends?status=Sending&includeOlder=false` → the caller's sets with at least one
+  card ever queued or sent (any card not `Draft`), most recent activity first, for the Transfers page:
+  `{ "sets": [{ "id", "name", "absSeriesId", "absLibraryId", "status", "cardCount", "sentCount",
       "lastActivityAt", "cards": [{ "playlistId", "index", "title", "status", "yotoCardId",
-      "errorMessage", "transferredAt", "bookTitles": [] }] }]`.
-  `lastActivityAt` is the latest `UpdatedAt` of the set's cards that are not drafts. `status` is
-  optional and filters on the set status.
+      "errorMessage", "transferredAt", "bookTitles": [] }] }], "olderCount": 0 }`.
+  `lastActivityAt` is the latest `Playlists.StatusChangedAt` of the set's cards that are not drafts.
+  The save stamps it whenever a card's status changes, so renaming or editing a card does not move
+  the set up the list. `status` is optional and filters on the set status. A `Complete` set whose
+  `lastActivityAt` is more than 7 days old (`CardSetService.RecentCompleteWindow`) is left out of
+  `sets` unless `includeOlder=true`; `olderCount` is how many such sets match the filter either
+  way. Sets that are sending, need attention or are partly sent are always listed
+  ([#154](https://github.com/O-Mutt/AudioYotoShelf/issues/154)).
 
 ### 7.4 Change
 
@@ -356,7 +361,9 @@ Mockups: the "Series MYO Cards" canvas (C1–C3). Built in Vue with a new `cardS
   send raises when it is queued, when the job starts and when it ends. The status filter maps onto
   set status (Completed → Complete, Failed → NeedsAttention, any in-progress status → Sending,
   Cancelled → none). "Clear completed" clears book transfers only; card sets are not records to
-  clear, and the set lives on in the series page.
+  clear, and the set lives on in the series page. Instead, complete sets idle for more than 7 days
+  drop off the list on their own; "Show *n* older complete sets" under the list fetches them with
+  `includeOlder=true`, and "Hide older complete sets" goes back.
 - **Split editor**: for a split book, a chapter strip (widths by length) with the split points;
   clicking a chapter or using the arrows moves a split point one chapter. Shown inline on the series
   page under the card tiles. An invalid split keeps "Make cards" disabled and names the card that
