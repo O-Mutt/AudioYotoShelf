@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { libraryApi, transferApi } from '@/services/api'
+import { onCoverError } from '@/utils/coverPlaceholder'
 import { errorMessage } from '@/utils/errors'
 import CardPlanPanel, { type SeriesBookOption } from '@/components/cardsets/CardPlanPanel.vue'
 import type { AbsSeriesItem } from '@/types'
@@ -123,6 +124,7 @@ async function transferSeries() {
           :alt="book.media?.metadata?.title ?? 'Cover'"
           class="w-14 h-20 object-cover rounded-lg"
           loading="lazy"
+          @error="onCoverError"
         />
         <div class="flex-1 min-w-0">
           <div class="flex items-center space-x-2">

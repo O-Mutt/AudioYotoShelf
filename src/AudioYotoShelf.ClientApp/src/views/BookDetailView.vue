@@ -7,6 +7,7 @@ import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { transferApi } from '@/services/api'
 import { capacityRefusalMessage, errorMessage } from '@/utils/errors'
+import { onCoverError } from '@/utils/coverPlaceholder'
 import type { TransferProgressUpdate } from '@/types'
 
 const props = defineProps<{ itemId: string }>()
@@ -63,19 +64,6 @@ function formatDuration(seconds: number): string {
 function resetAgeOverride() {
   overrideMinAge.value = null
   overrideMaxAge.value = null
-}
-
-function onCoverError(e: Event) {
-  const img = e.target as HTMLImageElement
-  img.src =
-    'data:image/svg+xml,' +
-    encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300" fill="none">
-      <rect width="200" height="300" rx="8" fill="#E5E7EB"/>
-      <path d="M80 120h40v8H80v-8zm-8 24h56v6H72v-6zm0 16h56v6H72v-6zm0 16h40v6H72v-6z" fill="#9CA3AF"/>
-      <rect x="76" y="80" width="48" height="24" rx="4" fill="#9CA3AF" opacity="0.5"/>
-    </svg>
-  `)
 }
 
 async function startTransfer() {

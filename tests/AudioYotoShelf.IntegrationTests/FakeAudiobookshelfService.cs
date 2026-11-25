@@ -93,7 +93,7 @@ public sealed class FakeAudiobookshelfService : IAudiobookshelfService
     public Task<AbsLibraryItem> GetLibraryItemAsync(string baseUrl, string token, string itemId, CancellationToken ct = default) =>
         throw new NotImplementedException();
 
-    public Task<Stream> GetCoverImageAsync(string baseUrl, string token, string itemId, CancellationToken ct = default) =>
+    public Task<Stream?> GetCoverImageAsync(string baseUrl, string token, string itemId, CancellationToken ct = default) =>
         throw new NotImplementedException();
 
     public Task<AbsSeriesResponse> GetSeriesAsync(string baseUrl, string token, string libraryId, int page = 0, int limit = 20, CancellationToken ct = default) =>

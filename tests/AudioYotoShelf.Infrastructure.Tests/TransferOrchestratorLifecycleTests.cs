@@ -201,6 +201,29 @@ public partial class TransferOrchestratorTests
     }
 
     [Fact]
+    public async Task TransferBookAsync_ItemWithoutACover_CompletesWithoutUploadingOne()
+    {
+        var user = await SeedUserAsync();
+        ServeItemWith(TestData.CreateAbsLibraryItem());
+        _absService.Setup(s => s.GetCoverImageAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Stream?)null);
+        YotoCardMetadata? sent = null;
+        _yotoService.Setup(s => s.CreateOrUpdateCardAsync(
+                It.IsAny<string>(), It.IsAny<YotoCardContent>(), It.IsAny<YotoCardMetadata>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, YotoCardContent, YotoCardMetadata, string?, string?, CancellationToken>((_, _, m, _, _, _) => sent = m)
+            .ReturnsAsync("card-id-123");
+
+        var response = await _sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest());
+
+        response.Status.Should().Be(TransferStatus.Completed);
+        sent!.Cover.Should().BeNull();
+        _yotoService.Verify(s => s.UploadCoverImageAsync(
+            It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task TransferBookAsync_WhenTheCoverUploadFails_StillCompletesWithoutACover()
     {
         var user = await SeedUserAsync();

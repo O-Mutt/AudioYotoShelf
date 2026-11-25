@@ -140,7 +140,11 @@ public class TransferOrchestrator(
                 var coverStream = await absService.GetCoverImageAsync(
                     user.AudiobookshelfUrl, user.AudiobookshelfToken!,
                     request.AbsLibraryItemId, ct);
-                coverUrl = await yotoService.UploadCoverImageAsync(yotoAccessToken, coverStream, ct);
+                if (coverStream is not null)
+                {
+                    await using (coverStream)
+                        coverUrl = await yotoService.UploadCoverImageAsync(yotoAccessToken, coverStream, ct);
+                }
             }
             catch (Exception ex)
             {

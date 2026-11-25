@@ -206,6 +206,6 @@ public class LibrariesController(
         var coverStream = await absService.GetCoverImageAsync(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, itemId, ct);
 
-        return File(coverStream, "image/jpeg");
+        return coverStream is null ? NotFound() : File(coverStream, "image/jpeg");
     }
 }
