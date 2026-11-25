@@ -670,6 +670,115 @@ public class CardSetServiceTests : IDisposable
         (await _sut.StatusAsync(Guid.NewGuid(), [SeriesId])).Should().BeEmpty();
     }
 
+    // =========================================================================
+    // Sends, for the Transfers page
+    // =========================================================================
+
+    private record SeedCard(PlaylistStatus Status, DateTimeOffset UpdatedAt, params string[] BookTitles);
+
+    /// <summary>A set stored as it is after sending, without going through Audiobookshelf.</summary>
+    private async Task<Guid> SeedSentSetAsync(Guid userId, string seriesId, params SeedCard[] cards)
+    {
+        var set = new CardSet { UserConnectionId = userId, AbsSeriesId = seriesId, AbsLibraryId = LibraryId, Name = seriesId };
+        set.Cards = cards.Select((c, i) => new Playlist
+        {
+            UserConnectionId = userId,
+            Name = $"{seriesId} card {i + 1}",
+            Status = c.Status,
+            SetIndex = i,
+            UpdatedAt = c.UpdatedAt,
+            YotoCardId = c.Status == PlaylistStatus.Transferred ? $"yoto-{i}" : null,
+            ErrorMessage = c.Status == PlaylistStatus.Failed ? "Yoto said no" : null,
+            // Stored out of order so the read has to sort them.
+            Items = c.BookTitles.Select((t, p) => new PlaylistItem
+            {
+                AbsLibraryItemId = $"{seriesId}-{i}-{p}",
+                BookTitle = t,
+                Position = p,
+            }).Reverse().ToList(),
+        }).ToList();
+        _fixture.DbContext.CardSets.Add(set);
+        await _fixture.DbContext.SaveChangesAsync();
+        return set.Id;
+    }
+
+    private static readonly DateTimeOffset T0 = new(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task Sends_LeaveOutSetsThatWereNeverSent()
+    {
+        var userId = await SeedUserAsync();
+        await SeedSentSetAsync(userId, "drafts", new SeedCard(PlaylistStatus.Draft, T0), new SeedCard(PlaylistStatus.Draft, T0));
+        var sent = await SeedSentSetAsync(userId, "sent", new SeedCard(PlaylistStatus.Transferred, T0), new SeedCard(PlaylistStatus.Draft, T0));
+
+        var sends = await _sut.SendsAsync(userId);
+
+        var one = sends.Should().ContainSingle().Subject;
+        one.Id.Should().Be(sent);
+        one.CardCount.Should().Be(2);
+        one.SentCount.Should().Be(1);
+        one.Status.Should().Be(CardSetStatus.Draft);
+        one.Cards.Select(c => c.Status).Should().Equal(PlaylistStatus.Transferred, PlaylistStatus.Draft);
+    }
+
+    [Fact]
+    public async Task Sends_ComeLatestActivityFirst_CountingOnlyCardsThatWereSent()
+    {
+        var userId = await SeedUserAsync();
+        var older = await SeedSentSetAsync(userId, "older",
+            new SeedCard(PlaylistStatus.Transferred, T0.AddHours(1)),
+            // A draft edited later is not sending activity.
+            new SeedCard(PlaylistStatus.Draft, T0.AddHours(5)));
+        var newer = await SeedSentSetAsync(userId, "newer", new SeedCard(PlaylistStatus.Failed, T0.AddHours(2)));
+
+        var sends = await _sut.SendsAsync(userId);
+
+        sends.Select(s => s.Id).Should().Equal(newer, older);
+        sends[1].LastActivityAt.Should().Be(T0.AddHours(1));
+    }
+
+    [Fact]
+    public async Task Sends_FilterOnTheSetStatus()
+    {
+        var userId = await SeedUserAsync();
+        var sending = await SeedSentSetAsync(userId, "sending",
+            new SeedCard(PlaylistStatus.Transferred, T0), new SeedCard(PlaylistStatus.Queued, T0));
+        var failed = await SeedSentSetAsync(userId, "failed", new SeedCard(PlaylistStatus.Failed, T0));
+        var complete = await SeedSentSetAsync(userId, "complete", new SeedCard(PlaylistStatus.Transferred, T0));
+
+        (await _sut.SendsAsync(userId, CardSetStatus.Sending)).Select(s => s.Id).Should().Equal(sending);
+        (await _sut.SendsAsync(userId, CardSetStatus.NeedsAttention)).Select(s => s.Id).Should().Equal(failed);
+        (await _sut.SendsAsync(userId, CardSetStatus.Complete)).Select(s => s.Id).Should().Equal(complete);
+        (await _sut.SendsAsync(userId, CardSetStatus.Draft)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Sends_LeaveOutAnotherUsersSets()
+    {
+        var userId = await SeedUserAsync();
+        var otherId = await SeedUserAsync();
+        await SeedSentSetAsync(otherId, "theirs", new SeedCard(PlaylistStatus.Transferred, T0));
+
+        (await _sut.SendsAsync(userId)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Sends_ListEachCardInOrder_WithItsBooksInCardOrder()
+    {
+        var userId = await SeedUserAsync();
+        await SeedSentSetAsync(userId, "dragons",
+            new SeedCard(PlaylistStatus.Transferred, T0, "Rise of the Earth Dragon", "Saving the Sun Dragon"),
+            new SeedCard(PlaylistStatus.Failed, T0, "Secret of the Water Dragon"));
+
+        var cards = (await _sut.SendsAsync(userId)).Single().Cards;
+
+        cards.Select(c => c.Index).Should().Equal(0, 1);
+        cards[0].BookTitles.Should().Equal("Rise of the Earth Dragon", "Saving the Sun Dragon");
+        cards[0].YotoCardId.Should().Be("yoto-0");
+        cards[1].BookTitles.Should().Equal("Secret of the Water Dragon");
+        cards[1].ErrorMessage.Should().Be("Yoto said no");
+    }
+
     [Fact]
     public void Limits_AreTheConfiguredOnes()
     {

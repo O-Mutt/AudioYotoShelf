@@ -293,6 +293,13 @@ Creates the `CardSet` and one draft `Playlist` per card, adding books with the e
 - `GET /api/cardsets/status?seriesIds=a,b,c` →
   `[{ "absSeriesId", "cardSetId", "cardCount", "sentCount", "sending": false, "newBookCount": 1 }]`
   for the series grid badges, in one call per page.
+- `GET /api/cardsets/sends?status=Sending` → the caller's sets with at least one card ever queued or
+  sent (any card not `Draft`), most recent activity first, for the Transfers page:
+  `[{ "id", "name", "absSeriesId", "absLibraryId", "status", "cardCount", "sentCount",
+      "lastActivityAt", "cards": [{ "playlistId", "index", "title", "status", "yotoCardId",
+      "errorMessage", "transferredAt", "bookTitles": [] }] }]`.
+  `lastActivityAt` is the latest `UpdatedAt` of the set's cards that are not drafts. `status` is
+  optional and filters on the set status.
 
 ### 7.4 Change
 
@@ -340,6 +347,16 @@ Mockups: the "Series MYO Cards" canvas (C1–C3). Built in Vue with a new `cardS
 - **Series grid (`LibraryView.vue`)**: one badge per series tile from `GET /status`:
   "On *k* cards", "Sending card *i* of *k*", "*n* new books", "Not on cards", "Fits on 1 card".
   Filter chips: All / Not on cards / New books since last cards.
+- **Transfers page (`TransfersView.vue`)**: a "Series card sets" section above the book transfers,
+  from `GET /sends`, hidden when there are none. One row per set: name, "*n* of *k* cards sent", the
+  set status, when it was last active, and a link to the series page. A row opens to list each card
+  with its status, its books, its Yoto card id once sent and its error when it failed. Retry and
+  cancel stay on the series page. The page joins `cardset:{id}` for each set that is sending and
+  updates a card in place on each push; it re-reads the sets on `TransferListChanged`, which the
+  send raises when it is queued, when the job starts and when it ends. The status filter maps onto
+  set status (Completed → Complete, Failed → NeedsAttention, any in-progress status → Sending,
+  Cancelled → none). "Clear completed" clears book transfers only; card sets are not records to
+  clear, and the set lives on in the series page.
 - **Split editor**: for a split book, a chapter strip (widths by length) with the split points;
   clicking a chapter or using the arrows moves a split point one chapter. Shown inline on the series
   page under the card tiles. An invalid split keeps "Make cards" disabled and names the card that
@@ -476,3 +493,8 @@ Where the code differs from the sections above, the code is right and this list 
   `cardset:{id}`). The send job pushes `CardSetProgress { cardSetId, playlistId, cardIndex, status,
   errorMessage }` when a card starts, lands or fails, and when a cancel returns cards to draft. The
   series page re-reads its set on each push. Pushes are best effort: a failed push never stops a send.
+- **Transfers page (§7.3 sends, §8).** Closes [#148](https://github.com/O-Mutt/AudioYotoShelf/issues/148):
+  card set sends never wrote a `CardTransfer`, so the Transfers page showed nothing while a set sent.
+  It now lists sets from `GET /api/cardsets/sends` next to the book transfers. The send raises
+  `TransferListChanged` through `ICardSetProgressNotifier.SendsChangedAsync` (best effort, like the
+  card pushes).

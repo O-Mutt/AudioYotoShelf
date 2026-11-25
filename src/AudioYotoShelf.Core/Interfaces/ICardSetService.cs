@@ -1,5 +1,6 @@
 using AudioYotoShelf.Core.DTOs.CardSet;
 using AudioYotoShelf.Core.DTOs.Playlist;
+using AudioYotoShelf.Core.Enums;
 
 namespace AudioYotoShelf.Core.Interfaces;
 
@@ -22,6 +23,12 @@ public interface ICardSetService
 
     /// <summary>Card-set state for each of the given series that has a set, for the series grid.</summary>
     Task<CardSetStatusResponse[]> StatusAsync(Guid userConnectionId, IReadOnlyList<string> absSeriesIds, CancellationToken ct = default);
+
+    /// <summary>
+    /// The user's sets with a card that was ever queued or sent, latest activity first, for the
+    /// Transfers page. <paramref name="status"/> keeps only sets in that state.
+    /// </summary>
+    Task<CardSetSendResponse[]> SendsAsync(Guid userConnectionId, CardSetStatus? status = null, CancellationToken ct = default);
 
     CardLimitsResponse Limits();
 

@@ -1,4 +1,5 @@
 using AudioYotoShelf.Core.DTOs.CardSet;
+using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Infrastructure.Data;
 using AudioYotoShelf.Infrastructure.Services.BackgroundJobs;
@@ -14,6 +15,7 @@ namespace AudioYotoShelf.Api.Controllers;
 public class CardSetsController(
     ICardSetService cardSets,
     IBackgroundJobClient backgroundJobs,
+    ICardSetProgressNotifier notifier,
     AudioYotoShelfDbContext db,
     ILogger<CardSetsController> logger) : AppControllerBase
 {
@@ -60,6 +62,11 @@ public class CardSetsController(
         var ids = (seriesIds ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return Ok(ids.Length == 0 ? [] : await cardSets.StatusAsync(CurrentUserConnectionId, ids, ct));
     }
+
+    /// <summary>Sets that were sent or are sending, for the Transfers page: <c>?status=Sending</c> filters on set status.</summary>
+    [HttpGet("sends")]
+    public async Task<IActionResult> Sends([FromQuery] CardSetStatus? status, CancellationToken ct)
+        => Ok(await cardSets.SendsAsync(CurrentUserConnectionId, status, ct));
 
     [HttpGet("limits")]
     public IActionResult Limits() => Ok(cardSets.Limits());
@@ -176,6 +183,16 @@ public class CardSetsController(
 
         logger.LogInformation("Card set transfer queued: {CardSetId} ({Count} cards) -> Job {JobId}",
             cardSetId, playlistIds.Length, jobId);
+
+        // The job may wait behind other transfers; the Transfers page should show the set as queued now.
+        try
+        {
+            await notifier.SendsChangedAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Card set {CardSetId}: could not push that the sends changed", cardSetId);
+        }
         return Accepted(new { CardSetId = cardSetId, JobId = jobId, PlaylistIds = playlistIds });
     }
 

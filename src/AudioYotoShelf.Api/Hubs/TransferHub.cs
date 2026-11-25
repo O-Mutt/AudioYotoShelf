@@ -65,6 +65,9 @@ public class SignalRCardSetProgressNotifier(IHubContext<TransferHub> hubContext)
         hubContext.Clients
             .Group(TransferHub.CardSetGroup(update.CardSetId))
             .SendAsync("CardSetProgress", update, ct);
+
+    public Task SendsChangedAsync(CancellationToken ct = default) =>
+        hubContext.Clients.All.SendAsync("TransferListChanged", ct);
 }
 
 /// <summary>

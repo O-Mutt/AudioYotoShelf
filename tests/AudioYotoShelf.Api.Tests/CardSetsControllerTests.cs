@@ -21,6 +21,7 @@ public class CardSetsControllerTests : IDisposable
     private readonly AudioYotoShelfDbContext _db;
     private readonly Mock<ICardSetService> _cardSets = new();
     private readonly Mock<IBackgroundJobClient> _backgroundJobs = new();
+    private readonly Mock<ICardSetProgressNotifier> _notifier = new();
     private readonly CardSetsController _sut;
 
     public CardSetsControllerTests()
@@ -34,7 +35,7 @@ public class CardSetsControllerTests : IDisposable
             .Returns("job-9");
 
         _sut = new CardSetsController(
-            _cardSets.Object, _backgroundJobs.Object, _db, Mock.Of<ILogger<CardSetsController>>());
+            _cardSets.Object, _backgroundJobs.Object, _notifier.Object, _db, Mock.Of<ILogger<CardSetsController>>());
     }
 
     public void Dispose()
@@ -86,6 +87,7 @@ public class CardSetsControllerTests : IDisposable
         result.Should().BeOfType<NotFoundResult>($"{action} must not act on a set owned by someone else");
         _cardSets.Invocations.Should().BeEmpty();
         _backgroundJobs.VerifyNothingEnqueued();
+        _notifier.Invocations.Should().BeEmpty();
     }
 
     [Theory]
@@ -169,6 +171,34 @@ public class CardSetsControllerTests : IDisposable
         result.Should().BeOfType<OkObjectResult>().Which.Value.Should().BeSameAs(sets);
     }
 
+    [Fact]
+    public async Task Sends_ListsTheCallersSetsWithTheStatusFilter()
+    {
+        var caller = Guid.NewGuid();
+        CardSetSendResponse[] sends =
+        [
+            new(Guid.NewGuid(), "Dragons", "ser-1", "lib-1", CardSetStatus.Sending, 2, 0, DateTimeOffset.UtcNow,
+                [new(Guid.NewGuid(), 0, "Dragons · Books 1–6", PlaylistStatus.Transferring, null, null, null, ["Book 1"])]),
+        ];
+        _cardSets.Setup(s => s.SendsAsync(caller, CardSetStatus.Sending, It.IsAny<CancellationToken>())).ReturnsAsync(sends);
+
+        var result = await _sut.AsUser(caller).Sends(CardSetStatus.Sending, default);
+
+        result.Should().BeOfType<OkObjectResult>().Which.Value.Should().BeSameAs(sends);
+    }
+
+    [Fact]
+    public async Task Sends_WithoutAFilter_AsksForEveryStatus()
+    {
+        var caller = Guid.NewGuid();
+        _cardSets.Setup(s => s.SendsAsync(caller, null, It.IsAny<CancellationToken>())).ReturnsAsync([]);
+
+        var result = await _sut.AsUser(caller).Sends(null, default);
+
+        result.Should().BeOfType<OkObjectResult>();
+        _cardSets.Verify(s => s.SendsAsync(caller, null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // =========================================================================
     // Change
     // =========================================================================
@@ -219,6 +249,32 @@ public class CardSetsControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task Transfer_TellsTheTransfersPageTheListChanged()
+    {
+        var caller = Guid.NewGuid();
+        var id = await AddCardSetOwnedByAsync(caller);
+        _cardSets.Setup(s => s.PrepareTransferAsync(id, null, It.IsAny<CancellationToken>())).ReturnsAsync([Guid.NewGuid()]);
+
+        await _sut.AsUser(caller).Transfer(id, null, default);
+
+        _notifier.Verify(n => n.SendsChangedAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Transfer_WhenThePushFails_IsStillAccepted()
+    {
+        var caller = Guid.NewGuid();
+        var id = await AddCardSetOwnedByAsync(caller);
+        _cardSets.Setup(s => s.PrepareTransferAsync(id, null, It.IsAny<CancellationToken>())).ReturnsAsync([Guid.NewGuid()]);
+        _notifier.Setup(n => n.SendsChangedAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("hub down"));
+
+        var result = await _sut.AsUser(caller).Transfer(id, null, default);
+
+        result.Should().BeOfType<AcceptedResult>();
+    }
+
+    [Fact]
     public async Task Transfer_ACardOverCapacity_Returns409AndQueuesNothing()
     {
         var caller = Guid.NewGuid();
@@ -231,6 +287,7 @@ public class CardSetsControllerTests : IDisposable
 
         result.Should().BeOfType<ConflictObjectResult>();
         _backgroundJobs.VerifyNothingEnqueued();
+        _notifier.Invocations.Should().BeEmpty();
     }
 
     [Fact]
