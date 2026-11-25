@@ -402,9 +402,7 @@ public class TrackPlannerTests
     [Theory]
     [InlineData(1800, 1_000, 1)]            // two files totalling exactly 3600 s: fits one track
     [InlineData(1800.5, 1_000, 2)]          // one second over the duration limit
-    [InlineData(600, 52_428_800, 1)]        // two files totalling exactly 100 MB: fits one track
-    [InlineData(600, 52_428_801, 2)]        // over the byte limit
-    [InlineData(600, 62_914_560, 2)]        // 60 MB each: the SUM (120 MB) is over, though no single file is
+    [InlineData(600, 157_286_400, 1)]       // 150 MB each: Yoto stores the 20-minute merge as about 15 MB
     public void Plan_Auto_MergesOnlyWhenTheWholeBookFitsOneTrack(double secondsPerFile, long bytesPerFile, int expectedTracks)
     {
         var media = TestData.CreateAbsMedia(
@@ -416,6 +414,27 @@ public class TrackPlannerTests
             chapters: []);
 
         _sut.Plan(media, TrackGrouping.Auto).Should().HaveCount(expectedTracks);
+    }
+
+    [Theory]
+    [InlineData(15_000_000, 1)]             // the 20-minute merge is stored as exactly 15,000,000 bytes: fits
+    [InlineData(14_999_999, 2)]             // one byte under that: kept per file
+    public void Plan_Auto_TestsBytesAgainstTheStoredSizeOfTheMerge(long maxTrackBytes, int expectedTracks)
+    {
+        var limits = new YotoCardLimits { MaxTrackBytes = maxTrackBytes };
+        var media = TestData.CreateAbsMedia(
+            audioFiles:
+            [
+                TestData.CreateAbsAudioFile(0, "ino-1", 600, 1_000),
+                TestData.CreateAbsAudioFile(1, "ino-2", 600, 1_000),
+            ],
+            chapters: []);
+
+        var tracks = new TrackPlanner(limits).Plan(media, TrackGrouping.Auto);
+
+        tracks.Should().HaveCount(expectedTracks);
+        var calculator = new CardCapacityCalculator(limits);
+        tracks.Sum(calculator.ProjectedTrackCount).Should().Be(expectedTracks, "a merge Auto makes is never split again");
     }
 
     private static AbsBookMedia WithoutTitle(AbsBookMedia media) =>

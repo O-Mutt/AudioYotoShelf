@@ -1,7 +1,8 @@
 # Spec: Yoto MYO card limits
 
 **Status:** Implemented ([#113](https://github.com/O-Mutt/AudioYotoShelf/issues/113),
-[#117](https://github.com/O-Mutt/AudioYotoShelf/issues/117))
+[#117](https://github.com/O-Mutt/AudioYotoShelf/issues/117),
+[#121](https://github.com/O-Mutt/AudioYotoShelf/issues/121))
 **Scope:** the limits `CardCapacityCalculator` checks before building a Make Your Own (MYO) card,
 and why they differ from Yoto's published numbers.
 
@@ -52,7 +53,7 @@ of an 11 h 34 m / 485 MB card playing agrees.
 | Key | Default | Checked against |
 |---|---|---|
 | `MaxTracks` | 100 | projected track count after per-track splitting |
-| `MaxTrackBytes` | 100 MB | source bytes of each track. Stricter than Yoto, which accepted 265 MB uploads; kept because the transfer splits tracks by the same rule ([#121](https://github.com/O-Mutt/AudioYotoShelf/issues/121)) |
+| `MaxTrackBytes` | 100 MB | **estimated transcoded size** of each track: its duration × `TranscodedBitrateKbps`, or its source bytes when the duration is unknown. The playlist transfer splits tracks by the same rule ([#121](https://github.com/O-Mutt/AudioYotoShelf/issues/121)) |
 | `MaxTrackDurationSeconds` | 3600 | each track's duration |
 | `MaxTotalBytes` | 500 MB | **estimated transcoded size**: total duration × `TranscodedBitrateKbps` |
 | `MaxTotalDurationSeconds` | unset (not enforced) | total duration, only when set |
@@ -63,8 +64,21 @@ At 100 kbps, 500 MB holds about 11.6 hours.
 To restore the documented 5-hour cap, set `Yoto__CardLimits__MaxTotalDurationSeconds=18000`.
 
 A track with no duration (Audiobookshelf reports 0 for files it has not scanned) counts at its
-source size, so an unscanned book cannot slip past the size check. Startup fails if any limit is
-zero or negative, or if `TranscodedBitrateKbps` is not greater than 0.
+source size, in the card total and against `MaxTrackBytes`, so an unscanned book cannot slip past
+the size checks. Startup fails if any limit is zero or negative, or if `TranscodedBitrateKbps` is
+not greater than 0.
+
+**Per-track size.** `MaxTrackBytes` is measured on what Yoto stores, not on what the app uploads,
+because Yoto accepted Goblet of Fire tracks uploaded at up to 265 MB and stored them as at most
+23.2 MB. No upload larger than 265 MB has been tried, so whether Yoto refuses a single upload by
+size is not known; the rule rests on that evidence. One rule decides a track's pieces everywhere:
+`CardCapacityCalculator.ProjectedTrackCount` for the capacity projection, the playlist transfer's
+split (`PlaylistTransferOrchestrator.SplitIfNeededAsync`, which passes the track's duration and its
+size on disk), and the Auto grouping's "fits one track" test (`TrackPlanner`), so a book Auto merges
+is never split again. At 100 kbps a 60-minute track is about 43 MB, so with the default limits the
+60-minute limit is the one that splits a scanned track; the byte limit splits only unscanned tracks,
+or scanned ones if the limits are configured lower. A 50-minute, 260 MB source track is one card
+track, where the source-size rule made it three.
 
 Sizes in the app's messages are MiB (1,048,576 bytes), shown as "MB".
 
@@ -132,5 +146,8 @@ book" never sends an oversized book; send it from its book page instead.
 
 - Whether a card over 500 MB plays end to end (Goblet of Fire, 566 MB), and whether any larger
   total is refused. Until both are known the app keeps 500 MB.
+- Whether Yoto refuses a single upload by size. Uploads of up to 265 MB were accepted; nothing
+  larger has been tried. The app sends a high-bitrate track of any size as one upload when its
+  duration fits ([#121](https://github.com/O-Mutt/AudioYotoShelf/issues/121)).
 - Whether Yoto enforces the 60-minute per-track limit. A single-book transfer uploads a chapter
   longer than that as one track.

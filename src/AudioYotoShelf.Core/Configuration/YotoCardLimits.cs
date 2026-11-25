@@ -13,8 +13,10 @@ public class YotoCardLimits
     public int MaxTracks { get; set; } = 100;
 
     /// <summary>
-    /// Per-track cap, checked against the file we upload. Yoto accepted 265 MB uploads, so this is
-    /// stricter than Yoto; it stays because the transfer splits tracks by the same rule (#121).
+    /// Per-track cap, checked against Yoto's stored size (<see cref="EstimateTranscodedBytes"/> of the
+    /// track's duration), not the file we upload: Yoto accepted 265 MB uploads and stored them as at
+    /// most 23.2 MB. A track with no duration (unscanned) is checked against its source size instead.
+    /// The capacity projection and the playlist transfer's split both apply this rule.
     /// </summary>
     public long MaxTrackBytes { get; set; } = 100L * 1024 * 1024;     // 100 MB
 

@@ -45,10 +45,10 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
             .ReturnsAsync(() => new MemoryStream(new byte[100]));
     }
 
-    private PlaylistTransferOrchestrator CreateSut(string tempDirectory) => new(
+    private PlaylistTransferOrchestrator CreateSut(string tempDirectory, YotoCardLimits? limits = null) => new(
         _fixture.DbContext, _absService.Object, _yotoService.Object,
         _iconService.Object, _chapterExtractor.Object,
-        new TrackPlanner(new YotoCardLimits()), new CardCapacityCalculator(new YotoCardLimits()),
+        new TrackPlanner(limits ?? new YotoCardLimits()), new CardCapacityCalculator(limits ?? new YotoCardLimits()),
         new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["Transfer:TempDirectory"] = tempDirectory })
             .Build(),
