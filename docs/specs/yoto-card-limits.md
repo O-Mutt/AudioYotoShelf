@@ -73,10 +73,23 @@ book Yoto stores as 566 MB was 6.3 GB of source. A playlist transfer deletes eac
 once that book's tracks are uploaded, so peak disk use is set by the largest single book, not the
 whole playlist ([#128](https://github.com/O-Mutt/AudioYotoShelf/issues/128)).
 
-Within a book, every copy stays on disk until the book is done: the downloaded files, the merged
-file or extracted chapters, and the split pieces of any track over the per-track limit. A book
-that is merged (or cut into chapters from one file) and then split peaks at about **3× its source
-size**; a multi-file book uploaded file by file peaks at 1×, or 2× when files need splitting.
+Within a book, each intermediate file is deleted as soon as the next step has consumed it
+([#133](https://github.com/O-Mutt/AudioYotoShelf/issues/133)): the downloaded files once they are
+merged, a single downloaded file once every chapter (or time segment) in range is cut from it, the
+chapters of a card-set part once they are merged, and a track over the per-track limit once it is
+split. A track that is not split is the file uploaded, so it stays until the book is done, as do
+the split pieces. The peak is therefore the moment a step's input and output both exist:
+
+- merged, then split: about **2× its source size** (the downloads and the merged file, then the
+  merged file and its pieces);
+- cut into chapters from one file, split or not: about 2× (the download and its chapters);
+- one file uploaded whole: 1×, or 2× while it is split;
+- a multi-file book uploaded file by file: 1×, plus the file being split when one is over the
+  limit.
+
+A part of a book split across cards still downloads a single-file book whole, so it peaks at the
+source size plus that part's share. Uploading and deleting each track before the next is produced
+would not lower these peaks, because every step writes all its outputs before the first upload.
 
 Two folders take this: downloads go to `Transfer:TempDirectory`, and ffmpeg's merged, chapter and
 split files go to the system temp folder (`TMPDIR`). The Docker image sets `TMPDIR=/app/temp`, so
