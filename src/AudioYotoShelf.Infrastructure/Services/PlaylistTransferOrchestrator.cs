@@ -213,6 +213,7 @@ public class PlaylistTransferOrchestrator(
                     parts.Add(await DownloadToTempAsync(user, libraryItem.Id, f, temp, ct));
                 mergedPath = await chapterExtractor.ConcatenateAsync(parts, "m4a", ct);
                 temp.Add(mergedPath);
+                DeleteConsumed(parts, mergedPath);
             }
             return [new LocalTrack(mergedPath, files.Sum(f => f.Duration), bookTitle)];
         }
@@ -241,6 +242,7 @@ public class PlaylistTransferOrchestrator(
                 temp.Add(chapterPath);
                 result.Add(new LocalTrack(chapterPath, chapter.End - chapter.Start, chapter.Title));
             }
+            DeleteConsumed([inputPath], result.Select(t => t.Path));
             return result;
         }
 
@@ -294,6 +296,7 @@ public class PlaylistTransferOrchestrator(
                 temp.Add(chapterPath);
                 tracks.Add(new LocalTrack(chapterPath, end - start, title));
             }
+            DeleteConsumed([inputPath], tracks.Select(t => t.Path));
         }
 
         var merge = tracks.Count > 1 && planner.ApplyGrouping(
@@ -302,6 +305,7 @@ public class PlaylistTransferOrchestrator(
 
         var mergedPath = await chapterExtractor.ConcatenateAsync(tracks.Select(t => t.Path).ToList(), "m4a", ct);
         temp.Add(mergedPath);
+        DeleteConsumed(tracks.Select(t => t.Path), mergedPath);
         return [new LocalTrack(mergedPath, tracks.Sum(t => t.DurationSeconds), item.BookTitle)];
     }
 
@@ -316,6 +320,7 @@ public class PlaylistTransferOrchestrator(
 
         var segments = await chapterExtractor.SplitAsync(track.Path, track.DurationSeconds / parts, "m4a", ct);
         foreach (var segment in segments) temp.Add(segment);
+        DeleteConsumed([track.Path], segments);
 
         var segmentDuration = track.DurationSeconds / segments.Count;
         return segments
@@ -399,6 +404,15 @@ public class PlaylistTransferOrchestrator(
         if (!user.HasValidYotoConnection)
             throw new InvalidOperationException("No valid Yoto connection");
     }
+
+    /// <summary>
+    /// Deletes a step's inputs as soon as it has produced its outputs, so a book that is merged or cut
+    /// from one file and then split holds about twice its source on disk rather than three times
+    /// (#133). An input that is also an output is kept: ConcatenateAsync hands back a lone input
+    /// unchanged. The inputs stay in the book's temp list, which remains the backstop on failure.
+    /// </summary>
+    private void DeleteConsumed(IEnumerable<string> inputs, params IEnumerable<string> outputs) =>
+        CleanupTempFiles(inputs.Except(outputs, StringComparer.Ordinal));
 
     private void CleanupTempFiles(IEnumerable<string> paths)
     {
