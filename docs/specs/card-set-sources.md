@@ -143,6 +143,8 @@ rather than the series.
   - a `Custom` book isn't in `AbsLibraryId` (checked when its media is fetched).
 - `CardSetResponse` and `CardSetSummaryResponse` replace `AbsSeriesId` with `SourceKind` and
   `SourceId`, and add `CustomItemIds` to the full response.
+- `CardSetSendResponse` (`GET /api/cardsets/sends`, the Transfers page's list from #148) replaces
+  `AbsSeriesId` the same way, so its row can link to the set's own page (§7).
 - The client ships with the server, so this is a breaking change to the API with no alias period.
 - `GET /api/cardsets/status` takes `collectionIds` as well as `seriesIds`. Each result carries
   `SourceKind` and `SourceId` in place of `AbsSeriesId`.
