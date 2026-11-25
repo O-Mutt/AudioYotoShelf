@@ -868,6 +868,33 @@ public class YotoServiceTests
     }
 
     [Fact]
+    public async Task PollTranscodeStatusAsync_AFailedNameLookupIsRetried()
+    {
+        _handler.EnqueueThrow(new HttpRequestException("Name or service not known (api.yotoplay.com:443)",
+            new SocketException((int)SocketError.HostNotFound)));
+        _handler.Enqueue(HttpStatusCode.OK, PollDoneJson);
+        var sut = CreateSut();
+
+        var result = await sut.PollTranscodeStatusAsync(Token, "up-1");
+
+        result.TranscodedSha256.Should().Be("sha-1");
+        sut.PollFailureBackoffs.Should().Equal(1);
+    }
+
+    [Fact]
+    public async Task PollTranscodeStatusAsync_FiveClientTimeoutsInARowFailAsATimeoutNotACancellation()
+    {
+        for (var i = 0; i < 5; i++)
+            _handler.EnqueueThrow(new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout"));
+        var sut = CreateSut();
+
+        var act = () => sut.PollTranscodeStatusAsync(Token, "up-1");
+
+        await act.Should().ThrowExactlyAsync<TimeoutException>();
+        sut.PollFailureBackoffs.Should().Equal(1, 2, 3, 4);
+    }
+
+    [Fact]
     public async Task PollTranscodeStatusAsync_AClientTimeoutIsRetried()
     {
         _handler.EnqueueThrow(new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout"));

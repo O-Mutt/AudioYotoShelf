@@ -264,9 +264,10 @@ public class YotoService(
         Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, failure)), ct);
 
     /// <summary>
-    /// A status poll is a GET, so repeating it is always safe. Retry dropped connections, client
-    /// timeouts (not our own cancellation) and the statuses that mean "try again later"; anything
-    /// else, such as 401 or 404, is a real refusal and fails at once.
+    /// A status poll is a GET, so repeating it is always safe. Retry any failure to get a response
+    /// (reset, DNS, refused connection), client timeouts (not our own cancellation) and the statuses
+    /// that mean "try again later"; any other status, such as 401 or 404, is a real refusal and
+    /// fails at once.
     /// </summary>
     private static bool IsTransientPollFailure(Exception ex, CancellationToken ct) => ex switch
     {
@@ -274,7 +275,7 @@ public class YotoService(
         HttpRequestException { StatusCode: { } status } => status is HttpStatusCode.RequestTimeout
             or HttpStatusCode.TooManyRequests or HttpStatusCode.InternalServerError
             or HttpStatusCode.BadGateway or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout,
-        HttpRequestException http => IsTransientTransportError(http),
+        HttpRequestException => true,
         _ => false,
     };
 
@@ -323,6 +324,12 @@ public class YotoService(
                     uploadId, consecutiveFailures, MaxConsecutivePollFailures);
                 await DelayAfterFailedPollAsync(consecutiveFailures, ct);
                 continue;
+            }
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+            {
+                // Left as a cancellation, the transfer would be marked Cancelled and never retried.
+                throw new TimeoutException(
+                    $"Transcode poll for upload {uploadId} timed out {MaxConsecutivePollFailures} times in a row", ex);
             }
 
             // Raw body once per upload (Debug) for diagnosing response-shape changes.
