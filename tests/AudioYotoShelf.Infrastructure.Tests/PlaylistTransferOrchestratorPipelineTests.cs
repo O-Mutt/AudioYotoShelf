@@ -1,3 +1,4 @@
+using AudioYotoShelf.Core.Configuration;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Entities;
@@ -340,6 +341,30 @@ public partial class PlaylistTransferOrchestratorTests
 
         _chapterExtractor.Verify(c => c.SplitAsync(
             It.IsAny<string>(), It.IsAny<double>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        TempDirShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TransferPlaylist_HighBitrateTrackWithinTheHour_IsNotSplit()
+    {
+        // Scaled down 100x so the test writes 2.6 MB rather than 260 MB: a 50-minute track whose
+        // source is 2.6x the per-track cap, while Yoto's stored size is well under it.
+        var sut = CreateSut(_tempDir, new YotoCardLimits { MaxTrackBytes = 1_000_000, TranscodedBitrateKbps = 1 });
+        var uploads = CaptureUploads();
+        var card = CaptureCard();
+        _absService.Setup(s => s.DownloadAudioFileAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new MemoryStream(new byte[2_600_000]));
+        var playlistId = await SeedPlaylistAsync(grouping: TrackGrouping.Chapters,
+            items: [Item("book-1", 0, "Hi-Fi Book", [3000])]);
+        SetupBook("book-1", TestData.CreateAbsMedia(audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", 3000)], chapters: []));
+
+        await sut.TransferPlaylistAsync(playlistId);
+
+        _chapterExtractor.Verify(c => c.SplitAsync(
+            It.IsAny<string>(), It.IsAny<double>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        uploads.Should().ContainSingle().Which.Length.Should().Be(2_600_000);
+        card.Content!.Chapters.Single().Tracks.Should().ContainSingle();
         TempDirShouldBeEmpty();
     }
 

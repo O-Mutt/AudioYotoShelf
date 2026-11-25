@@ -9,9 +9,15 @@ public class CardCapacityCalculator(YotoCardLimits limits) : ICardCapacityCalcul
     public int ProjectedTrackCount(SourceTrack track)
     {
         var byDuration = (int)Math.Ceiling(track.DurationSeconds / limits.MaxTrackDurationSeconds);
-        var byBytes = (int)Math.Ceiling((double)track.EstimatedBytes / limits.MaxTrackBytes);
+        var byBytes = (int)Math.Ceiling((double)StoredBytes(track) / limits.MaxTrackBytes);
         return Math.Max(1, Math.Max(byDuration, byBytes));
     }
+
+    // Yoto's per-track byte limit applies to the opus it stores, not the upload: it accepted 265 MB
+    // uploads and stored them as at most 23.2 MB. Unscanned parts have no duration to estimate
+    // from, so their source size stands in, as it does for the card total.
+    private long StoredBytes(SourceTrack track) =>
+        limits.EstimateTranscodedBytes(track.DurationSeconds) + track.UnscannedBytes;
 
     public CapacityResult Calculate(IEnumerable<BookTrackPlan> books, bool splitTracks = true)
     {
@@ -28,7 +34,7 @@ public class CardCapacityCalculator(YotoCardLimits limits) : ICardCapacityCalcul
                 duration += track.DurationSeconds;
                 // Audiobookshelf reports 0 for files it has not scanned yet; without a duration the
                 // source size is the only size signal left, so a large unscanned book still fails.
-                bytes += limits.EstimateTranscodedBytes(track.DurationSeconds) + track.UnscannedBytes;
+                bytes += StoredBytes(track);
             }
 
             if (firstOverflow is null && Exceeds(tracks, duration, bytes))

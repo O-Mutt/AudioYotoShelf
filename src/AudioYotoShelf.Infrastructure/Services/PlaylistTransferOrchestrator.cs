@@ -311,6 +311,9 @@ public class PlaylistTransferOrchestrator(
 
     private async Task<List<LocalTrack>> SplitIfNeededAsync(LocalTrack track, List<string> temp, CancellationToken ct)
     {
+        // The calculator decides the parts so the split matches the capacity projection. It weighs a
+        // track with a duration by Yoto's stored size; the size on disk counts only when the duration
+        // is unknown.
         var sizeBytes = new FileInfo(track.Path).Length;
         var parts = calculator.ProjectedTrackCount(new SourceTrack(track.Title, track.DurationSeconds, sizeBytes));
         if (parts <= 1) return [track];

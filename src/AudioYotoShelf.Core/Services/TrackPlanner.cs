@@ -100,8 +100,13 @@ public class TrackPlanner(YotoCardLimits limits) : ITrackPlanner
         };
 
     // An unscanned track's length is unknown, so its zero duration cannot prove the book fits one track.
-    private bool FitsOneTrack(IReadOnlyList<SourceTrack> tracks) =>
-        tracks.All(t => t.UnscannedBytes == 0) &&
-        tracks.Sum(t => t.DurationSeconds) <= limits.MaxTrackDurationSeconds &&
-        tracks.Sum(t => t.EstimatedBytes) <= limits.MaxTrackBytes;
+    // The byte test uses the same stored-size estimate as CardCapacityCalculator.ProjectedTrackCount,
+    // so a book Auto merges always projects to exactly one track and is never split again.
+    private bool FitsOneTrack(IReadOnlyList<SourceTrack> tracks)
+    {
+        if (tracks.Any(t => t.UnscannedBytes != 0)) return false;
+        var duration = tracks.Sum(t => t.DurationSeconds);
+        return duration <= limits.MaxTrackDurationSeconds &&
+               limits.EstimateTranscodedBytes(duration) <= limits.MaxTrackBytes;
+    }
 }

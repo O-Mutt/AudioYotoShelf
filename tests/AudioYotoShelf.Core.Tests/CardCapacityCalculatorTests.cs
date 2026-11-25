@@ -35,11 +35,49 @@ public class CardCapacityCalculatorTests
         _sut.ProjectedTrackCount(new SourceTrack("t", seconds, 0)).Should().Be(expected);
     }
 
+    private const long MB = 1024 * 1024;
+
     [Fact]
-    public void ProjectedTrackCount_SplitsByBytes()
+    public void ProjectedTrackCount_HighBitrateTrackWithinTheHour_IsOneTrack()
     {
-        var track = new SourceTrack("t", 60, 250L * 1024 * 1024); // 250 MB, 1 min
+        // 260 MB of source over 50 min: Yoto stores about 36 MB, under the 100 MB per-track limit.
+        var track = new SourceTrack("t", 50 * 60, 260 * MB);
+
+        _sut.ProjectedTrackCount(track).Should().Be(1);
+    }
+
+    [Fact]
+    public void ProjectedTrackCount_HighBitrateTrackOverTheHour_SplitsByDuration()
+    {
+        var track = new SourceTrack("t", 90 * 60, 260 * MB);
+
+        _sut.ProjectedTrackCount(track).Should().Be(2);
+    }
+
+    [Fact]
+    public void ProjectedTrackCount_UnscannedTrack_SplitsBySourceBytes()
+    {
+        var track = new SourceTrack("t", 0, 250 * MB);
+
         _sut.ProjectedTrackCount(track).Should().Be(3);           // ceil(250/100)
+    }
+
+    [Fact]
+    public void ProjectedTrackCount_ScannedTrack_SplitsByItsStoredSize()
+    {
+        // 30 min at 100 kbps = 22,500,000 bytes; a lowered 10 MB cap needs 3 pieces, whatever the source weighs.
+        var sut = new CardCapacityCalculator(new YotoCardLimits { MaxTrackBytes = 10 * MB });
+
+        sut.ProjectedTrackCount(new SourceTrack("t", 30 * 60, 1)).Should().Be(3);
+    }
+
+    [Fact]
+    public void ProjectedTrackCount_MergedTrackWithUnscannedParts_CountsTheirSourceBytes()
+    {
+        // A merge of 10 scanned minutes and 250 MB of unscanned files: about 7.5 MB + 250 MB.
+        var merged = new SourceTrack("t", 600, 260 * MB) { UnscannedBytes = 250 * MB };
+
+        _sut.ProjectedTrackCount(merged).Should().Be(3);
     }
 
     [Fact]
@@ -121,6 +159,20 @@ public class CardCapacityCalculatorTests
         var unsplit = _sut.Calculate([book], splitTracks: false);
         unsplit.Projected.Tracks.Should().Be(60);
         unsplit.ExceedsTracks.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Calculate_HeavyBooksWithinTheHourPerTrack_FitOneCard()
+    {
+        // Three lossless books of 20 ten-minute tracks at 150 MB each. Counted by source size every
+        // track was 2 pieces (120 tracks, over the limit); Yoto stores each one as about 7.5 MB.
+        var books = Enumerable.Range(1, 3).Select(i => Book($"b{i}", Tracks(20, 600, 150 * MB))).ToArray();
+
+        var result = _sut.Calculate(books);
+
+        result.Projected.Tracks.Should().Be(60);
+        result.ExceedsTracks.Should().BeFalse();
+        result.WithinLimits.Should().BeTrue();
     }
 
     [Fact]
