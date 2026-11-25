@@ -215,7 +215,11 @@ public class PlaylistTransferOrchestrator(
                 temp.Add(mergedPath);
                 DeleteConsumed(parts, mergedPath);
             }
-            return [new LocalTrack(mergedPath, files.Sum(f => f.Duration), bookTitle)];
+            // Audiobookshelf reports 0 for a file it hasn't scanned, so a sum over a partly scanned
+            // book is too short and would split the merged file by the wrong length. Report the
+            // length as unknown instead; SplitIfNeededAsync then reads the merged file's real one.
+            var mergedDuration = files.Any(f => f.Duration <= 0) ? 0 : files.Sum(f => f.Duration);
+            return [new LocalTrack(mergedPath, mergedDuration, bookTitle)];
         }
 
         // Per-chapter grouping

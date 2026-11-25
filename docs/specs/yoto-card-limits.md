@@ -83,7 +83,10 @@ track, where the source-size rule made it three.
 **Unscanned tracks in a playlist transfer.** A split needs a length to divide, and an unscanned
 track's is 0, so before deciding its pieces the playlist transfer reads the downloaded file's real
 length with `ffprobe` and splits by that ([#144](https://github.com/O-Mutt/AudioYotoShelf/issues/144)).
-If `ffprobe` can't read it, the track is uploaded whole rather than cut at a guess. The capacity
+If `ffprobe` can't read it, the track is uploaded whole rather than cut at a guess. A book merged
+into one track counts as unscanned when any of its files is: the sum of the scanned files' lengths
+would be too short, so the merged file is probed too
+([#145](https://github.com/O-Mutt/AudioYotoShelf/issues/145)). The capacity
 projection, made before anything is downloaded, still counts the track at its source size, so it
 can count more pieces than the transfer makes; it never counts fewer.
 

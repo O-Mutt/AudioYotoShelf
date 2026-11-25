@@ -239,6 +239,44 @@ public partial class PlaylistTransferOrchestratorTests
         var track = card.Content!.Chapters.Single().Tracks.Single();
         (track.Title, track.Duration, track.FileSize).Should().Be(("Merged Book", 350.0, 300L));   // durations add up
         uploads.Single().Should().Be(new Upload(Path.Combine(_tempDir, "merged.m4a"), 300, "audio/mp4"));
+        _chapterExtractor.Verify(c => c.ProbeDurationAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        TempDirShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TransferPlaylist_SingleTrackGroupingOfAPartlyScannedBook_SplitsTheMergeByItsProbedLength()
+    {
+        var card = CaptureCard();
+        double? requestedSegmentSeconds = null;
+        string? probedPath = null;
+        _chapterExtractor.Setup(c => c.ConcatenateAsync(
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => MakeTempFile("merged.m4a", 300));
+        _chapterExtractor.Setup(c => c.ProbeDurationAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string path, CancellationToken _) =>
+            {
+                probedPath = path;
+                return 7200;
+            });
+        _chapterExtractor.Setup(c => c.SplitAsync(
+                It.IsAny<string>(), It.IsAny<double>(), "m4a", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, double seconds, string _, CancellationToken _) =>
+            {
+                requestedSegmentSeconds = seconds;
+                return (IReadOnlyList<string>)[MakeTempFile("part1.m4a", 60), MakeTempFile("part2.m4a", 60)];
+            });
+        var playlistId = await SeedPlaylistAsync(grouping: TrackGrouping.Chapters,
+            items: [Item("book-1", 0, "Partly Scanned", [3000, 0], TrackGrouping.SingleTrack)]);
+        // The scanned file alone (3000 s) is under the one-hour limit; the real merge is 7200 s.
+        SetupBook("book-1", TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-a", 3000), TestData.CreateAbsAudioFile(1, "ino-b", 0)],
+            chapters: []));
+
+        await _sut.TransferPlaylistAsync(playlistId);
+
+        probedPath.Should().Be(Path.Combine(_tempDir, "merged.m4a"));
+        requestedSegmentSeconds.Should().Be(3600);
+        card.Content!.Chapters.Single().Tracks.Select(t => t.Duration).Should().Equal(3600.0, 3600.0);
         TempDirShouldBeEmpty();
     }
 
