@@ -85,8 +85,12 @@ cancelled partway is deleted with the rest of its transfer's temp files
 ([#131](https://github.com/O-Mutt/AudioYotoShelf/issues/131)), and an ffmpeg run that fails or is
 cancelled deletes its own partial output
 ([#132](https://github.com/O-Mutt/AudioYotoShelf/issues/132)). A hard stop of the process
-(container restart, out-of-memory kill, `SIGKILL`) still leaves whatever temp files the running
-transfer had, because nothing sweeps the temp folders at startup.
+(container restart, out-of-memory kill, `SIGKILL`) skips that cleanup, so at startup, before the
+Hangfire server resumes any job, the app deletes the temp files a stopped transfer left in both
+folders ([#139](https://github.com/O-Mutt/AudioYotoShelf/issues/139)). It matches only the exact
+names it creates (`pl_<id>`, `<transfer>_<run>_input`/`_track<n>.tmp`, and ffmpeg's `chapter_`,
+`audio_`, `segment_` and `concat_` files) and only files written before startup, because outside
+the Docker image the system temp folder is shared with other programs.
 
 ### Single-book transfers
 
